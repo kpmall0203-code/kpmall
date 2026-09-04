@@ -86,6 +86,8 @@ function buildPriceMenu_() {
         .addItem('③ 계획에 넣기 (승인 ✓ 만)', 'pushAdGrowToPlan')
         .addItem('④ 기준키워드 올리기 (캠페인 만든 뒤)', 'applyAdGrowKeyword')
         .addSeparator()
+        .addItem('자동 → 수동 갈아타기 (기준키워드가 생겼을 때)', 'switchAdGrowToManual')
+        .addSeparator()
         .addItem('주간 판정 (졸업 · 중단 → 멈춤)', 'reviewAdGrow'))
       .addSubMenu(ui.createMenu('처음 한 번 — 캠페인 깔기')
         .addItem('① 광고 기준 설정 (마진율 · 목표 ACOS · 한도)', 'setupAdBasis')

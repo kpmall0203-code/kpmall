@@ -305,7 +305,11 @@ function adWatchMailOnce_(kind, subject, body) {
  * 한 바퀴. 표를 다시 만들고, 넘은 것은 멈추고, 알린다.
  * @return {{pending:boolean}|{banner:string,paused:string[],statLine:string}}
  */
+/** 아마존에서 지금 켜져 있나 */
+function adWatchIsOn_(live) { return !!(live && live.state === 'ENABLED'); }
+
 function adWatchRun_(interactive) {
+  var on = adWatchIsOn_;
   var ours = adWatchOurs_();
   if (!ours.length) {
     if (interactive) ui_().alert('관제할 캠페인이 없습니다.',
@@ -342,8 +346,14 @@ function adWatchRun_(interactive) {
      * 누가 다시 켰거나, 판정만 하고 멈춤이 실패했을 수 있다. 관제는 매일 도는
      * 마지막 그물이다 — 손해를 그만 보기로 한 캠페인이 켜져 있으면 안 된다.
      */
+    // 수동으로 갈아타며 버린 자동 캠페인이 아직 켜져 있으면 멈춘다 (마지막 그물).
+    // 보통은 [기준키워드 올리기]가 그 자리에서 멈추는데, 거기까지 안 갔거나 실패했을 수 있다
+    if (on(L) && String(c.result).indexOf(ADGROW_SWITCHED_MARK) >= 0) {
+      d = { v: '⛔ 갈아탄 옛 캠페인', fix: 'PAUSE',
+            why: '수동 캠페인으로 갈아탔는데 아직 켜져 있습니다 — 같은 말에 우리 둘이 입찰합니다' };
+    }
     var gStop = (c.track === ADPLAN_TRACK_B && grow[c.name]) ? grow[c.name].verdict : '';
-    if ((gStop === '졸업' || gStop === '중단') && L && L.state === 'ENABLED') {
+    if ((gStop === '졸업' || gStop === '중단') && on(L)) {
       d = { v: '⛔ 육성 ' + gStop, why: '육성 판정 ' + gStop + ' — 더 돌 이유가 없습니다',
             fix: 'PAUSE' };
     }

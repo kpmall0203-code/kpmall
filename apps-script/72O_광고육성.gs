@@ -44,7 +44,8 @@ var ADGROW_HEADER = [
   '손익분기CPA(JPY)', 'CPC상한(JPY)', '시작입찰(JPY)', '주간광고비(JPY)', '하루예산(JPY)',
   '시작일', '지난주수', '누적광고비(JPY)', '누적광고매출(JPY)', '누적손해(JPY)',
   '오가닉순위', '목표순위',
-  '판정', '사유', '승인', '캠페인명', '캠페인ID', '광고그룹ID', '결과'
+  '판정', '사유', '승인', '캠페인명', '캠페인ID', '광고그룹ID', '결과',
+  '이전캠페인ID들'   // 자동→수동으로 갈아타며 버린 캠페인. 누적 손해는 이어서 센다
 ];
 // 0부터 세는 자리
 var AG_SKU = 0, AG_ASIN = 1, AG_NAME = 2, AG_KW = 3, AG_PRICE = 4,
@@ -53,8 +54,14 @@ var AG_SKU = 0, AG_ASIN = 1, AG_NAME = 2, AG_KW = 3, AG_PRICE = 4,
     AG_START = 14, AG_WEEKS = 15, AG_COST = 16, AG_SALES = 17, AG_LOSSSUM = 18,
     AG_RANK = 19, AG_RANKGOAL = 20,
     AG_VERDICT = 21, AG_WHY = 22, AG_APPROVE = 23, AG_CAMP = 24, AG_CID = 25,
-    AG_GID = 26, AG_RESULT = 27;
-var ADGROW_ID_COLS = [26, 27];        // 1부터 — 캠페인ID·광고그룹ID 는 글자로
+    AG_GID = 26, AG_RESULT = 27, AG_PREVCID = 28;
+var ADGROW_ID_COLS = [26, 27, 29];    // 1부터 — 캠페인ID·광고그룹ID·이전캠페인ID들 은 글자로
+
+/**
+ * 갈아탄 줄의 옛 계획 줄에 남기는 표시.
+ * 관제가 이 표시를 보고, 아직 켜져 있으면 멈춘다 (마지막 그물).
+ */
+var ADGROW_SWITCHED_MARK = '· 수동으로 갈아탐';
 
 var ADGROW_MULT_DEFAULT = 1.5;        // 손해배수. 광고비 = 허용손해 × 3
 var ADGROW_LOSS_DEFAULT = 3000;       // 주간 허용 손해 (엔). 사람이 고친다
@@ -217,7 +224,11 @@ function addAdGrowSku() {
     var at = Math.max(sh.getLastRow(), 1) + 1;
     var need = at + add.length - 1;
     if (sh.getMaxRows() < need) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
-    sh.getRange(at, ADGROW_ID_COLS[0], add.length, 2).setNumberFormat('@');
+    // ID 칸은 글자 서식으로 — 숫자로 바뀌면 뒷자리가 반올림돼 다른 ID 가 된다
+    for (var fc = 0; fc < ADGROW_ID_COLS.length; fc++) {
+      sh.getRange(at, ADGROW_ID_COLS[fc], add.length, 1).setNumberFormat('@');
+    }
+    fitCols_(sh, ADGROW_HEADER.length);
     sh.getRange(at, 1, add.length, ADGROW_HEADER.length).setValues(add);
     sh.getRange(at, AG_APPROVE + 1, add.length, 1).insertCheckboxes();
   }
@@ -321,7 +332,11 @@ function adGrowNotes_(sh) {
       '순위는 검색어마다 다릅니다 — [기준키워드] 로 검색했을 때의 순위를 적으세요.\n' +
       '이미 1페이지(광고기준의 [1페이지 순위]) 안이면 트랙 B 에서 뺍니다 — ' +
       '순위가 있으면 손익분기를 넘겨 사도 잠식만 삽니다.\n목표순위에 닿으면 졸업입니다.',
-    '누적손해(JPY)': '누적광고비 − 누적광고매출 × 마진율. 실측입니다.',
+    '누적손해(JPY)': '누적광고비 − 누적광고매출 × 마진율. 실측입니다.\n' +
+      '자동에서 수동으로 갈아탔으면 옛 캠페인에 쓴 것까지 합쳐서 셉니다 —\n' +
+      '캠페인이 바뀌어도 그 상품에 쓴 돈은 그 상품에 쓴 돈입니다.',
+    '이전캠페인ID들': '자동에서 수동으로 갈아타며 버린 캠페인. [자동 → 수동 갈아타기]가 적습니다.\n' +
+      '주간 판정이 이 캠페인들의 실적까지 합쳐 누적 손해를 셉니다.',
     '판정': '준비됨 → 계획에 넣을 수 있음\n돌고 있음 → 계획대로 진행 중\n' +
       '트랙 A 로 → 이미 1페이지라 육성 대상이 아닙니다\n' +
       '졸업 → 순위 도달, 트랙 A 로 넘기세요\n중단 → 손해가 계획을 넘었습니다',
@@ -436,6 +451,130 @@ function pushAdGrowToPlan() {
     ui_().ButtonSet.OK);
 }
 
+// ── 자동 → 수동 갈아타기 ────────────────────────────────
+
+/**
+ * 메뉴: 자동으로 시작한 줄에 기준키워드가 생기면 수동 캠페인으로 갈아탄다.
+ *
+ * ── 왜 갈아타야 하나 ─────────────────────────────────────
+ * 어느 말로 팔릴지 모를 때는 자동으로 시작하는 것이 맞다. 두어 주 돌리면
+ * 검색어 판정이 트랙 B 잣대로 골라 준다. 그러면 그 말을 [기준키워드]에 적는데,
+ * 아마존은 만들어진 캠페인의 유형(AUTO/MANUAL)을 바꿔 주지 않는다 —
+ * 새 캠페인을 만드는 수밖에 없다.
+ *
+ * ── 무엇을 하나 ─────────────────────────────────────────
+ *   ① 광고육성계획에 수동 캠페인 줄을 새로 넣는다 (이름 뒤에 KW)
+ *   ② 육성 표의 [캠페인명]을 새 이름으로 바꾸고, 옛 캠페인ID 는
+ *      [이전캠페인ID들] 에 옮겨 적는다
+ *   ③ 옛 계획 줄의 승인을 풀고 결과에 표시를 남긴다
+ *
+ * 옛 캠페인은 여기서 바로 멈추지 않는다 — 새 캠페인을 만들고 켜기까지 며칠 걸리는데
+ * 그 사이 순위 쌓기가 끊긴다. [기준키워드 올리기]가 끝나는 자리(새 캠페인이 다 갖춰진
+ * 자리)에서 멈추고, 그때 못 멈췄으면 관제가 하루 안에 잡는다.
+ *
+ * 시작일과 누적은 그대로 이어진다. 자동으로 돈 두 주도 순위에 기여했고,
+ * 그 SKU 에 쓴 돈은 캠페인이 바뀌어도 그 SKU 에 쓴 돈이다 —
+ * 여기서 0 으로 되돌리면 이미 ¥9,000 을 잃고도 "1주차, 더 봅시다" 가 된다.
+ */
+function switchAdGrowToManual() {
+  var sh = getSheetOrThrow_(SHEET_ADGROW);
+  if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADGROW + '" 이 비어 있습니다.');
+  fitCols_(sh, ADGROW_HEADER.length);
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADGROW_HEADER.length).getValues();
+
+  // 계획 표에서 지금 유형이 무엇인지 본다 (시트만 읽는다)
+  var psh = ensureSheet_(SHEET_ADPLAN_GROW, ADPLAN_HEADER);
+  var pv = psh.getLastRow() > 1
+    ? psh.getRange(2, 1, psh.getLastRow() - 1, ADPLAN_HEADER.length).getValues() : [];
+  var planAt = {};
+  for (var p = 0; p < pv.length; p++) planAt[String(pv[p][AP_NAME - 1]).trim()] = p;
+
+  var pick = [], noKw = 0, already = 0, notMade = 0;
+  for (var i = 0; i < v.length; i++) {
+    var kw = String(v[i][AG_KW] || '').trim();
+    if (!kw) { noKw++; continue; }
+    var oldName = String(v[i][AG_CAMP] || '').trim();
+    var at = planAt[oldName];
+    if (at === undefined) { notMade++; continue; }
+    if (String(pv[at][AP_RESULT - 1]).indexOf('성공') !== 0) { notMade++; continue; }
+    if (String(pv[at][4] || '').indexOf('수동') === 0) { already++; continue; }   // 이미 수동
+    pick.push({ row: i, at: at, kw: kw, oldName: oldName,
+                oldCid: String(pv[at][AP_CID - 1] || '').trim(),
+                newName: oldName + ' KW' });
+  }
+
+  if (!pick.length) {
+    showSheet_(SHEET_ADGROW);
+    ui_().alert('갈아탈 줄이 없습니다.',
+      (already ? '이미 수동인 줄 ' + already + '개\n' : '') +
+      (noKw ? '기준키워드가 빈 줄 ' + noKw + '개 — 먼저 [기준키워드]를 적으세요\n' : '') +
+      (notMade ? '아직 캠페인을 안 만든 줄 ' + notMade + '개 — 그 줄은 갈아탈 것 없이 ' +
+                 '[③ 계획에 넣기]부터 다시 하면 처음부터 수동으로 만들어집니다\n' : ''),
+      ui_().ButtonSet.OK);
+    return;
+  }
+
+  var ok = ui_().alert('자동 → 수동 갈아타기',
+    pick.map(function (x) {
+      return '· ' + x.oldName + '\n    → ' + x.newName + ' · 기준키워드 "' + x.kw + '"';
+    }).join('\n') + '\n\n' +
+    '아마존은 만든 캠페인의 유형을 못 바꿉니다 — 새 캠페인을 만듭니다.\n' +
+    '시작일과 누적 손해는 이어집니다 (자동으로 쓴 돈도 이 상품에 쓴 돈입니다).\n' +
+    '옛 캠페인은 새 캠페인이 다 갖춰진 뒤([④ 기준키워드 올리기])에 멈춥니다 —\n' +
+    '지금 멈추면 그 사이 순위 쌓기가 끊깁니다.\n\n계속할까요?',
+    ui_().ButtonSet.OK_CANCEL);
+  if (ok !== ui_().Button.OK) return;
+
+  for (var k = 0; k < pick.length; k++) {
+    var x = pick[k];
+    // ① 새 수동 줄 — 옛 줄의 값을 그대로 물려받되 ID·결과·승인은 비운다
+    var row = pv[x.at].slice();
+    row[0] = String(row[0] || '') + 'KW';
+    row[AP_ACTION - 1] = '생성';
+    row[AP_NAME - 1] = x.newName;
+    row[4] = '수동';
+    row[14] = String(row[14] || '') + ' · 자동에서 갈아탐 (기준키워드 "' + x.kw + '")';
+    row[AP_GID - 1] = ''; row[AP_CID - 1] = ''; row[AP_RESULT - 1] = '';
+    row[AP_ADIDS - 1] = ''; row[AP_APPROVE - 1] = false;
+    pv.push(row);
+
+    // ② 옛 줄 — 승인을 풀고 표시를 남긴다. 관제가 이 표시를 보고 멈춘다
+    pv[x.at][AP_APPROVE - 1] = false;
+    pv[x.at][AP_RESULT - 1] = String(pv[x.at][AP_RESULT - 1] || '') + ' ' +
+                              ADGROW_SWITCHED_MARK + ' → ' + x.newName;
+
+    // ③ 육성 표 — 새 캠페인을 가리키고, 옛 ID 는 누적을 위해 남긴다
+    var prev = String(v[x.row][AG_PREVCID] || '').split(',')
+                 .map(function (t) { return t.trim(); }).filter(function (t) { return t; });
+    if (x.oldCid && prev.indexOf(x.oldCid) < 0) prev.push(x.oldCid);
+    v[x.row][AG_PREVCID] = prev.join(',');
+    v[x.row][AG_CAMP] = x.newName;
+    v[x.row][AG_CID] = ''; v[x.row][AG_GID] = '';
+    v[x.row][AG_RESULT] = '';
+    v[x.row][AG_WHY] = '자동에서 수동으로 갈아타는 중 — 새 캠페인을 만들고 켜세요';
+  }
+
+  var need = Math.max(pv.length + 1, 2);
+  if (psh.getMaxRows() < need) psh.insertRowsAfter(psh.getMaxRows(), need - psh.getMaxRows());
+  psh.getRange(2, AP_GID, need - 1, 1).setNumberFormat('@');
+  psh.getRange(2, AP_CID, need - 1, 1).setNumberFormat('@');
+  writeTable_(psh, ADPLAN_HEADER, pv);
+  if (pv.length) psh.getRange(2, AP_APPROVE, pv.length, 1).insertCheckboxes();
+  sh.getRange(2, 1, v.length, ADGROW_HEADER.length).setValues(v);
+
+  log_('ads', 'INFO', '트랙 B 자동→수동 갈아타기 ' + pick.length + '줄');
+  showSheet_(SHEET_ADPLAN_GROW);
+  ui_().alert('갈아탈 준비가 됐습니다',
+    pick.length + '줄 · 새 수동 캠페인 줄을 ' + SHEET_ADPLAN_GROW + ' 에 넣었습니다.\n\n' +
+    '다음:\n' +
+    '  ① ' + SHEET_ADPLAN_GROW + ' 에서 새 줄(이름 끝이 KW)의 [승인] 체크\n' +
+    '  ② [⑤ 승인분 캠페인 생성]\n' +
+    '  ③ [④ 기준키워드 올리기] — 여기서 옛 자동 캠페인이 멈춥니다\n' +
+    '  ④ [켜기 — 승인 ✓ 만]\n\n' +
+    '옛 줄은 승인을 풀어 두었습니다. ③까지 못 가더라도 관제가 하루 안에 멈춥니다.',
+    ui_().ButtonSet.OK);
+}
+
 // ── 기준키워드 올리기 ───────────────────────────────────
 
 /**
@@ -470,7 +609,10 @@ function applyAdGrowKeyword() {
     }
     pick.push({ row: i, kw: kw, bid: bid, cid: cid, gid: gid,
                 sku: String(v[i][AG_SKU] || ''), asin: String(v[i][AG_ASIN] || ''),
-                camp: String(v[i][AG_CAMP] || '') });
+                camp: String(v[i][AG_CAMP] || ''),
+                prev: String(v[i][AG_PREVCID] || '').split(',')
+                        .map(function (t) { return t.trim(); })
+                        .filter(function (t) { return t; }) });
   }
 
   if (!pick.length) {
@@ -522,14 +664,51 @@ function applyAdGrowKeyword() {
   sh.getRange(2, 1, v.length, ADGROW_HEADER.length).setValues(v);
   if (logs.length) adLogWrite_(logs);
 
+  // 갈아탄 줄이면 이제 옛 자동 캠페인을 멈춘다.
+  // 여기가 가장 이른 안전한 자리다 — 새 캠페인이 상품·키워드까지 다 갖춘 순간이라,
+  // 더 일찍 멈추면 그 사이 순위 쌓기가 끊기고 더 늦게 멈추면 같은 말에 둘이 입찰한다.
+  var handed = adGrowHandOff_(v, sh);
+
   log_('ads', failN ? 'WARN' : 'INFO', '기준키워드 올리기 — ' + okN + '개 성공' +
-       (failN ? ' · ' + failN + '개 실패' : ''));
+       (failN ? ' · ' + failN + '개 실패' : '') +
+       (handed.length ? ' · 옛 자동 캠페인 멈춤 ' + handed.length : ''));
   showSheet_(SHEET_ADGROW);
   ui_().alert(failN ? '일부 실패' : '올렸습니다',
-    okN + '개 성공' + (failN ? ' · ' + failN + '개 실패 ([결과] 칸에 사유)' : '') + '\n\n' +
+    okN + '개 성공' + (failN ? ' · ' + failN + '개 실패 ([결과] 칸에 사유)' : '') + '\n' +
+    (handed.length ? '옛 자동 캠페인 ' + handed.length + '개를 멈췄습니다: ' +
+                     handed.join(', ') + '\n' : '') + '\n' +
     (okN ? '다음: [켜기 — 승인 ✓ 만] — 여기서부터 돈이 나갑니다.\n' +
            '⚠ 켜기 전에 관제의 트랙 B 한도를 한 번 보세요.' : ''),
     ui_().ButtonSet.OK);
+}
+
+/**
+ * 갈아탄 줄의 옛 자동 캠페인을 멈춘다. @return 멈춘 캠페인 이름
+ *
+ * 옛 캠페인은 아직 광고육성계획에 제 줄로 남아 있다 (승인은 풀린 채로).
+ * 그 줄을 찾아 관제와 같은 길로 멈춘다 — 계획 표 표시와 대장이 함께 맞는다.
+ */
+function adGrowHandOff_(v, sh) {
+  var want = {};
+  for (var i = 0; i < v.length; i++) {
+    // 새 캠페인이 만들어진 줄만 — 아직 없으면 옛것을 멈출 때가 아니다
+    if (!String(v[i][AG_GID] || '').trim()) continue;
+    var prev = String(v[i][AG_PREVCID] || '').split(',')
+                 .map(function (t) { return t.trim(); }).filter(function (t) { return t; });
+    for (var q = 0; q < prev.length; q++) want[prev[q]] = true;
+  }
+  if (!Object.keys(want).length) return [];
+
+  var list = [];
+  adPlanEachRow_(function (row, sh0, rowNo, tab) {
+    var cid = String(row[AP_CID - 1] || '').trim();
+    if (!cid || !want[cid]) return;
+    if (String(row[AP_RESULT - 1]).indexOf(ADENABLE_MARK.PAUSED) >= 0) return;  // 이미 멈춤
+    list.push({ tab: tab, row: rowNo, cid: cid, name: String(row[AP_NAME - 1]) });
+  });
+  if (!list.length) return [];
+  return adWatchPause_(adsToken_(), list,
+    '수동 캠페인으로 갈아탔습니다 — 같은 말에 둘이 입찰하지 않게', '트랙 B 갈아타기');
 }
 
 /**
@@ -603,11 +782,12 @@ function adGrowReview_(interactive) {
   if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADGROW + '" 이 비어 있습니다.');
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADGROW_HEADER.length).getValues();
 
-  // 돌고 있는 줄 (캠페인ID 가 있는 것) 만 본다
+  // 돌고 있는 줄만 본다. 갈아타는 중이라 새 캠페인ID 가 아직 비어도,
+  // 옛 캠페인이 쓴 돈은 세야 하므로 [이전캠페인ID들] 이 있으면 함께 본다
   var live = [], oldest = '';
   for (var i = 0; i < v.length; i++) {
     var cid = String(v[i][AG_CID] || '').trim();
-    if (!cid) continue;
+    if (!cid && !String(v[i][AG_PREVCID] || '').trim()) continue;
     live.push(i);
     var st = v[i][AG_START] instanceof Date ? ymd_(v[i][AG_START]) : String(v[i][AG_START] || '');
     if (st && (!oldest || st < oldest)) oldest = st;
@@ -647,7 +827,22 @@ function adGrowReview_(interactive) {
   var stat = {};
   for (var q = 0; q < live.length; q++) {
     var ix = live[q], g = v[ix];
-    var p = perf[String(g[AG_CID]).trim()] || { ck: 0, cost: 0, sales: 0, ord: 0 };
+    /**
+     * 지금 캠페인 + 갈아타며 버린 옛 캠페인들을 합쳐서 센다.
+     * 자동으로 두 주 쓴 돈도 이 상품에 쓴 돈이다 — 여기서 0 으로 되돌리면
+     * 이미 ¥9,000 을 잃고도 "1주차, 더 봅시다" 가 된다.
+     */
+    var cids = [String(g[AG_CID]).trim()].concat(
+      String(g[AG_PREVCID] || '').split(',').map(function (t) { return t.trim(); }));
+    var p = { ck: 0, cost: 0, sales: 0, ord: 0 }, seen = {};
+    for (var ci = 0; ci < cids.length; ci++) {
+      var cd = cids[ci];
+      if (!cd || seen[cd]) continue;
+      seen[cd] = true;
+      var pp2 = perf[cd];
+      if (!pp2) continue;
+      p.ck += pp2.ck; p.cost += pp2.cost; p.sales += pp2.sales; p.ord += pp2.ord;
+    }
     var st2 = g[AG_START] instanceof Date ? ymd_(g[AG_START]) : String(g[AG_START] || '');
     var weeks = st2 ? Math.max(1, Math.ceil((daysBetween_(st2, to) + 1) / 7)) : 1;
     var m = Number(g[AG_MARGIN]) / 100;
