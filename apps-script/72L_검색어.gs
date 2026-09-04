@@ -127,9 +127,10 @@ function adTermEconomics_() {
   }
 
   // ② 우리가 만든 캠페인 — 넣은 SKU 를 그대로 얹는다
-  var pl = ss_().getSheetByName(SHEET_ADPLAN);
-  if (pl && pl.getLastRow() > 1) {
-    var pv = pl.getRange(2, 1, pl.getLastRow() - 1, ADPLAN_HEADER.length).getValues();
+  var planRows = [];
+  adPlanEachRow_(function (row) { planRows.push(row); });
+  {
+    var pv = planRows;
     for (var p = 0; p < pv.length; p++) {
       if (String(pv[p][AP_RESULT - 1]).indexOf('성공') !== 0) continue;
       var gd2 = String(pv[p][AP_GID - 1] || '').trim();

@@ -67,27 +67,31 @@ function adsCreated_(res, key, idField) {
 function executeAdPlan() {
   if (!adBusyGuard_('캠페인 만들기')) return;
   var props = PropertiesService.getScriptProperties();
-  var sh = getSheetOrThrow_(SHEET_ADPLAN);
-  if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADPLAN + '" 이 비어 있습니다.');
-  var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADPLAN_HEADER.length).getValues();
+  var tabs = adPlanTables_();
+  if (!tabs.length) throw new Error('계획 표가 비어 있습니다 ("' +
+    adPlanSheetNames_().join('" · "') + '").');
 
-  var todo = 0, daily = 0, skus = 0, done = 0;
-  for (var i = 0; i < v.length; i++) {
-    if (v[i][AP_APPROVE - 1] !== true) continue;
-    if (String(v[i][AP_RESULT - 1]).indexOf('성공') === 0) { done++; continue; }
-    if (String(v[i][AP_ACTION - 1]) === '이미 있음') continue;
-    todo++; daily += Number(v[i][AP_DAILY - 1]) || 0;
-    skus += Number(v[i][7]) || 0;
-  }
+  var todo = 0, daily = 0, skus = 0, done = 0, byTab = {};
+  adPlanEachRow_(function (row, sh0, rowNo, tab) {
+    if (row[AP_APPROVE - 1] !== true) return;
+    if (String(row[AP_RESULT - 1]).indexOf('성공') === 0) { done++; return; }
+    if (String(row[AP_ACTION - 1]) === '이미 있음') return;
+    todo++; daily += Number(row[AP_DAILY - 1]) || 0;
+    skus += Number(row[7]) || 0;
+    byTab[tab] = (byTab[tab] || 0) + 1;
+  });
   if (!todo) {
     ui_().alert('만들 것이 없습니다.',
       (done ? '승인한 ' + done + '줄은 이미 만들었습니다.\n\n' : '') +
-      '"' + SHEET_ADPLAN + '" 탭에서 [승인] 칸을 체크하세요.', ui_().ButtonSet.OK);
+      '"' + adPlanSheetNames_().join('" 또는 "') + '" 탭에서 [승인] 칸을 체크하세요.',
+      ui_().ButtonSet.OK);
     return;
   }
 
   var ans = ui_().alert('승인분 캠페인 생성',
     todo + '줄을 만듭니다 (SKU ' + skus.toLocaleString() + '개).\n' +
+    Object.keys(byTab).map(function (k) { return '   ' + k + ' ' + byTab[k] + '줄'; }).join('\n') +
+    (Object.keys(byTab).length ? '\n' : '') +
     '하루 예산 합계 ' + daily.toLocaleString() + '엔\n\n' +
     '이 SKU 들이 다른 광고그룹에 들어 있으면 거기서는 멈춥니다 —\n' +
     '두 곳에서 함께 입찰하면 자기끼리 값을 올립니다. (지우지 않고 멈춤)\n\n' +
@@ -121,21 +125,19 @@ function adPlanExecStep_(interactive) {
   var t0 = Date.now();
   var props = PropertiesService.getScriptProperties();
   var state = props.getProperty(PROP_ADEXEC_STATE) === 'on' ? 'ENABLED' : 'PAUSED';
-  var sh = getSheetOrThrow_(SHEET_ADPLAN);
-  var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADPLAN_HEADER.length).getValues();
   var token = adsToken_();
 
   var logBuf = adLogBuffer_(ADEXEC_FLUSH_EVERY);
   var okN = 0, failN = 0, left = 0, timeUp = false, gaveUp = 0, streak = 0, aborted = '';
-  for (var i = 0; i < v.length; i++) {
-    if (v[i][AP_APPROVE - 1] !== true) continue;
-    if (String(v[i][AP_RESULT - 1]).indexOf('성공') === 0) continue;
-    if (adIsGivenUp_(v[i][AP_RESULT - 1])) continue;      // 이미 그만둔 줄
-    if (String(v[i][AP_ACTION - 1]) === '이미 있음') continue;
-    if (aborted) { left++; continue; }
-    if (Date.now() - t0 > ADS_SOFT_MS) { timeUp = true; left++; continue; }
+  adPlanEachRow_(function (row, sh, rowNo) {
+    if (row[AP_APPROVE - 1] !== true) return;
+    if (String(row[AP_RESULT - 1]).indexOf('성공') === 0) return;
+    if (adIsGivenUp_(row[AP_RESULT - 1])) return;         // 이미 그만둔 줄
+    if (String(row[AP_ACTION - 1]) === '이미 있음') return;
+    if (aborted) { left++; return; }
+    if (Date.now() - t0 > ADS_SOFT_MS) { timeUp = true; left++; return; }
 
-    var r = adExecRow_(token, sh, i + 2, v[i], state, logBuf);
+    var r = adExecRow_(token, sh, rowNo, row, state, logBuf);
     if (r.ok) { okN++; streak = 0; }
     else {
       failN++; streak++;
@@ -143,11 +145,10 @@ function adPlanExecStep_(interactive) {
       // 하나가 틀린 것과 무언가 통째로 잘못된 것은 다르다.
       // 잇달아 실패하면 뒤엣것이므로 더 밀어붙이지 않는다.
       if (streak >= ADEXEC_ABORT_AFTER) {
-        aborted = '잇달아 ' + streak + '줄 실패 (마지막: ' +
-                  String(v[i][AP_NAME - 1]) + ')';
+        aborted = '잇달아 ' + streak + '줄 실패 (마지막: ' + String(row[AP_NAME - 1]) + ')';
       }
     }
-  }
+  });
 
   logBuf.flush();
   var msg = '캠페인 생성 — 성공 ' + okN + (failN ? ' · 실패 ' + failN : '') +
@@ -628,28 +629,25 @@ function syncCampaignsToApproval() { adEnableStart_('SYNC'); }
 /** 메뉴: 전부 멈추기 */
 function pauseAllCampaigns() { adEnableStart_('OFF'); }
 
-/** 계획 표를 훑어 지금 상태를 센다 */
-function adEnableCount_(v) {
+/** 계획 표들을 훑어 지금 상태를 센다 (트랙 A·M 표 + 트랙 B 표) */
+function adEnableCount_() {
   var c = { made: 0, on: 0, off: 0, okN: 0, okDaily: 0, wrongOn: 0, okOff: 0 };
-  for (var i = 0; i < v.length; i++) {
-    var r = String(v[i][AP_RESULT - 1]);
-    if (r.indexOf('성공') !== 0) continue;
+  adPlanEachRow_(function (row) {
+    var r = String(row[AP_RESULT - 1]);
+    if (r.indexOf('성공') !== 0) return;
     c.made++;
-    var ap = adRowApproved_(v[i][AP_APPROVE - 1]);
+    var ap = adRowApproved_(row[AP_APPROVE - 1]);
     var isOn = r.indexOf(ADENABLE_MARK.ENABLED) >= 0;
-    if (ap) { c.okN++; c.okDaily += Number(v[i][AP_DAILY - 1]) || 0; if (!isOn) c.okOff++; }
+    if (ap) { c.okN++; c.okDaily += Number(row[AP_DAILY - 1]) || 0; if (!isOn) c.okOff++; }
     if (isOn) { c.on++; if (!ap) c.wrongOn++; }
     else if (r.indexOf(ADENABLE_MARK.PAUSED) >= 0) c.off++;
-  }
+  });
   return c;
 }
 
 function adEnableStart_(mode) {
   if (!adBusyGuard_('캠페인 ' + ADENABLE_MODES[mode])) return;
-  var sh = getSheetOrThrow_(SHEET_ADPLAN);
-  if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADPLAN + '" 이 비어 있습니다.');
-  var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADPLAN_HEADER.length).getValues();
-  var c = adEnableCount_(v);
+  var c = adEnableCount_();
 
   if (!c.made) {
     ui_().alert('만든 캠페인이 없습니다.',
@@ -731,24 +729,29 @@ function adEnableStep_(interactive) {
   var mode = PropertiesService.getScriptProperties().getProperty(PROP_ADENABLE_STATE) || 'ON';
   if (mode === 'ENABLED') mode = 'ON';          // 옛 값과의 호환
   if (mode === 'PAUSED') mode = 'OFF';
-  var sh = getSheetOrThrow_(SHEET_ADPLAN);
-  var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADPLAN_HEADER.length).getValues();
   var token = adsToken_();
+  var logBuf = adLogBuffer_(ADEXEC_FLUSH_EVERY);
+  var nOn = 0, nOff = 0, failN = 0, left = 0, timeUp = false, nAds = 0, streak = 0, aborted = '';
 
-  // 결과 칸은 통째로 한 번에 쓴다 — 줄마다 setValue 하면 여든 번을 부른다
+  // 계획 표마다 따로 훑는다 (트랙 A·M 은 광고생성계획, 트랙 B 는 광고육성계획).
+  // 결과 칸은 표 단위로 통째로 한 번에 쓴다 — 줄마다 setValue 하면 여든 번을 부른다
+  var tabs = adPlanTables_();
+  for (var T = 0; T < tabs.length; T++) {
+  var sh = tabs[T].sh, v = tabs[T].v;
   var col = [], idCol = [];
   for (var c0 = 0; c0 < v.length; c0++) {
     col.push([v[c0][AP_RESULT - 1]]);
     idCol.push([v[c0][AP_ADIDS - 1] || '']);
   }
   var dirty = false, idDirty = false, since = 0;
-  var flushCol = function () {
-    if (dirty) { sh.getRange(2, AP_RESULT, col.length, 1).setValues(col); dirty = false; }
-    if (idDirty) { sh.getRange(2, AP_ADIDS, idCol.length, 1).setValues(idCol); idDirty = false; }
-  };
-  var logBuf = adLogBuffer_(ADEXEC_FLUSH_EVERY);
+  // 표마다 다시 만든다 — 이 안에서만 부르므로 지금 표의 sh·col 을 가리킨다
+  var flushCol = (function (sh0, col0, idCol0) {
+    return function () {
+      if (dirty) { sh0.getRange(2, AP_RESULT, col0.length, 1).setValues(col0); dirty = false; }
+      if (idDirty) { sh0.getRange(2, AP_ADIDS, idCol0.length, 1).setValues(idCol0); idDirty = false; }
+    };
+  })(sh, col, idCol);
 
-  var nOn = 0, nOff = 0, failN = 0, left = 0, timeUp = false, nAds = 0, streak = 0, aborted = '';
   for (var i = 0; i < v.length; i++) {
     var res = String(v[i][AP_RESULT - 1]);
     if (res.indexOf('성공') !== 0) continue;
@@ -844,6 +847,7 @@ function adEnableStep_(interactive) {
     if (++since >= ADEXEC_FLUSH_EVERY) { flushCol(); logBuf.flush(); since = 0; }
   }
   flushCol(); logBuf.flush();
+  }
 
   var msg = ADENABLE_MODES[mode] + ' — 켬 ' + nOn + ' · 멈춤 ' + nOff +
             (failN ? ' · 실패 ' + failN : '') + ' · 상품 ' + nAds + '개' +

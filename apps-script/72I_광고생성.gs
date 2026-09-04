@@ -54,7 +54,24 @@
  * 여기서는 아무것도 만들지 않는다. 계획만 표로 낸다.
  */
 
+/**
+ * 계획 표는 둘이다 — 트랙마다 제 표를 가진다.
+ *
+ * 처음에는 하나에 다 넣었다. "실행 경로를 두 벌 만들지 않는다" 는 생각이었고
+ * 그 자체는 맞았는데, 표를 같이 쓴 대가가 계속 나왔다:
+ *   · 트랙 A 의 계획 다시 계산이 표를 통째로 다시 써서 B 줄을 지울 뻔했다
+ *   · 캠페인 유형이 A 기준(AUTO)으로 박혀 있어 B 가 수동 캠페인을 못 만들었다
+ *   · A 의 "이미 만든 줄은 건너뛴다" 가 B 의 자동→수동 갈아타기를 막았다
+ * 매번 조건문을 하나씩 더 다는 식으로 막았는데, 그게 쌓이면 다음 사람이 못 읽는다.
+ *
+ * 그래서 표만 가른다. 실행(생성·켜기·멈춤)·관제·대장은 여전히 한 벌이고,
+ * 표 목록을 돌 뿐이다 — 머리글이 같아서 줄의 생김새는 하나다.
+ *
+ *   광고생성계획   트랙 A(재배분) · M(승격).  72I 가 통째로 다시 쓴다
+ *   광고육성계획   트랙 B(육성).             72O 가 혼자 쓴다
+ */
 var SHEET_ADPLAN = '광고생성계획';
+var SHEET_ADPLAN_GROW = '광고육성계획';
 var ADPLAN_HEADER = [
   '계획ID', '동작', '방식', '캠페인명', '유형', '일예산(JPY)', '입찰(JPY)',
   'SKU수', '기존SKU수', '대표SKU', 'CPC구간', '손익분기CPA(JPY)', '월매출합(JPY)',
@@ -65,6 +82,32 @@ var ADPLAN_HEADER = [
 var AP_ACTION = 2, AP_NAME = 4, AP_DAILY = 6, AP_BID = 7, AP_SKUS = 16;
 var AP_GID = 17, AP_APPROVE = 18, AP_RESULT = 19, AP_CID = 20, AP_ADIDS = 21, AP_TRACK = 22;
 var ADPLAN_TRACK_B = 'B';
+/** 계획 표 이름들. 새 트랙이 생기면 여기만 늘린다 */
+function adPlanSheetNames_() { return [SHEET_ADPLAN, SHEET_ADPLAN_GROW]; }
+
+/**
+ * 있는 계획 표를 값째로 읽어 온다. 실행·관제가 이것으로 돈다.
+ * @return {Array} [{name, sh, v}] — v 는 머리글 뺀 줄들
+ */
+function adPlanTables_() {
+  var out = [], names = adPlanSheetNames_();
+  for (var i = 0; i < names.length; i++) {
+    var sh = ss_().getSheetByName(names[i]);
+    if (!sh || sh.getLastRow() < 2) continue;
+    out.push({ name: names[i], sh: sh,
+               v: sh.getRange(2, 1, sh.getLastRow() - 1, ADPLAN_HEADER.length).getValues() });
+  }
+  return out;
+}
+
+/** 두 표를 한 줄씩 훑는다 — 표를 나눠 쓰는 것을 부르는 쪽이 몰라도 되게 */
+function adPlanEachRow_(fn) {
+  var t = adPlanTables_();
+  for (var i = 0; i < t.length; i++) {
+    for (var r = 0; r < t[i].v.length; r++) fn(t[i].v[r], t[i].sh, r + 2, t[i].name);
+  }
+}
+
 var ADPLAN_JUDGE_ORDERS = 3;    // 판정에 필요한 손익분기 주문 수
 var ADPLAN_JUDGE_DAYS = 14;     // 그것을 몇 일 안에 볼 것인가
 
@@ -373,13 +416,13 @@ function planAdCampaigns() {
   for (var k2 = 0; k2 < rows.length; k2++) rows[k2][0] = 'P' + (k2 + 1);
 
   /**
-   * 이 계산은 트랙 A(재배분) 줄만 만든다. 다른 데서 밀어넣은 줄
-   * — 트랙 B(육성, 72O) · 트랙 M(승격 수동 캠페인, 72P) — 은 통째로 다시 쓰면
-   * 지워지므로 먼저 건져 두었다가 뒤에 붙인다. 그 줄의 캠페인ID·결과는
-   * 이미 아마존에 있는 것이다.
+   * 이 계산은 트랙 A(재배분) 줄만 만든다. 같은 표에 사는 트랙 M(승격, 72P) 줄은
+   * 통째로 다시 쓰면 지워지므로 먼저 건져 두었다가 뒤에 붙인다 —
+   * 그 줄의 캠페인ID·결과는 이미 아마존에 있는 것이다.
    *
-   * 'B 가 아닌 것' 이 아니라 'A 가 아닌 것' 으로 고른다 — 나중에 트랙이 하나 더
-   * 늘 때 여기를 안 고쳐도 되게. 트랙 칸이 빈 옛 줄은 A 로 본다.
+   * 트랙 B(육성)는 제 표(광고육성계획)에 살아서 여기 걸리지 않는다.
+   * 그래도 'A 가 아닌 것' 으로 고른다 — 옛 표에 남아 있는 B 줄이 있어도 살아남게,
+   * 그리고 트랙이 하나 더 늘 때 여기를 안 고쳐도 되게. 트랙 칸이 빈 옛 줄은 A 로 본다.
    */
   var keepOther = [];
   var pshOld = ss_().getSheetByName(SHEET_ADPLAN);

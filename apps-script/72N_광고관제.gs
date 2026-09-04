@@ -48,20 +48,18 @@ var ADWATCH_MIN_DAYS = 3;          // 켠 지 이만큼은 지나야 실적으�
 
 /** 광고생성계획에서 우리가 만든 캠페인 (결과가 성공인 줄) */
 function adWatchOurs_() {
-  var sh = ss_().getSheetByName(SHEET_ADPLAN);
-  if (!sh || sh.getLastRow() < 2) return [];
-  var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADPLAN_HEADER.length).getValues();
   var out = [];
-  for (var i = 0; i < v.length; i++) {
-    if (String(v[i][AP_RESULT - 1]).indexOf('성공') !== 0) continue;
-    var cid = String(v[i][AP_CID - 1] || '').trim();
-    if (!cid) continue;
-    out.push({ row: i + 2, cid: cid, name: String(v[i][AP_NAME - 1]),
-               approved: adRowApproved_(v[i][AP_APPROVE - 1]),
-               daily: Number(v[i][AP_DAILY - 1]) || 0, bid: Number(v[i][AP_BID - 1]) || 0,
-               nSku: Number(v[i][7]) || 0, result: String(v[i][AP_RESULT - 1]),
-               track: String(v[i][AP_TRACK - 1] || 'A').trim().toUpperCase() });
-  }
+  adPlanEachRow_(function (row, sh, rowNo, tab) {
+    if (String(row[AP_RESULT - 1]).indexOf('성공') !== 0) return;
+    var cid = String(row[AP_CID - 1] || '').trim();
+    if (!cid) return;
+    // 어느 표의 몇 줄인지 들고 다닌다 — 멈춘 뒤 그 표에 표시를 돌려 적어야 한다
+    out.push({ tab: tab, row: rowNo, cid: cid, name: String(row[AP_NAME - 1]),
+               approved: adRowApproved_(row[AP_APPROVE - 1]),
+               daily: Number(row[AP_DAILY - 1]) || 0, bid: Number(row[AP_BID - 1]) || 0,
+               nSku: Number(row[7]) || 0, result: String(row[AP_RESULT - 1]),
+               track: String(row[AP_TRACK - 1] || 'A').trim().toUpperCase() });
+  });
   return out;
 }
 
@@ -310,7 +308,9 @@ function adWatchMailOnce_(kind, subject, body) {
 function adWatchRun_(interactive) {
   var ours = adWatchOurs_();
   if (!ours.length) {
-    if (interactive) ui_().alert('관제할 캠페인이 없습니다.', '[⑤ 승인분 캠페인 생성]으로 먼저 만드세요.', ui_().ButtonSet.OK);
+    if (interactive) ui_().alert('관제할 캠페인이 없습니다.',
+      '[⑤ 승인분 캠페인 생성]으로 먼저 만드세요.\n(계획 표: ' + adPlanSheetNames_().join(' · ') + ')',
+      ui_().ButtonSet.OK);
     return null;
   }
   var token = adsToken_();
@@ -461,14 +461,19 @@ function adWatchPause_(token, list, why, by) {
   // 아마존은 이미 멈췄다. 여기서 시트가 늦어 터져도 그 사실은 로그에 남긴다
   log_('ads', 'WARN', who + ' 멈춤 — ' + done.map(function (c) { return c.name; }).join(', ') + ' · ' + why);
   try {
-  var sh = ss_().getSheetByName(SHEET_ADPLAN);
-  if (sh) {
+  // 줄이 어느 표에 있는지 갈라서, 표마다 한 번씩만 쓴다
+  var byTab = {};
+  for (var d = 0; d < done.length; d++) {
+    var tb = done[d].tab || SHEET_ADPLAN;
+    (byTab[tb] || (byTab[tb] = {}))[done[d].row] = true;
+  }
+  for (var tn in byTab) {
+    var sh = ss_().getSheetByName(tn);
+    if (!sh || sh.getLastRow() < 2) continue;
     var v = sh.getRange(2, AP_RESULT, sh.getLastRow() - 1, 1).getValues();
-    var rowsOf = {};
-    for (var d = 0; d < done.length; d++) rowsOf[done[d].row] = true;
     var dirty = false;
     for (var r = 0; r < v.length; r++) {
-      if (!rowsOf[r + 2]) continue;
+      if (!byTab[tn][r + 2]) continue;
       var base = String(v[r][0]).replace(' ' + ADENABLE_MARK.ENABLED, '').replace(' ' + ADENABLE_MARK.PAUSED, '');
       v[r][0] = base + ' ' + ADENABLE_MARK.PAUSED; dirty = true;
     }

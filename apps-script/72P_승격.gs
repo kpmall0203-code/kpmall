@@ -57,17 +57,14 @@ function adPromoSkuByGroup_() {
   var out = {};
 
   // ① 우리가 만든 것 — 계획 표가 곧 답이다. 가장 믿을 만하므로 먼저 넣는다
-  var psh = ss_().getSheetByName(SHEET_ADPLAN);
-  if (psh && psh.getLastRow() > 1) {
-    var pv = psh.getRange(2, 1, psh.getLastRow() - 1, ADPLAN_HEADER.length).getValues();
-    for (var p = 0; p < pv.length; p++) {
-      var pg = String(pv[p][AP_GID - 1] || '').trim();
-      var lst = String(pv[p][AP_SKUS - 1] || '').split(',')
-                  .map(function (x) { return x.trim(); })
-                  .filter(function (x) { return x; });
-      if (pg && lst.length === 1) out[pg] = lst[0];
-    }
-  }
+  //    두 표를 다 본다 (트랙 A·M 은 광고생성계획, 트랙 B 는 광고육성계획)
+  adPlanEachRow_(function (row) {
+    var pg = String(row[AP_GID - 1] || '').trim();
+    var lst = String(row[AP_SKUS - 1] || '').split(',')
+                .map(function (x) { return x.trim(); })
+                .filter(function (x) { return x; });
+    if (pg && lst.length === 1) out[pg] = lst[0];
+  });
 
   // ② 옛 캠페인 — 광고그룹의 [SKU수] 가 1 인 것만. '25개 넘음' 같은 글자는 숫자가 아니라 걸러진다
   var gsh = ss_().getSheetByName(SHEET_ADGRP);
@@ -108,18 +105,15 @@ function adPromoCampName_(prefix, sku, asin) {
 /** 이미 만들어 둔 승격 캠페인 이름 → 그 캠페인·광고그룹 ID (72M 이 여기로 키워드를 올린다) */
 function adPromoTargets_() {
   var out = {};
-  var sh = ss_().getSheetByName(SHEET_ADPLAN);
-  if (!sh || sh.getLastRow() < 2) return out;
-  var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADPLAN_HEADER.length).getValues();
-  for (var i = 0; i < v.length; i++) {
-    if (String(v[i][ADPLAN_HEADER.length - 1]) !== ADPLAN_TRACK_M) continue;
-    var nm = String(v[i][AP_NAME - 1] || '').trim();
-    if (!nm) continue;
-    out[nm] = { cid: String(v[i][AP_CID - 1] || '').trim(),
-                gid: String(v[i][AP_GID - 1] || '').trim(),
-                approved: v[i][AP_APPROVE - 1] === true,
-                result: String(v[i][AP_RESULT - 1] || '') };
-  }
+  adPlanEachRow_(function (row) {
+    if (String(row[ADPLAN_HEADER.length - 1]) !== ADPLAN_TRACK_M) return;
+    var nm = String(row[AP_NAME - 1] || '').trim();
+    if (!nm) return;
+    out[nm] = { cid: String(row[AP_CID - 1] || '').trim(),
+                gid: String(row[AP_GID - 1] || '').trim(),
+                approved: row[AP_APPROVE - 1] === true,
+                result: String(row[AP_RESULT - 1] || '') };
+  });
   return out;
 }
 

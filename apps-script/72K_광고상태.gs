@@ -152,18 +152,15 @@ function testCampaignToggle() {
   if (!adBusyGuard_('켜기·멈추기 실험')) return;
 
   // 우리가 만든 캠페인 중 첫 줄을 고른다 — 남의 캠페인은 실험 대상이 아니다
-  var sh = getSheetOrThrow_(SHEET_ADPLAN);
-  if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADPLAN + '" 이 비어 있습니다.');
-  var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADPLAN_HEADER.length).getValues();
   var cid = '', gid = '', name = '';
-  for (var i = 0; i < v.length; i++) {
-    if (String(v[i][AP_RESULT - 1]).indexOf('성공') !== 0) continue;
-    if (String(v[i][AP_ACTION - 1]) !== '생성') continue;
-    var c = String(v[i][AP_CID - 1] || '').trim();
-    if (!c) continue;
-    cid = c; gid = String(v[i][AP_GID - 1] || '').trim(); name = String(v[i][AP_NAME - 1]);
-    break;
-  }
+  adPlanEachRow_(function (row) {
+    if (cid) return;
+    if (String(row[AP_RESULT - 1]).indexOf('성공') !== 0) return;
+    if (String(row[AP_ACTION - 1]) !== '생성') return;
+    var c = String(row[AP_CID - 1] || '').trim();
+    if (!c) return;
+    cid = c; gid = String(row[AP_GID - 1] || '').trim(); name = String(row[AP_NAME - 1]);
+  });
   if (!cid) {
     ui_().alert('실험할 캠페인이 없습니다.',
       '우리가 만든 캠페인(결과가 "성공", 할 일이 "생성")이 있어야 합니다.',

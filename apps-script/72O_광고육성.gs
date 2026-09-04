@@ -358,7 +358,7 @@ function pushAdGrowToPlan() {
     return;
   }
 
-  var psh = ensureSheet_(SHEET_ADPLAN, ADPLAN_HEADER);
+  var psh = ensureSheet_(SHEET_ADPLAN_GROW, ADPLAN_HEADER);
   var pv = psh.getLastRow() > 1
     ? psh.getRange(2, 1, psh.getLastRow() - 1, ADPLAN_HEADER.length).getValues() : [];
   var byName = {};
@@ -421,13 +421,13 @@ function pushAdGrowToPlan() {
   writeTable_(psh, ADPLAN_HEADER, pv);
   if (pv.length) psh.getRange(2, AP_APPROVE, pv.length, 1).insertCheckboxes();
 
-  showSheet_(SHEET_ADPLAN);
+  showSheet_(SHEET_ADPLAN_GROW);
   ui_().alert('계획에 넣었습니다',
     '새로 ' + added + '개' + (updated ? ' · 값 갱신 ' + updated + '개' : '') +
     (skipRank.length ? ' · 이미 1페이지라 뺀 줄 ' + skipRank.length + '개' : '') + '\n' +
     '하루 예산 합계 ¥' + daily.toLocaleString() + '\n\n' +
     '다음:\n' +
-    '  ① 광고생성계획에서 이 줄들의 [승인] 을 체크\n' +
+    '  ① ' + SHEET_ADPLAN_GROW + ' 에서 이 줄들의 [승인] 을 체크\n' +
     '  ② [⑤ 승인분 캠페인 생성] — 멈춤 상태로 만들어집니다\n' +
     '  ③ [④ 기준키워드 올리기] — 수동 캠페인에 그 말을 넣습니다 (기준키워드를 적은 줄만)\n' +
     '  ④ [켜기 — 승인 ✓ 만] — 여기서부터 돈이 나갑니다\n\n' +
