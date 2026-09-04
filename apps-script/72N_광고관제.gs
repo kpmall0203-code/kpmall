@@ -152,6 +152,7 @@ function refreshAdWatch() {
   if (!r) return;
   showSheet_(SHEET_ADWATCH);
   var lines = [r.banner, ''];
+  if (r.writeErr) lines.push('⚠ 표를 쓰다 시트가 늦어 멈췄습니다 — 판정과 멈춤은 끝났습니다. 다시 누르면 표가 채워집니다.\n   (' + r.writeErr + ')', '');
   if (r.paused.length) lines.push('⛔ 자동으로 멈춘 캠페인 ' + r.paused.length + '개:\n   ' + r.paused.join('\n   '), '');
   lines.push('판정: ' + r.statLine);
   if (!adWatchTriggerOn_()) {
@@ -278,7 +279,12 @@ function adWatchRun_(interactive) {
                (cap > 0 ? ' / 한도 ¥' + Math.round(cap).toLocaleString() + ' (' + Math.round(ratio * 100) + '%) ' + capState
                         : ' / 한도 없음 ⚠') +
                '  |  한도 출처: ' + capInfo.src;
-  adWatchWrite_(banner, rows, now);
+  var writeErr = '';
+  try { adWatchWrite_(banner, rows, now); }
+  catch (e3) {
+    writeErr = String(e3).substring(0, 160);
+    log_('ads', 'ERROR', '관제 표 쓰기 실패 (판정·멈춤은 끝남): ' + writeErr);
+  }
 
   var statLine = Object.keys(stat).map(function (k) { return k + ' ' + stat[k]; }).join(' · ');
   log_('ads', paused.length || capState.indexOf('⛔') === 0 ? 'WARN' : 'INFO',
@@ -297,7 +303,7 @@ function adWatchRun_(interactive) {
     adWatchMailOnce_('warn', '광고비가 주간 한도의 ' + Math.round(ratio * 100) + '% 입니다',
       banner + '\n\n한도를 넘으면 자동으로 전부 멈춥니다. 한도는 광고기준 [주간 광고비 한도(JPY)] 에서 바꿉니다.');
   }
-  return { banner: banner, paused: paused, statLine: statLine };
+  return { banner: banner, paused: paused, statLine: statLine, writeErr: writeErr };
 }
 
 /** 캠페인을 멈추고, 계획 표의 결과 표시와 대장을 맞춘다. @return 멈춘 이름들 */
@@ -318,7 +324,10 @@ function adWatchPause_(token, list, why) {
   }
   if (!done.length) return [];
 
-  // 계획 표의 결과 칸에 '· 멈춤' 을 남긴다 — 켜기·맞추기가 이 표시를 본다
+  // 계획 표의 결과 칸에 '· 멈춤' 을 남긴다 — 켜기·맞추기가 이 표시를 본다.
+  // 아마존은 이미 멈췄다. 여기서 시트가 늦어 터져도 그 사실은 로그에 남긴다
+  log_('ads', 'WARN', '관제 멈춤 — ' + done.map(function (c) { return c.name; }).join(', ') + ' · ' + why);
+  try {
   var sh = ss_().getSheetByName(SHEET_ADPLAN);
   if (sh) {
     var v = sh.getRange(2, AP_RESULT, sh.getLastRow() - 1, 1).getValues();
@@ -336,17 +345,33 @@ function adWatchPause_(token, list, why) {
     return adLogRow_({ kind: '캠페인', camp: c.name, group: c.name, item: '상태', from: 'ENABLED', to: 'PAUSED',
       sum: '관제 멈춤 · ' + c.name, why: why, by: '관제(자동)', cid: c.cid });
   }));
+  } catch (e2) { log_('ads', 'ERROR', '관제 멈춤 뒤 시트 기록 실패 (아마존은 멈춤): ' + String(e2).substring(0, 160)); }
   return done.map(function (c) { return c.name; });
 }
 
-/** 표를 쓴다. 1행 요약 띠, 2행 머리글 */
+/**
+ * 표를 쓴다. 1행 요약 띠, 2행 머리글.
+ *
+ * 첫 실행에서 "스프레드시트 서비스가 타임아웃" 이 났다. 문서가 50탭 300만 셀이라
+ * 시트 삽입·행 삽입·체크박스 삽입 같은 '구조를 바꾸는' 일이 한 번에 겹치면 무겁다.
+ * 그래서 구조를 바꾸는 일은 시트가 없을 때 한 번만 하고, 평소에는 값만 쓴다.
+ *   · 1000행 전체를 지우지 않고 지난번에 쓴 만큼만 지운다
+ *   · 체크박스·머리글 메모는 처음 만들 때만 (값을 덮어써도 검증 규칙은 남는다)
+ *   · 행이 모자랄 때만 늘린다 (캠페인 100개 안쪽이라 사실상 없다)
+ */
 function adWatchWrite_(banner, rows, now) {
-  var sh = ss_().getSheetByName(SHEET_ADWATCH) || ss_().insertSheet(SHEET_ADWATCH);
   var W = ADWATCH_HEADER.length;
+  var sh = ss_().getSheetByName(SHEET_ADWATCH);
+  var fresh = false;
+  if (!sh) { sh = ss_().insertSheet(SHEET_ADWATCH); fresh = true; }
   var need = rows.length + ADWATCH_ROW_HEADER;
-  if (sh.getMaxRows() < need + 1) sh.insertRowsAfter(sh.getMaxRows(), need + 1 - sh.getMaxRows());
+  if (sh.getMaxRows() < need) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
   if (sh.getMaxColumns() < W) sh.insertColumnsAfter(sh.getMaxColumns(), W - sh.getMaxColumns());
-  sh.getRange(1, 1, sh.getMaxRows(), W).clearContent();
+
+  // 지난번에 쓴 범위만 비운다
+  var used = sh.getLastRow();
+  if (used > ADWATCH_ROW_HEADER) sh.getRange(ADWATCH_ROW_HEADER + 1, 1, used - ADWATCH_ROW_HEADER, W).clearContent();
+
   sh.getRange(1, 1).setValue(banner).setFontWeight('bold');
   sh.getRange(ADWATCH_ROW_HEADER, 1, 1, W).setValues([ADWATCH_HEADER])
     .setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
@@ -355,17 +380,26 @@ function adWatchWrite_(banner, rows, now) {
     sh.getRange(ADWATCH_ROW_HEADER + 1, AW_CID + 1, rows.length, 1).setNumberFormat('@');
     sh.getRange(ADWATCH_ROW_HEADER + 1, 1, rows.length, W).setValues(rows);
     sh.getRange(ADWATCH_ROW_HEADER + 1, 12, rows.length, 1).setNumberFormat('0.0%');
-    sh.getRange(ADWATCH_ROW_HEADER + 1, AW_STOP + 1, rows.length, 1).insertCheckboxes();
-    sh.getRange(ADWATCH_ROW_HEADER + 1, AW_APPROVE + 1, rows.length, 1).insertCheckboxes();
   }
-  sh.setFrozenRows(ADWATCH_ROW_HEADER);
-  headerNotes_(sh, ADWATCH_ROW_HEADER, ADWATCH_HEADER, {
-    '아마존상태': '아마존이 지금 말하는 상태. 시트의 표시가 아니라 진짜 값이다.',
-    '승인': '광고생성계획의 승인 칸. 여기서 바꿔도 반영되지 않는다 — 계획 표에서 바꾼다.',
-    '판정': '⛔ = 자동으로 멈춘다 (한도 넘으면 자동 멈춤 이 TRUE 일 때)\n⚠ = 사람이 볼 것\n· = 참고',
-    '멈춤': '체크한 뒤 [📣 광고 → 관제: 체크한 캠페인 멈춤]. 여러 개를 한 번에.',
-    '7일ACOS': '광고매출은 클릭 후 14일까지 붙는다. 최근 7일은 실제보다 높게 보인다.'
-  });
+  // 체크박스는 이미 있으면 다시 안 넣는다 — 한 칸만 본다
+  var hasBox = false;
+  if (!fresh && rows.length) {
+    try { var dv = sh.getRange(ADWATCH_ROW_HEADER + 1, AW_STOP + 1).getDataValidation(); hasBox = !!dv; } catch (e) {}
+  }
+  if (rows.length && !hasBox) {
+    sh.getRange(ADWATCH_ROW_HEADER + 1, AW_STOP + 1, Math.max(rows.length, 200), 1).insertCheckboxes();
+    sh.getRange(ADWATCH_ROW_HEADER + 1, AW_APPROVE + 1, Math.max(rows.length, 200), 1).insertCheckboxes();
+  }
+  if (fresh || !hasBox) {
+    sh.setFrozenRows(ADWATCH_ROW_HEADER);
+    headerNotes_(sh, ADWATCH_ROW_HEADER, ADWATCH_HEADER, {
+      '아마존상태': '아마존이 지금 말하는 상태. 시트의 표시가 아니라 진짜 값이다.',
+      '승인': '광고생성계획의 승인 칸. 여기서 바꿔도 반영되지 않는다 — 계획 표에서 바꾼다.',
+      '판정': '⛔ = 자동으로 멈춘다 (한도 넘으면 자동 멈춤 이 TRUE 일 때)\n⚠ = 사람이 볼 것\n· = 참고',
+      '멈춤': '체크한 뒤 [📣 광고 → 관제 표에서 체크한 캠페인 멈춤]. 여러 개를 한 번에.',
+      '7일ACOS': '광고매출은 클릭 후 14일까지 붙는다. 최근 7일은 실제보다 높게 보인다.'
+    });
+  }
 }
 
 /** 메뉴: 관제 표에서 체크한 캠페인 멈춤 */
