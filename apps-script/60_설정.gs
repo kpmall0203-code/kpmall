@@ -40,7 +40,11 @@ var AUTOMATIONS = [
     req: '없음 — 가장 먼저 켜도 된다', dflt: true },
   { name: '환율 괴리 알림', handler: 'scheduledFxDrift', hour: 7,
     desc: '직전 리프라이싱 기준에서 ±3% 벌어지면 메일. "지금 돌릴 때"를 알려준다',
-    req: '알림 메일 주소 설정', dflt: true }
+    req: '알림 메일 주소 설정', dflt: true },
+  { name: '광고 관제', handler: 'scheduledAdWatch', hour: 8,
+    desc: '우리 캠페인의 상태·7일 광고비를 받아 광고관제 탭에 적고, 주간 한도를 넘거나 ' +
+          '승인 안 한 것이 켜져 있으면 멈추고 메일. 자동 광고의 안전장치',
+    req: '광고 API 자격증명 · (광고기준의 주간 광고비 한도)', dflt: true }
 ];
 
 /** 메뉴: 자동화 설정 탭 생성 */

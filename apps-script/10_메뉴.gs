@@ -39,9 +39,10 @@ function onOpen() {
 function buildPriceMenu_() {
   var ui = ui_();
   ui.createMenu('가격관리')
-    .addItem('현재 상태 · 다음 할 일', 'showStatus')
+    .addItem('🚦 광고 관제 — 뭐가 켜져 있고 얼마 쓰나', 'refreshAdWatch')
     .addItem('지금 무엇이 도는가 · 멈추기', 'collectStatus')
-    .addItem('📖 설명서 (이게 다 뭐야)', 'showManual')
+    .addItem('현재 상태 · 다음 할 일', 'showStatus')
+    .addItem('📖 설명서', 'showManual')
     .addSeparator()
 
     .addSubMenu(ui.createMenu('▶ 리프라이싱')
@@ -55,44 +56,42 @@ function buildPriceMenu_() {
       .addSeparator()
       .addItem('선택 SKU 제외', 'excludeSelectedSku')
       .addItem('승인분 피드 파일만 생성', 'buildPriceFeed')
-      .addSeparator()
       .addItem('냉장해제 가격 조정', 'proposeCoolPriceCuts'))
 
     /**
-     * 광고는 한 묶음으로 뺀다. 열다섯 개가 [분석] 안에 한 줄로 늘어져 있어
-     * 무엇을 먼저 눌러야 하는지 보이지 않았다. 여기서는 위에서 아래로 읽으면
-     * 그것이 곧 순서다:
-     *   ①~⑤  기준 → 계산 → 계획 → 승인 → 생성      (트랙 A 를 처음 깔 때)
-     *   켜기·맞추기·멈추기                          (돈이 나가는 스위치)
-     *   검색어 수집 → 승인 → 반영                   (매주)
-     *   입찰 반영 · 점검 · 보관                      (가끔)
-     * 자료 받기와 진단은 접어 둔다 — 늘 쓰는 것이 아니다.
+     * 광고 메뉴는 '얼마나 자주 누르나' 로 묶는다. 기능 종류로 묶었더니 열여덟 개가
+     * 한 줄에 서서 어느 것을 눌러야 하는지 보이지 않았다.
+     *   매주 — 검색어 네 걸음. 위에서 아래 순서대로.
+     *   스위치 — 돈이 나가기 시작하고 멈추는 자리. 셋뿐이다.
+     *   처음 한 번 — 캠페인을 깔 때. 그 뒤엔 새 상품이 들어올 때만.
+     *   더 보기 — 나머지 전부.
      */
     .addSubMenu(ui.createMenu('📣 광고')
-      .addItem('① 광고 기준 설정 (마진율 · 목표 ACOS)', 'setupAdBasis')
-      .addItem('② 광고 재배분 계산 (SKU 채산성)', 'analyzeAdReallocation')
-      .addItem('③ 캠페인 생성 계획', 'planAdCampaigns')
-      .addItem('④ 계획 전부 승인 (주의: 전 줄 체크)', 'approveAllPlan')
-      .addItem('⑤ 승인분 캠페인 생성', 'executeAdPlan')
+      .addItem('매주 ① 검색어 수집', 'fetchAdSearchTerms')
+      .addItem('매주 ② 검색어 판정 다시 계산', 'rollupAdTerms')
+      .addItem('매주 ③ 검색어 판정 승인', 'approveAdTerms')
+      .addItem('매주 ④ 검색어 승인분 반영 (키워드 올림·막음)', 'applyAdTerms')
       .addSeparator()
-      .addItem('캠페인 켜기 (승인 ✓ 만)', 'enableApprovedCampaigns')
-      .addItem('캠페인 승인대로 맞추기 (미승인은 끔)', 'syncCampaignsToApproval')
-      .addItem('캠페인 전부 멈추기', 'pauseAllCampaigns')
+      .addItem('켜기 — 승인 ✓ 만', 'enableApprovedCampaigns')
+      .addItem('승인대로 맞추기 — 미승인은 끔', 'syncCampaignsToApproval')
+      .addItem('전부 멈추기', 'pauseAllCampaigns')
+      .addItem('관제 표에서 체크한 캠페인 멈춤', 'pauseCheckedInWatch')
       .addSeparator()
-      .addItem('검색어 수집 (자동 캠페인)', 'fetchAdSearchTerms')
-      .addItem('검색어 판정 다시 계산 (원본 합치기)', 'rollupAdTerms')
-      .addItem('검색어 판정 승인', 'approveAdTerms')
-      .addItem('검색어 승인분 반영 (키워드 올림 · 막음)', 'applyAdTerms')
-      .addSeparator()
-      .addItem('승인분 입찰 반영', 'applyApprovedBids')
-      .addItem('캠페인 점검 · 정리 후보', 'reviewAdCampaigns')
-      .addItem('승인한 캠페인 보관 (되돌릴 수 없음)', 'archiveApprovedCampaigns')
-      .addSeparator()
-      .addSubMenu(ui.createMenu('📥 자료 받기')
+      .addSubMenu(ui.createMenu('처음 한 번 — 캠페인 깔기')
+        .addItem('① 광고 기준 설정 (마진율 · 목표 ACOS · 한도)', 'setupAdBasis')
+        .addItem('② 광고 재배분 계산 (SKU 채산성)', 'analyzeAdReallocation')
+        .addItem('③ 캠페인 생성 계획', 'planAdCampaigns')
+        .addItem('④ 계획 전부 승인 (주의: 전 줄 체크)', 'approveAllPlan')
+        .addItem('⑤ 승인분 캠페인 생성', 'executeAdPlan'))
+      .addSubMenu(ui.createMenu('더 보기')
+        .addItem('승인분 입찰 반영', 'applyApprovedBids')
+        .addItem('캠페인 점검 · 정리 후보', 'reviewAdCampaigns')
+        .addItem('승인한 캠페인 보관 (되돌릴 수 없음)', 'archiveApprovedCampaigns')
+        .addSeparator()
         .addItem('광고 구조 수집 (캠페인 · 광고그룹 · 키워드)', 'fetchAdStructure')
         .addItem('광고비 수집 (SKU 골라서)', 'fetchAdsSpend')
-        .addItem('키워드 실적 수집 (주 단위)', 'fetchAdKeywords'))
-      .addSubMenu(ui.createMenu('🔧 진단')
+        .addItem('키워드 실적 수집 (주 단위)', 'fetchAdKeywords')
+        .addSeparator()
         .addItem('광고 쓰기 권한 진단', 'diagnoseAdsWrite')
         .addItem('켜기 · 멈추기 한 개 실험', 'testCampaignToggle')
         .addItem('광고 프로필 다시 찾기', 'adsPickProfile')))
