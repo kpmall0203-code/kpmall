@@ -301,8 +301,10 @@ function adTermApplyStep_(interactive) {
       var tgt = adTermPromoTarget_(v[i2]);
       if (!tgt.name) {
         dirty = true; failN++;
-        col[i2][0] = '중단(SKU 모름): 이 광고그룹에는 SKU 가 여럿이라 어느 상품이 판 것인지 ' +
-                     '알 수 없습니다. 검색어 리포트는 광고그룹까지만 알려줍니다';
+        col[i2][0] = String(v[i2][AT_PROMO_SKU]) === ADPROMO_MARK_GROW
+          ? '중단(트랙 B): 육성 캠페인이 이미 이 말을 사고 있습니다. 졸업 뒤에 옮깁니다'
+          : '중단(SKU 모름): 이 광고그룹에는 SKU 가 여럿이라 어느 상품이 판 것인지 ' +
+            '알 수 없습니다. 검색어 리포트는 광고그룹까지만 알려줍니다';
         continue;
       }
       if (!tgt.gid) {

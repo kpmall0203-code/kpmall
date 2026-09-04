@@ -238,7 +238,7 @@ function adTermVerdict_(o, basis) {
              why: '이 광고그룹의 채산성을 모릅니다 — SKU 도 모르고, 이 기간에 판 것도 없습니다' };
   }
   // 근거가 SKU 인지 그룹 실적인지는 사유에 남긴다. 뒤의 것은 한 단계 무른 근거다
-  var src = o.src === 'group' ? ' [그룹 실적 기준]' : '';
+  var src = o.note || (o.src === 'group' ? ' [그룹 실적 기준]' : '');
   var cpc = o.clicks > 0 ? o.cost / o.clicks : 0;
   // 지금 이 값에 사려면 필요한 전환율. 못 넘으면 팔수록 손해다
   var needCvr = cpc > 0 ? cpc / o.beCpa : 0;
@@ -529,6 +529,7 @@ function adTermRollup_() {
 
   var basis = adBasis_();
   var eco = adTermEconomics_(), negs = adTermNegatives_(), have = adTermExistingKw_();
+  var growGrp = adGrowGroups_();      // 트랙 B 는 다른 잣대로 잰다 (아래)
   var gbase = adTermGroupBasis_(Object.keys(gsum).map(function (k) { return gsum[k]; }),
                                 Number(basis['기본 마진율']) || 0.17);
   var gname = {}, cname = {};
@@ -560,9 +561,25 @@ function adTermRollup_() {
   for (var k2 in agg) {
     var o0 = agg[k2];
     var e = eco[o0.gid] || { beCpa: 0, skus: [], asins: [] };
-    var src = '', beCpa = e.beCpa;
+    var src = '', beCpa = e.beCpa, note = '';
     if (!(beCpa > 0) && gbase[o0.gid]) { beCpa = gbase[o0.gid].beCpa; src = 'group'; }
-    var o = { clicks: o0.clicks, cost: o0.cost, orders: o0.orders, beCpa: beCpa, src: src };
+    /**
+     * 트랙 B(육성) 광고그룹은 손익분기로 재지 않는다.
+     *
+     * 트랙 B 는 순위를 사려고 일부러 상한을 손해배수 r 만큼 넘겨 산다. 그러니
+     * 손익분기로 재면 육성 캠페인의 검색어가 구조적으로 전부 '부정' 이 되고,
+     * 승인하면 돈을 쓰던 바로 그 말을 스스로 막는다. 잣대도 r 배로 늘려 잰다 —
+     * 그러면 '트랙 B 의 셈으로도 밑지는 말' 만 부정으로 걸러진다.
+     */
+    var gb = growGrp[o0.gid];
+    if (gb) {
+      if (!(beCpa > 0)) beCpa = gb.beCpa;      // 새 상품이라 재배분 표에 없다. 육성 표가 안다
+      beCpa = beCpa * gb.mult;
+      note = ' [트랙 B · 손해배수 ' + gb.mult + ']';
+      src = 'growth';
+    }
+    var o = { clicks: o0.clicks, cost: o0.cost, orders: o0.orders, beCpa: beCpa,
+              src: src, note: note };
     var d = adTermVerdict_(o, basis);
     var low = o0.term.toLowerCase();
     if (d.v === '부정' && negs[o0.gid] && negs[o0.gid][low]) d = { v: '이미 막음', why: '이 그룹에 부정 키워드로 있습니다' };
@@ -609,7 +626,9 @@ function adTermRollup_() {
     '기간시작': '이 검색어가 원본에 처음 나온 주. 최근 ' + ADTERM_KEEP_WEEKS + '주를 합친 값입니다.',
     '필요CVR': '지금 이 검색어의 CPC 로 본전이 되려면 필요한 전환율.\n= CPC ÷ 손익분기CPA. 광고 이력이 아니라 채산성에서 나온 값이다.',
     '판정필요클릭': '이 검색어를 판정하려면 클릭이 몇 번 있어야 하나.\n= 3 ÷ 필요CVR — 손익분기 주문 3건이 나왔어야 할 클릭 수다.\n이만큼 클릭하고 주문이 0이면 우연이 아니다.',
-    '판정': '승격 = 수동 정확 일치 키워드로 올릴 것\n부정 = 막을 것\n더 봄 = 아직 표본이 모자람',
+    '판정': '승격 = 수동 정확 일치 키워드로 올릴 것\n부정 = 막을 것\n더 봄 = 아직 표본이 모자람\n' +
+            '트랙 B(육성) 광고그룹은 손익분기 × 손해배수로 잽니다 — 일부러 넘겨 사는 중이라\n' +
+            '손익분기로 재면 제 키워드를 전부 부정으로 막게 됩니다.',
     '잠정': '광고매출은 클릭 후 14일까지 붙는다. 이 표시가 있으면 최근 주가 아직 늘어난다.',
     '승인': '체크한 줄만 아마존에 반영한다.\n승격 → 수동 정확 일치 키워드로 올림\n부정 → 부정 정확 일치로 막음',
     '반영결과': '[검색어 승인분 반영]이 채운다. 성공한 줄은 다시 올리지 않는다.',

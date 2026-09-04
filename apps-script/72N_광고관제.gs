@@ -103,7 +103,8 @@ function adGrowWeeklyByCamp_() {
     var nm = String(v[i][AG_CAMP] || '').trim();
     var w = Number(v[i][AG_WEEKLY]) || 0;
     if (nm && w > 0) out[nm] = { weekly: w, sku: String(v[i][AG_SKU] || ''),
-                                 loss: Number(v[i][AG_LOSS]) || 0 };
+                                 loss: Number(v[i][AG_LOSS]) || 0,
+                                 verdict: String(v[i][AG_VERDICT] || '') };
   }
   return out;
 }
@@ -334,6 +335,18 @@ function adWatchRun_(interactive) {
     if (L && L.state === 'ENABLED' && since[c.cid] && since[c.cid] > rep.to) fresh++;
     var own = (c.track === ADPLAN_TRACK_B && grow[c.name]) ? grow[c.name].weekly : 0;
     var d = adWatchVerdict_(c, L, p, margin, since[c.cid] || '', rep.from, rep.to, own);
+    /**
+     * 육성 표가 이미 '졸업' 이나 '중단' 이라고 판정했는데 아직 켜져 있으면 멈춘다.
+     *
+     * 주간 판정(72O)은 사람이 눌러야 돌고, 그때 멈추기까지 한다. 그런데 그 뒤에
+     * 누가 다시 켰거나, 판정만 하고 멈춤이 실패했을 수 있다. 관제는 매일 도는
+     * 마지막 그물이다 — 손해를 그만 보기로 한 캠페인이 켜져 있으면 안 된다.
+     */
+    var gStop = (c.track === ADPLAN_TRACK_B && grow[c.name]) ? grow[c.name].verdict : '';
+    if ((gStop === '졸업' || gStop === '중단') && L && L.state === 'ENABLED') {
+      d = { v: '⛔ 육성 ' + gStop, why: '육성 판정 ' + gStop + ' — 더 돌 이유가 없습니다',
+            fix: 'PAUSE' };
+    }
     stat[d.v] = (stat[d.v] || 0) + 1;
     if (d.fix === 'PAUSE' && autoStop) toPause.push(c);
     rows.push([c.name + (c.track === ADPLAN_TRACK_B ? '  [B]' : ''),
@@ -422,8 +435,12 @@ function adWatchRun_(interactive) {
   return { banner: banner, paused: paused, statLine: statLine, writeErr: writeErr };
 }
 
-/** 캠페인을 멈추고, 계획 표의 결과 표시와 대장을 맞춘다. @return 멈춘 이름들 */
-function adWatchPause_(token, list, why) {
+/**
+ * 캠페인을 멈추고, 계획 표의 결과 표시와 대장을 맞춘다. @return 멈춘 이름들
+ * @param {string=} by 대장에 남길 주체. 관제 말고 다른 걸음이 부를 수 있다 (트랙 B 주간 판정)
+ */
+function adWatchPause_(token, list, why, by) {
+  var who = by || '관제(자동)';
   var done = [];
   for (var i = 0; i < list.length; i += 100) {
     var part = list.slice(i, i + 100);
@@ -442,7 +459,7 @@ function adWatchPause_(token, list, why) {
 
   // 계획 표의 결과 칸에 '· 멈춤' 을 남긴다 — 켜기·맞추기가 이 표시를 본다.
   // 아마존은 이미 멈췄다. 여기서 시트가 늦어 터져도 그 사실은 로그에 남긴다
-  log_('ads', 'WARN', '관제 멈춤 — ' + done.map(function (c) { return c.name; }).join(', ') + ' · ' + why);
+  log_('ads', 'WARN', who + ' 멈춤 — ' + done.map(function (c) { return c.name; }).join(', ') + ' · ' + why);
   try {
   var sh = ss_().getSheetByName(SHEET_ADPLAN);
   if (sh) {
@@ -459,9 +476,9 @@ function adWatchPause_(token, list, why) {
   }
   adLogWrite_(done.map(function (c) {
     return adLogRow_({ kind: '캠페인', camp: c.name, group: c.name, item: '상태', from: 'ENABLED', to: 'PAUSED',
-      sum: '관제 멈춤 · ' + c.name, why: why, by: '관제(자동)', cid: c.cid });
+      sum: who + ' 멈춤 · ' + c.name, why: why, by: who, cid: c.cid });
   }));
-  } catch (e2) { log_('ads', 'ERROR', '관제 멈춤 뒤 시트 기록 실패 (아마존은 멈춤): ' + String(e2).substring(0, 160)); }
+  } catch (e2) { log_('ads', 'ERROR', who + ' 멈춤 뒤 시트 기록 실패 (아마존은 멈춤): ' + String(e2).substring(0, 160)); }
   return done.map(function (c) { return c.name; });
 }
 

@@ -38,6 +38,14 @@
 var ADPLAN_TRACK_M = 'M';
 var ADPROMO_KIND = '승격';          // 계획 표의 [방식] 칸
 var ADPROMO_MARK_UNKNOWN = '(SKU 모름)';
+/**
+ * 트랙 B(육성) 그룹의 승격은 지금 옮기지 않는다.
+ *
+ * 그 말은 이미 육성 캠페인이 손해배수를 얹어 사고 있다 — 그것이 트랙 B 다.
+ * 여기서 손익분기 셈으로 만든 수동 캠페인에 같은 말을 올리면, 사려던 순위를
+ * 제 캠페인 둘이 나눠 사면서 값만 올린다. 졸업해서 트랙 A 로 넘어온 뒤에 옮긴다.
+ */
+var ADPROMO_MARK_GROW = '(트랙 B — 졸업 뒤에)';
 
 /**
  * 광고그룹 → 그 그룹이 광고하는 SKU. 정확히 하나일 때만 답한다.
@@ -147,12 +155,18 @@ function planAdPromote() {
     }
   }
 
-  var bySku = {}, nKnown = 0, nUnknown = 0, nDone = 0;
+  var growGrp = adGrowGroups_();
+  var bySku = {}, nKnown = 0, nUnknown = 0, nDone = 0, nGrow = 0;
   var colSku = [], colCamp = [];
   for (var i = 0; i < v.length; i++) {
     var isPromo = String(v[i][AT_VERDICT]) === '승격';
     if (!isPromo) { colSku.push(['']); colCamp.push(['']); continue; }
     var gid = String(v[i][AT_GID] || '').trim();
+    if (growGrp[gid]) {
+      nGrow++;
+      colSku.push([ADPROMO_MARK_GROW]); colCamp.push(['']);
+      continue;
+    }
     var sku = byGroup[gid] || '';
     if (!sku) {
       nUnknown++;
@@ -182,6 +196,8 @@ function planAdPromote() {
     showSheet_(SHEET_ADTERM);
     ui_().alert('졸업시킬 줄이 없습니다.',
       '승격 판정 중 어느 SKU 가 판 것인지 아는 줄이 없습니다.' +
+      (nGrow ? '\n\n트랙 B(육성) 그룹의 승격 ' + nGrow + '줄은 옮기지 않습니다 — ' +
+               '이미 육성 캠페인이 그 말을 사고 있습니다. 졸업 뒤에 옮깁니다.' : '') +
       (nUnknown ? '\n\nSKU 모름 ' + nUnknown.toLocaleString() + '줄 — 한 광고그룹에 SKU 를 ' +
                   '여러 개 담은 옛 캠페인입니다.\n검색어 리포트는 그룹까지만 알려주므로, ' +
                   '어느 상품이 팔았는지 알 수 없습니다.\n추정하지 않고 그대로 둡니다.' : '') +
@@ -260,7 +276,8 @@ function planAdPromote() {
     '수동 캠페인 ' + skus.length + '개 (새로 ' + added +
     (updated ? ' · 값 갱신 ' + updated : '') + ') · 하루 예산 합계 ¥' + daily.toLocaleString() + '\n' +
     '옮길 검색어 ' + nKnown + '줄' + (nDone ? ' (이미 올린 ' + nDone + '줄 포함)' : '') + '\n' +
-    (nUnknown ? 'SKU 모름 ' + nUnknown.toLocaleString() + '줄 — 그대로 둡니다\n' : '') + '\n' +
+    (nUnknown ? 'SKU 모름 ' + nUnknown.toLocaleString() + '줄 — 그대로 둡니다\n' : '') +
+    (nGrow ? '트랙 B ' + nGrow + '줄 — 졸업 뒤에 옮깁니다\n' : '') + '\n' +
     '다음:\n' +
     '  ① 광고생성계획에서 이 줄들의 [승인] 을 체크\n' +
     '  ② [⑤ 승인분 캠페인 생성] — 멈춤 상태로 만들어집니다\n' +
