@@ -36,6 +36,7 @@ var PROP_ADWATCH_MAILED = 'ADWATCH_MAILED';       // 같은 경고 메일을 하
 var ADWATCH_DAYS = 7;
 var ADWATCH_HANDLER = 'scheduledAdWatch';
 var ADWATCH_REPORT_WAIT_MS = 90 * 1000;
+var ADWATCH_MIN_DAYS = 3;          // 켠 지 이만큼은 지나야 실적으로 판단한다
 
 // ── 자료 ────────────────────────────────────────────────
 
@@ -53,6 +54,30 @@ function adWatchOurs_() {
                approved: adRowApproved_(v[i][AP_APPROVE - 1]),
                daily: Number(v[i][AP_DAILY - 1]) || 0, bid: Number(v[i][AP_BID - 1]) || 0,
                nSku: Number(v[i][7]) || 0, result: String(v[i][AP_RESULT - 1]) });
+  }
+  return out;
+}
+
+/**
+ * 캠페인마다 마지막으로 켠 날. 광고변경대장에서 읽는다 (API 아님).
+ *
+ * 왜 필요한가: 리포트는 '어제까지 7일' 이다. 오늘 켠 캠페인은 그 기간에 꺼져 있었으므로
+ * 노출 0 이 나온다. 그것을 '입찰이 낮다' 로 읽으면 정반대 처방을 하게 된다 —
+ * 실제로 첫 실행에서 오늘 켠 세 개를 그렇게 판정했다.
+ */
+function adWatchOnSince_() {
+  var out = {};
+  var sh = ss_().getSheetByName(SHEET_ADLOG);
+  if (!sh || sh.getLastRow() < 2) return out;
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADLOG_HEADER.length).getValues();
+  for (var i = 0; i < v.length; i++) {
+    if (String(v[i][8]) !== '상태' || String(v[i][10]) !== 'ENABLED') continue;
+    var cid = String(v[i][14] || '').trim();
+    if (!cid) continue;
+    var at = v[i][0];
+    var d = (at instanceof Date) ? ymd_(at) : String(at || '').trim();
+    if (!d) continue;
+    if (!out[cid] || d > out[cid]) out[cid] = d;
   }
   return out;
 }
@@ -107,9 +132,11 @@ function adWatchReport_(token) {
  * 캠페인 한 줄을 본다. 순서가 곧 심각도다.
  * '승인 안 했는데 켜짐' 이 맨 위인 이유: 그것은 실적이 아니라 프로그램 오류의 증거다.
  */
-function adWatchVerdict_(c, live, p, margin) {
+function adWatchVerdict_(c, live, p, margin, since, repFrom, repTo) {
   var on = live && live.state === 'ENABLED';
   if (!live) return { v: '?', why: '아마존에 없음 — 지워졌거나 ID 가 낡았다', fix: '' };
+
+  // ⛔ 둘은 실적이 아니라 오류 신호다. 켠 지 하루라도 그대로 잡는다
   if (on && !c.approved) {
     return { v: '⛔ 미승인 켜짐', why: '승인 칸이 비어 있는데 아마존에서 켜져 있다 — 프로그램 오류 신호', fix: 'PAUSE' };
   }
@@ -118,14 +145,27 @@ function adWatchVerdict_(c, live, p, margin) {
              Math.round(c.daily * ADWATCH_DAYS) + ' — 예산이 안 먹히고 있다', fix: 'PAUSE' };
   }
   if (!on) return { v: '멈춤', why: c.approved ? '승인 ✓ 인데 멈춰 있음 — 켜려면 [캠페인 켜기]' : '', fix: '' };
+
+  // 여기부터는 실적 판정이다. 켜져 있던 날이 리포트 기간과 얼마나 겹치나부터 본다
+  if (since && since > repTo) {
+    return { v: '· 켠 지 얼마 안 됨',
+             why: since + ' 에 켰습니다 — 이 리포트(' + repFrom + '~' + repTo + ')는 켜기 전 기간이라 ' +
+                  '실적으로 판단할 수 없습니다. 내일부터 쌓입니다', fix: '' };
+  }
+  var days = (since && since > repFrom) ? daysBetween_(since, repTo) + 1 : ADWATCH_DAYS;
+  if (days < ADWATCH_MIN_DAYS) {
+    return { v: '· 켠 지 ' + days + '일', why: since + ' 부터 켬 — 판단하기 이릅니다', fix: '' };
+  }
+  var span = days < ADWATCH_DAYS ? ' (' + days + '일치)' : '';
+
   if (p.ord >= 3 && p.sales > 0 && p.cost / p.sales > margin) {
-    return { v: '⚠ 손해 중', why: '7일 ACOS ' + pct1_(p.cost / p.sales) + ' > 마진율 ' + pct1_(margin) +
+    return { v: '⚠ 손해 중', why: 'ACOS ' + pct1_(p.cost / p.sales) + span + ' > 마진율 ' + pct1_(margin) +
              ' (최근 2주는 매출이 아직 붙는 중이라 과장될 수 있음)', fix: '' };
   }
   if (p.ck >= 50 && p.ord === 0) {
-    return { v: '⚠ 안 팔림', why: '7일 클릭 ' + p.ck + ' · 주문 0 · ¥' + Math.round(p.cost), fix: '' };
+    return { v: '⚠ 안 팔림', why: '클릭 ' + p.ck + span + ' · 주문 0 · ¥' + Math.round(p.cost), fix: '' };
   }
-  if (p.im === 0) return { v: '· 노출 없음', why: '켜져 있는데 7일 노출 0 — 입찰이 낮거나 상품 자격 문제', fix: '' };
+  if (p.im === 0) return { v: '· 노출 없음', why: '켜진 지 ' + days + '일인데 노출 0 — 입찰이 낮거나 상품 자격 문제', fix: '' };
   return { v: '정상', why: '', fix: '' };
 }
 
@@ -235,12 +275,14 @@ function adWatchRun_(interactive) {
   var autoStop = String(basis['한도 넘으면 자동 멈춤']).toUpperCase() !== 'FALSE';
   var capInfo = adWatchCap_(basis, ours);
 
-  var now = new Date(), rows = [], stat = {}, total = 0, onN = 0, toPause = [];
+  var since = adWatchOnSince_();
+  var now = new Date(), rows = [], stat = {}, total = 0, onN = 0, toPause = [], fresh = 0;
   for (var i = 0; i < ours.length; i++) {
     var c = ours[i], L = live[c.cid], p = rep.perf[c.cid] || { im: 0, ck: 0, cost: 0, sales: 0, ord: 0 };
     total += p.cost;
     if (L && L.state === 'ENABLED') onN++;
-    var d = adWatchVerdict_(c, L, p, margin);
+    if (L && L.state === 'ENABLED' && since[c.cid] && since[c.cid] > rep.to) fresh++;
+    var d = adWatchVerdict_(c, L, p, margin, since[c.cid] || '', rep.from, rep.to);
     stat[d.v] = (stat[d.v] || 0) + 1;
     if (d.fix === 'PAUSE' && autoStop) toPause.push(c);
     rows.push([c.name, L ? L.state : '없음', c.approved, (L && L.budget !== '') ? L.budget : c.daily, c.bid, c.nSku,
@@ -278,6 +320,7 @@ function adWatchRun_(interactive) {
                '  |  광고비 ¥' + Math.round(total).toLocaleString() +
                (cap > 0 ? ' / 한도 ¥' + Math.round(cap).toLocaleString() + ' (' + Math.round(ratio * 100) + '%) ' + capState
                         : ' / 한도 없음 ⚠') +
+               (fresh ? '  |  ⓘ ' + fresh + '개는 이 기간 뒤에 켜서 실적이 아직 없습니다' : '') +
                '  |  한도 출처: ' + capInfo.src;
   var writeErr = '';
   try { adWatchWrite_(banner, rows, now); }
@@ -362,8 +405,8 @@ function adWatchPause_(token, list, why) {
 function adWatchWrite_(banner, rows, now) {
   var W = ADWATCH_HEADER.length;
   var sh = ss_().getSheetByName(SHEET_ADWATCH);
-  var fresh = false;
-  if (!sh) { sh = ss_().insertSheet(SHEET_ADWATCH); fresh = true; }
+  var isNew = false;
+  if (!sh) { sh = ss_().insertSheet(SHEET_ADWATCH); isNew = true; }
   var need = rows.length + ADWATCH_ROW_HEADER;
   if (sh.getMaxRows() < need) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
   if (sh.getMaxColumns() < W) sh.insertColumnsAfter(sh.getMaxColumns(), W - sh.getMaxColumns());
@@ -382,15 +425,17 @@ function adWatchWrite_(banner, rows, now) {
     sh.getRange(ADWATCH_ROW_HEADER + 1, 12, rows.length, 1).setNumberFormat('0.0%');
   }
   // 체크박스는 이미 있으면 다시 안 넣는다 — 한 칸만 본다
+  // 마지막 줄에 체크박스가 있으면 이미 깔린 것이다. 줄이 늘면 그 줄이 비므로 다시 깐다.
+  // 여유분을 미리 깔지 않는다 — 값 없는 체크박스 줄이 표 끝에 남아 지저분하다
   var hasBox = false;
-  if (!fresh && rows.length) {
-    try { var dv = sh.getRange(ADWATCH_ROW_HEADER + 1, AW_STOP + 1).getDataValidation(); hasBox = !!dv; } catch (e) {}
+  if (!isNew && rows.length) {
+    try { hasBox = !!sh.getRange(ADWATCH_ROW_HEADER + rows.length, AW_STOP + 1).getDataValidation(); } catch (e) {}
   }
   if (rows.length && !hasBox) {
-    sh.getRange(ADWATCH_ROW_HEADER + 1, AW_STOP + 1, Math.max(rows.length, 200), 1).insertCheckboxes();
-    sh.getRange(ADWATCH_ROW_HEADER + 1, AW_APPROVE + 1, Math.max(rows.length, 200), 1).insertCheckboxes();
+    sh.getRange(ADWATCH_ROW_HEADER + 1, AW_STOP + 1, rows.length, 1).insertCheckboxes();
+    sh.getRange(ADWATCH_ROW_HEADER + 1, AW_APPROVE + 1, rows.length, 1).insertCheckboxes();
   }
-  if (fresh || !hasBox) {
+  if (isNew || !hasBox) {
     sh.setFrozenRows(ADWATCH_ROW_HEADER);
     headerNotes_(sh, ADWATCH_ROW_HEADER, ADWATCH_HEADER, {
       '아마존상태': '아마존이 지금 말하는 상태. 시트의 표시가 아니라 진짜 값이다.',
