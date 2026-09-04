@@ -56,6 +56,7 @@ function sheetWidths_() {
   w[SHEET_ADTERM] = ADTERM_HEADER.length;
   w[SHEET_ADTERM_RAW] = ADTERM_RAW_HEADER.length;
   w[SHEET_ADWATCH] = ADWATCH_HEADER.length;
+  w[SHEET_ADGROW] = ADGROW_HEADER.length;
   w[SHEET_ORDERS] = ORDERS_HEADER.length;
   w[SHEET_ORDSUM] = ORDSUM_HEADER.length;
   w[SHEET_SALES] = SALES_HEADER.length;

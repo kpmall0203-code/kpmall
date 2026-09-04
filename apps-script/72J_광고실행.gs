@@ -337,6 +337,11 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
       var st3 = adLogWrite_(log); adLogResult_(st3, log.map(function () { return '성공'; })); } }
     sh.getRange(rowNo, AP_RESULT).setValue(
       '성공 · 상품 ' + added + '개' + (stopped ? ' · 옛 그룹 멈춤 ' + stopped : ''));
+    // 트랙 B 줄이면 육성 표에도 ID 를 돌려 적는다 — 주간 판정이 그 ID 로 실적을 찾는다
+    if (String(row[AP_TRACK - 1]) === ADPLAN_TRACK_B) {
+      try { adGrowStamp_(name, cid, gid); }
+      catch (eg) { log_('ads', 'WARN', '육성 표에 ID 를 못 적었습니다: ' + String(eg).substring(0, 120)); }
+    }
     return { ok: true };
   } catch (e) {
     return fail(String(e));

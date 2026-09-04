@@ -45,10 +45,12 @@ var ADPLAN_HEADER = [
   '계획ID', '동작', '방식', '캠페인명', '유형', '일예산(JPY)', '입찰(JPY)',
   'SKU수', '기존SKU수', '대표SKU', 'CPC구간', '손익분기CPA(JPY)', '월매출합(JPY)',
   '기존광고제거', '근거', 'SKU목록', '광고그룹ID', '승인', '결과', '캠페인ID',
-  '광고ID들'          // 만들 때 받은 productAd ID. 켜기·멈추기가 다시 조회하지 않게
+  '광고ID들',         // 만들 때 받은 productAd ID. 켜기·멈추기가 다시 조회하지 않게
+  '트랙'              // A = 재배분(이 파일이 만든다) · B = 육성(72O 가 밀어넣는다)
 ];
 var AP_ACTION = 2, AP_NAME = 4, AP_DAILY = 6, AP_BID = 7, AP_SKUS = 16;
-var AP_GID = 17, AP_APPROVE = 18, AP_RESULT = 19, AP_CID = 20, AP_ADIDS = 21;
+var AP_GID = 17, AP_APPROVE = 18, AP_RESULT = 19, AP_CID = 20, AP_ADIDS = 21, AP_TRACK = 22;
+var ADPLAN_TRACK_B = 'B';
 var ADPLAN_JUDGE_ORDERS = 3;    // 판정에 필요한 손익분기 주문 수
 var ADPLAN_JUDGE_DAYS = 14;     // 그것을 몇 일 안에 볼 것인가
 
@@ -168,6 +170,7 @@ function adPlanPrior_() {
     out[nm] = { result: String(v[i][AP_RESULT - 1] || ''),
                 gid: String(v[i][AP_GID - 1] || ''),
                 cid: String(v[i][AP_CID - 1] || ''),
+                adIds: String(v[i][AP_ADIDS - 1] || ''),
                 approve: v[i][AP_APPROVE - 1] === true };
   }
   return out;
@@ -182,7 +185,9 @@ function adPlanRow_(o) {
           o.gid || (o.prior && o.prior.gid) || '',
           !!(o.prior && o.prior.approve),
           (o.prior && o.prior.result) || '',
-          o.cid || (o.prior && o.prior.cid) || ''];
+          o.cid || (o.prior && o.prior.cid) || '',
+          (o.prior && o.prior.adIds) || '',
+          'A'];
 }
 
 /** 메뉴: 전용 캠페인 생성 계획 */
@@ -291,6 +296,20 @@ function planAdCampaigns() {
   }
 
   for (var k2 = 0; k2 < rows.length; k2++) rows[k2][0] = 'P' + (k2 + 1);
+
+  /**
+   * 트랙 B(육성) 줄은 이 계산이 만들지 않는다. 통째로 다시 쓰면 지워지므로
+   * 먼저 건져 두었다가 뒤에 붙인다 — 그 줄의 캠페인ID·결과는 이미 아마존에 있는 것이다.
+   */
+  var keepB = [];
+  var pshOld = ss_().getSheetByName(SHEET_ADPLAN);
+  if (pshOld && pshOld.getLastRow() > 1) {
+    var ov = pshOld.getRange(2, 1, pshOld.getLastRow() - 1, ADPLAN_HEADER.length).getValues();
+    for (var o2 = 0; o2 < ov.length; o2++) {
+      if (String(ov[o2][AP_TRACK - 1]) === ADPLAN_TRACK_B) keepB.push(ov[o2]);
+    }
+  }
+  rows = rows.concat(keepB);
 
   var psh = ensureSheet_(SHEET_ADPLAN, ADPLAN_HEADER);
   var need2 = Math.max(rows.length + 1, 2);
