@@ -207,9 +207,19 @@ function planAdCampaigns() {
   if (!pool.length) { ui_().alert('만들 대상이 없습니다.'); return; }
 
   // 앞머리가 한글이면 아마존이 이름을 거절한다. 다듬어서 쓰고 알림에 알린다.
+  /**
+   * 이름 앞머리. 아마존은 캠페인 이름에 아스키만 받으므로 한글은 여기서 걷힌다.
+   * 실제로 기본값이 '사입' 이었고 그것이 조용히 'KP' 로 떨어져 캠페인이 만들어졌다 —
+   * 시트에는 한글이 적혀 있는데 아마존에는 KP 로 들어가 있어 사람이 헷갈렸다.
+   * 걷어냈으면 그 사실을 계획 표의 근거 칸과 확인 창에 남긴다.
+   */
   var rawPrefix = String(basis['캠페인 이름 앞머리'] || '');
   var prefix = adAsciiName_(rawPrefix, 'KP');
   var prefixChanged = (prefix !== rawPrefix.trim());
+  if (prefixChanged) {
+    log_('ads', 'WARN', '캠페인 이름 앞머리 "' + rawPrefix + '" → "' + prefix +
+         '" (아마존은 아스키만 받습니다)');
+  }
   var maxN = Number(basis['묶음당 최대 SKU']) || 20;
   var existing = adPlanExisting_(prefix);
   var prior = adPlanPrior_();
@@ -316,8 +326,9 @@ function planAdCampaigns() {
   toast_(msg);
   showSheet_(SHEET_ADPLAN);
   ui_().alert('전용 캠페인 생성 계획',
-    (prefixChanged ? '이름 앞머리를 "' + prefix + '" 로 바꿔 씁니다 — ' +
-                     '아마존은 캠페인 이름에 한글을 안 받습니다.\n\n' : '') +
+    (prefixChanged ? '⚠ 이름 앞머리 "' + rawPrefix + '" 는 아마존이 못 받아 "' + prefix +
+                     '" 로 바꿔 씁니다 (아스키만 받습니다).\n' +
+                     '   [광고기준 → 캠페인 이름 앞머리] 를 "' + prefix + '" 로 적어 두면 헷갈리지 않습니다.\n\n' : '') +
     'SKU ' + totSku.toLocaleString() + '개\n' +
     '   새로 만들 캠페인 ' + (cnt['생성'] || 0) + '개\n' +
     '   이미 있는 묶음에 추가 ' + (cnt['기존에 추가'] || 0) + '개\n' +
