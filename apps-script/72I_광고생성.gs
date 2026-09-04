@@ -18,6 +18,20 @@
  * 묶음의 입찰은 그 구간의 아래 끝에 맞춘다. 구간 안에서 가장 낮은 권장가보다
  * 항상 낮으므로, 묶였다는 이유로 손해 보는 상품이 없다.
  *
+ * ── 바닥: 시장가 아래로는 부르지 않는다 ─────────────────
+ * 구간 아래 끝을 그대로 부르면 시장가보다 낮은 값이 나온다. 실제로 ¥5~7 구간과
+ * ¥7~10 구간(SKU 395개)이 시장 CPC ¥7.7 아래로 입찰해 노출을 거의 못 샀다.
+ * 손해는 안 나지만 아무 일도 안 일어난다 — 광고를 켠 값을 못 한다.
+ *
+ *   입찰 = max(원래 입찰, 시장 CPC)
+ *
+ * 그러면 원래 그 값을 못 내던 상품이 딸려 올라갈 수 있으므로, 담기 전에 거른다:
+ *
+ *   CPC 상한 ≥ 시장 CPC × 시장가 안전배수(1.2)  인 SKU 만 캠페인에 넣는다
+ *
+ * 못 넘는 상품은 광고로 이길 수 없다 — 시장가에 사면 세션 마진이 남지 않는다.
+ * 빼는 것이 정직하다. 오가닉으로 두고, 값이나 무게를 고쳐 채산성이 오르면 다시 들어온다.
+ *
  * ── 일예산 ──────────────────────────────────────────────
  * '되는지 2주 안에 알려면 얼마가 드나'로 잡는다.
  *
@@ -207,7 +221,8 @@ function planAdCampaigns() {
     var rec = Number(v[i][11]), be = Number(v[i][10]);
     if (!(rec > 0) || !(be > 0)) continue;
     pool.push({ sku: String(v[i][0]), asin: String(v[i][20] || '').trim(),
-                rec: rec, beCpa: be, amt: Number(v[i][19]) || 0 });
+                rec: rec, beCpa: be, amt: Number(v[i][19]) || 0,
+                cap: Number(v[i][12]) || 0 });
   }
   if (!pool.length) { ui_().alert('만들 대상이 없습니다.'); return; }
 
@@ -229,9 +244,55 @@ function planAdCampaigns() {
   var existing = adPlanExisting_(prefix);
   var prior = adPlanPrior_();
 
+  /**
+   * 바닥과 거르기. 시장가 아래로 부르면 노출을 못 사고, 시장가를 못 내는 상품을
+   * 억지로 올리면 팔수록 손해다. 둘 다 막는다.
+   */
+  var floorCpc = Number(basis['시장 CPC']) || 0;
+  var safe = Number(basis['시장가 안전배수']) || 1.2;
+  var needCap = floorCpc * safe;
+  var dropped = [], dropAmt = 0;
+  if (needCap > 0) {
+    var kept = [];
+    for (var f = 0; f < pool.length; f++) {
+      if (pool[f].cap > 0 && pool[f].cap < needCap) {
+        dropped.push(pool[f]); dropAmt += pool[f].amt;
+      } else kept.push(pool[f]);
+    }
+    pool = kept;
+  }
+  if (!pool.length) {
+    ui_().alert('넣을 SKU 가 없습니다',
+      (dropped.length ? 'CPC 상한이 시장가 ¥' + floorCpc + ' × ' + safe + ' = ¥' +
+        needCap.toFixed(1) + ' 에 못 미쳐 ' + dropped.length + '개를 전부 뺐습니다.\n\n' +
+        '이 상품들은 광고로 이길 수 없습니다 — 시장가에 사면 세션 마진이 남지 않습니다.\n' +
+        '[광고기준 → 시장가 안전배수] 를 낮추거나, 값·무게를 고쳐 채산성을 올리세요.'
+        : '판정이 [신규 캠페인]·[캠페인 분리] 인 줄이 없습니다.'),
+      ui_().ButtonSet.OK);
+    return;
+  }
+
+  /**
+   * 시장가 아래로는 부르지 않는다. 단 그 SKU 들의 CPC 상한은 넘지 않게.
+   *
+   * 바닥이 걸릴 때만 올림한다. 시장가 ¥7.7 을 반올림하면 ¥8 이지만 내림하면 ¥7 —
+   * 시장가 아래로 다시 떨어져 올린 뜻이 없어진다. 상한 쪽은 반대로 내림한다:
+   * 나중에 adPlanRow_ 가 반올림할 때 상한을 반 엔이라도 넘기면 팔수록 손해다.
+   * 바닥이 안 걸리는 구간은 값을 그대로 둔다 — 이미 만든 캠페인과 어긋나지 않게.
+   */
+  var withFloor = function (bid, capMin) {
+    var raw = Number(bid) || 0;
+    var b = (floorCpc > raw) ? Math.ceil(floorCpc) : raw;
+    if (capMin > 0) {
+      var lim = Math.floor(capMin);
+      if (b > lim) b = lim;
+    }
+    return Math.max(2, b);
+  };
+
   pool.sort(function (a, b) { return b.amt - a.amt; });
   var nSolo = Math.min(Number(basis['전용 캠페인 상위 개수']) || 0, pool.length);
-  var rows = [];
+  var rows = [], nFloored = 0;
 
   // ① 매출 상위는 SKU 하나에 캠페인 하나
   for (var s2 = 0; s2 < nSolo; s2++) {
@@ -243,14 +304,20 @@ function planAdCampaigns() {
     // ASIN 이 없으면 차라리 그 SKU 로만 나오는 번호를 쓴다.
     var nm = prefix + ' ' + (one.asin || ('SKU' + adShortHash_(one.sku)));
     var ex = existing.solo[nm];
+    var soloBid = withFloor(one.rec, one.cap);
+    if (soloBid > one.rec) nFloored++;
     rows.push(adPlanRow_({
       prior: prior[nm],
-      action: ex ? '이미 있음' : '생성', kind: '전용', name: nm, bid: one.rec,
+      action: ex ? '이미 있음' : '생성', kind: '전용', name: nm, bid: soloBid,
       daily: adPlanDaily_(one.beCpa, one.amt, basis), skus: [one],
-      band: '¥' + one.rec, beMin: one.beCpa, amt: one.amt, exist: ex ? ex.n : 0,
+      band: '¥' + Math.round(soloBid), beMin: one.beCpa, amt: one.amt, exist: ex ? ex.n : 0,
       gid: ex ? ex.gid : '', cid: ex ? ex.cid : '',
       why: ex ? '같은 이름의 캠페인이 이미 있다 — 건너뛴다'
-              : '오가닉 매출 상위 — 이 SKU 만 담아 값을 정확히 맞춘다'
+              : '오가닉 매출 상위 — 이 SKU 만 담아 값을 정확히 맞춘다' +
+                (soloBid > one.rec
+                  ? '. 권장 ¥' + Math.round(one.rec) + ' 이 시장가 ¥' + floorCpc +
+                    ' 아래라 시장가로 올렸다 (상한 ¥' + Math.round(one.cap) + ' 안)'
+                  : '')
     }));
   }
 
@@ -274,22 +341,30 @@ function planAdCampaigns() {
       if (room <= 0) { seq++; continue; }
       var take = list.slice(idx, idx + room);
       idx += take.length;
-      var beMin = take[0].beCpa, amt = 0;
+      var beMin = take[0].beCpa, amt = 0, capMin = take[0].cap;
       for (var t = 0; t < take.length; t++) {
         if (take[t].beCpa < beMin) beMin = take[t].beCpa;
+        if (take[t].cap > 0 && (!capMin || take[t].cap < capMin)) capMin = take[t].cap;
         amt += take[t].amt;
       }
+      // 구간 아래 끝이 시장가보다 낮으면 시장가로 올린다 (그 묶음 최소 상한 안에서)
+      var bandBid = withFloor(bi.info.lo, capMin);
+      if (bandBid > bi.info.lo) nFloored++;
       rows.push(adPlanRow_({
         prior: prior[nm2],
         action: ex2 ? '기존에 추가' : '생성', kind: '묶음', name: nm2,
-        bid: bi.info.lo, daily: adPlanDaily_(beMin, amt, basis), skus: take,
+        bid: bandBid, daily: adPlanDaily_(beMin, amt, basis), skus: take,
         band: '¥' + Math.round(bi.info.lo) + '~' + Math.round(bi.info.hi),
         beMin: beMin, amt: amt, exist: ex2 ? ex2.n : 0,
         gid: ex2 ? ex2.gid : '', cid: ex2 ? ex2.cid : '',
         why: (ex2 ? '이미 있는 묶음에 ' + take.length + '개를 더 넣는다. '
                   : '새 묶음. ') +
-             '입찰은 구간 아래 끝(¥' + Math.round(bi.info.lo) + ')에 맞춰 ' +
-             '묶였다는 이유로 손해 보는 상품이 없게 한다'
+             (bandBid > bi.info.lo
+               ? '구간 아래 끝 ¥' + Math.round(bi.info.lo) + ' 가 시장가 ¥' + floorCpc +
+                 ' 아래라 ¥' + Math.round(bandBid) + ' 로 올렸다 — 그 값이면 노출을 못 산다 ' +
+                 '(이 묶음 최소 상한 ¥' + Math.round(capMin) + ' 안)'
+               : '입찰은 구간 아래 끝(¥' + Math.round(bi.info.lo) + ')에 맞춰 ' +
+                 '묶였다는 이유로 손해 보는 상품이 없게 한다')
       }));
       seq++;
     }
@@ -348,6 +423,16 @@ function planAdCampaigns() {
     (prefixChanged ? '⚠ 이름 앞머리 "' + rawPrefix + '" 는 아마존이 못 받아 "' + prefix +
                      '" 로 바꿔 씁니다 (아스키만 받습니다).\n' +
                      '   [광고기준 → 캠페인 이름 앞머리] 를 "' + prefix + '" 로 적어 두면 헷갈리지 않습니다.\n\n' : '') +
+    (dropped.length
+      ? '⛔ 시장가에 못 미쳐 뺀 SKU ' + dropped.length.toLocaleString() + '개 (월매출 ¥' +
+        Math.round(dropAmt).toLocaleString() + ')\n' +
+        '   CPC 상한이 시장가 ¥' + floorCpc + ' × ' + safe + ' = ¥' + needCap.toFixed(1) +
+        ' 에 못 미칩니다 — 광고로 이길 수 없어 오가닉으로 둡니다.\n\n'
+      : '') +
+    (nFloored
+      ? '↑ 시장가로 올린 캠페인 ' + nFloored + '개\n' +
+        '   구간 아래 끝이 시장가 ¥' + floorCpc + ' 보다 낮아 그 값으로는 노출을 못 삽니다.\n\n'
+      : '') +
     'SKU ' + totSku.toLocaleString() + '개\n' +
     '   새로 만들 캠페인 ' + (cnt['생성'] || 0) + '개\n' +
     '   이미 있는 묶음에 추가 ' + (cnt['기존에 추가'] || 0) + '개\n' +
