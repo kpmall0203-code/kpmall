@@ -185,6 +185,10 @@ function adPlanExecStep_(interactive) {
 /** 계획 한 줄을 만든다 */
 function adExecRow_(token, sh, rowNo, row, state, bucket) {
   var name = String(row[AP_NAME - 1]);
+  // [유형] 칸이 '수동' 이면 수동 캠페인. 아마존은 자동 캠페인에 키워드를 받지 않으므로,
+  // 승격(72P)이 만드는 캠페인은 반드시 여기서 MANUAL 로 나가야 한다
+  var manual = String(row[4] || '').indexOf('수동') === 0;
+  var tType = manual ? 'MANUAL' : 'AUTO';
   var bid = Number(row[AP_BID - 1]) || 0;
   var daily = Number(row[AP_DAILY - 1]) || 0;
   var gid = String(row[AP_GID - 1] || '').trim();
@@ -228,7 +232,7 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
                     '아마존은 한글 이름을 받지 않습니다.');
       }
       var cres = adsApiRetry_(token, 'post', '/sp/campaigns', { campaigns: [{
-        name: name, targetingType: 'AUTO', state: state,
+        name: name, targetingType: tType, state: state,
         budget: { budget: daily, budgetType: 'DAILY' },
         dynamicBidding: { strategy: 'LEGACY_FOR_SALES' },
         startDate: ymd_(now)
@@ -239,8 +243,9 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
       sh.getRange(rowNo, AP_CID).setValue(cid);
       log.push(adLogRow_({ at: now, kind: '캠페인', camp: name, group: name,
         sku: skuTxt, asin: asinTxt, item: '생성', to: state,
-        sum: '캠페인 만듦 · ' + name + ' · 하루 ¥' + daily + ' · ' + state,
-        why: '전용 캠페인 생성', cid: cid }));
+        sum: '캠페인 만듦 · ' + name + ' · ' + (manual ? '수동' : '자동') +
+             ' · 하루 ¥' + daily + ' · ' + state,
+        why: manual ? '승격 검색어를 담을 수동 캠페인' : '전용 캠페인 생성', cid: cid }));
     }
     // ② 광고그룹 — 자동 캠페인은 여기 기본입찰을 겨냥 넷이 물려받는다
     if (!gid) {
@@ -253,8 +258,10 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
       sh.getRange(rowNo, AP_GID).setValue(gid);
       log.push(adLogRow_({ at: now, kind: '광고그룹', camp: name, group: name,
         sku: skuTxt, asin: asinTxt, item: '기본입찰', to: bid,
-        sum: '기본입찰 ¥' + bid + ' · ' + name + ' (자동 겨냥 넷이 물려받음)',
-        why: '겨냥 넷이 이 값을 물려받는다', cid: cid, gid: gid }));
+        sum: '기본입찰 ¥' + bid + ' · ' + name +
+             (manual ? ' (키워드에 값이 없을 때만 쓰는 받침)' : ' (자동 겨냥 넷이 물려받음)'),
+        why: manual ? '수동은 키워드마다 값을 따로 부른다 — 이 값은 받침이다'
+                    : '겨냥 넷이 이 값을 물려받는다', cid: cid, gid: gid }));
     }
 
     // ③ 이 SKU 들이 지금 어디 있나 (승인한 줄만이라 한 번이면 끝난다)

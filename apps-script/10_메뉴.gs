@@ -61,7 +61,9 @@ function buildPriceMenu_() {
     /**
      * 광고 메뉴는 '얼마나 자주 누르나' 로 묶는다. 기능 종류로 묶었더니 열여덟 개가
      * 한 줄에 서서 어느 것을 눌러야 하는지 보이지 않았다.
-     *   매주 — 검색어 네 걸음. 위에서 아래 순서대로.
+     *   매주 — 검색어 다섯 걸음. 위에서 아래 순서대로.
+     *          ③ 은 광고생성계획에 수동 캠페인 줄을 만든다. 거기서 승인하고
+     *          [처음 한 번 → ⑤ 승인분 캠페인 생성] 을 한 번 돌린 뒤 ④·⑤ 로 온다.
      *   스위치 — 돈이 나가기 시작하고 멈추는 자리. 셋뿐이다.
      *   처음 한 번 — 캠페인을 깔 때. 그 뒤엔 새 상품이 들어올 때만.
      *   더 보기 — 나머지 전부.
@@ -69,8 +71,9 @@ function buildPriceMenu_() {
     .addSubMenu(ui.createMenu('📣 광고')
       .addItem('매주 ① 검색어 수집', 'fetchAdSearchTerms')
       .addItem('매주 ② 검색어 판정 다시 계산', 'rollupAdTerms')
-      .addItem('매주 ③ 검색어 판정 승인', 'approveAdTerms')
-      .addItem('매주 ④ 검색어 승인분 반영 (키워드 올림·막음)', 'applyAdTerms')
+      .addItem('매주 ③ 승격 캠페인 계획 (판 말을 제 캠페인으로)', 'planAdPromote')
+      .addItem('매주 ④ 검색어 판정 승인', 'approveAdTerms')
+      .addItem('매주 ⑤ 검색어 승인분 반영 (키워드 올림·막음)', 'applyAdTerms')
       .addSeparator()
       .addItem('켜기 — 승인 ✓ 만', 'enableApprovedCampaigns')
       .addItem('승인대로 맞추기 — 미승인은 끔', 'syncCampaignsToApproval')

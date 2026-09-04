@@ -373,18 +373,24 @@ function planAdCampaigns() {
   for (var k2 = 0; k2 < rows.length; k2++) rows[k2][0] = 'P' + (k2 + 1);
 
   /**
-   * 트랙 B(육성) 줄은 이 계산이 만들지 않는다. 통째로 다시 쓰면 지워지므로
-   * 먼저 건져 두었다가 뒤에 붙인다 — 그 줄의 캠페인ID·결과는 이미 아마존에 있는 것이다.
+   * 이 계산은 트랙 A(재배분) 줄만 만든다. 다른 데서 밀어넣은 줄
+   * — 트랙 B(육성, 72O) · 트랙 M(승격 수동 캠페인, 72P) — 은 통째로 다시 쓰면
+   * 지워지므로 먼저 건져 두었다가 뒤에 붙인다. 그 줄의 캠페인ID·결과는
+   * 이미 아마존에 있는 것이다.
+   *
+   * 'B 가 아닌 것' 이 아니라 'A 가 아닌 것' 으로 고른다 — 나중에 트랙이 하나 더
+   * 늘 때 여기를 안 고쳐도 되게. 트랙 칸이 빈 옛 줄은 A 로 본다.
    */
-  var keepB = [];
+  var keepOther = [];
   var pshOld = ss_().getSheetByName(SHEET_ADPLAN);
   if (pshOld && pshOld.getLastRow() > 1) {
     var ov = pshOld.getRange(2, 1, pshOld.getLastRow() - 1, ADPLAN_HEADER.length).getValues();
     for (var o2 = 0; o2 < ov.length; o2++) {
-      if (String(ov[o2][AP_TRACK - 1]) === ADPLAN_TRACK_B) keepB.push(ov[o2]);
+      var tk = String(ov[o2][AP_TRACK - 1] || '').trim();
+      if (tk && tk !== 'A') keepOther.push(ov[o2]);
     }
   }
-  rows = rows.concat(keepB);
+  rows = rows.concat(keepOther);
 
   var psh = ensureSheet_(SHEET_ADPLAN, ADPLAN_HEADER);
   var need2 = Math.max(rows.length + 1, 2);

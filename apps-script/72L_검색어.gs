@@ -29,13 +29,15 @@ var ADTERM_HEADER = [
   'SKU', 'ASIN', '노출', '클릭', '광고비(JPY)', '광고매출(JPY)', '주문',
   'CTR', 'CVR', 'CPC(JPY)', 'ACOS',
   '손익분기CPA(JPY)', '필요CVR', '판정필요클릭', '판정', '사유',
-  '캠페인ID', '광고그룹ID', '수집일시', '승인', '반영결과'
+  '캠페인ID', '광고그룹ID', '수집일시', '승인', '반영결과',
+  '승격SKU', '승격캠페인'   // 72P 가 채운다. 승격을 어느 상품의 수동 캠페인으로 옮길 것인가
 ];
 // 0부터 세는 자리. 뒤의 둘은 사람이 채우는 칸이라 수집이 덮어쓰면 안 된다
 var AT_FROM = 0, AT_TO = 1, AT_TERM = 5, AT_CLICKS = 10, AT_COST = 11,
     AT_ORDERS = 13, AT_CVR = 15, AT_CPC = 16, AT_BECPA = 18,
     AT_VERDICT = 21, AT_WHY = 22, AT_CID = 23, AT_GID = 24,
-    AT_APPROVE = 26, AT_APPLIED = 27;
+    AT_APPROVE = 26, AT_APPLIED = 27,
+    AT_PROMO_SKU = 28, AT_PROMO_CAMP = 29;
 var ADTERM_ID_COLS = [24, 25];
 
 var ADTERM_REPORT_TYPE = 'spSearchTerm';
@@ -541,12 +543,16 @@ function adTermRollup_() {
 
   // 승인 ✓ · 반영결과는 사람이 찍고 기계가 채운 칸 — 다시 만들 때 잃으면 두 번 올린다
   var sh = ensureSheet_(SHEET_ADTERM, ADTERM_HEADER);
+  fitCols_(sh, ADTERM_HEADER.length);
   var mark = {};
   if (sh.getLastRow() > 1) {
     var pv = sh.getRange(2, 1, sh.getLastRow() - 1, ADTERM_HEADER.length).getValues();
     for (var m = 0; m < pv.length; m++) {
       var mk = adTermKey_(pv[m]);
-      if (mk && (pv[m][AT_APPROVE] || pv[m][AT_APPLIED])) mark[mk] = [pv[m][AT_APPROVE], pv[m][AT_APPLIED]];
+      if (mk && (pv[m][AT_APPROVE] || pv[m][AT_APPLIED] || pv[m][AT_PROMO_CAMP])) {
+        mark[mk] = [pv[m][AT_APPROVE], pv[m][AT_APPLIED],
+                    pv[m][AT_PROMO_SKU], pv[m][AT_PROMO_CAMP]];
+      }
     }
   }
 
@@ -569,10 +575,13 @@ function adTermRollup_() {
       o0.im > 0 ? o0.clicks / o0.im : '', o0.clicks > 0 ? o0.orders / o0.clicks : '',
       d.cpc || '', o0.sales > 0 ? o0.cost / o0.sales : '',
       Math.round(beCpa) || '', d.needCvr || '', d.N || '',
-      d.v, d.why, o0.cid, o0.gid, now, '', ''
+      d.v, d.why, o0.cid, o0.gid, now, '', '', '', ''
     ];
     var got = mark[adTermKey_(row)];
-    if (got) { row[AT_APPROVE] = got[0]; row[AT_APPLIED] = got[1]; }
+    if (got) {
+      row[AT_APPROVE] = got[0]; row[AT_APPLIED] = got[1];
+      row[AT_PROMO_SKU] = got[2]; row[AT_PROMO_CAMP] = got[3];
+    }
     rows.push(row);
   }
   // 판정 순(승격 → 부정 → 더 봄 …), 그 안에서 클릭 많은 것부터
@@ -603,7 +612,12 @@ function adTermRollup_() {
     '판정': '승격 = 수동 정확 일치 키워드로 올릴 것\n부정 = 막을 것\n더 봄 = 아직 표본이 모자람',
     '잠정': '광고매출은 클릭 후 14일까지 붙는다. 이 표시가 있으면 최근 주가 아직 늘어난다.',
     '승인': '체크한 줄만 아마존에 반영한다.\n승격 → 수동 정확 일치 키워드로 올림\n부정 → 부정 정확 일치로 막음',
-    '반영결과': '[검색어 승인분 반영]이 채운다. 성공한 줄은 다시 올리지 않는다.'
+    '반영결과': '[검색어 승인분 반영]이 채운다. 성공한 줄은 다시 올리지 않는다.',
+    '승격SKU': '[승격 캠페인 계획]이 채운다. 이 검색어가 어느 상품을 판 것인가.\n' +
+               '한 광고그룹에 SKU 가 여럿이면 검색어 리포트로는 알 수 없어 "' + ADPROMO_MARK_UNKNOWN + '" 이 된다 —\n' +
+               '추정하지 않는다. 그 줄은 승인·반영에서 빠진다.',
+    '승격캠페인': '이 검색어를 옮겨 갈 수동 캠페인 이름.\n' +
+                  '[승격 캠페인 계획]이 광고생성계획에 이 이름으로 줄을 만든다.'
   });
   var msg = nWeeks + '주 합침 · 검색어 ' + rows.length.toLocaleString() + '개 · ' +
             ['승격', '부정', '더 봄', '판정 안 함'].map(function (k) { return k + ' ' + (stat[k] || 0); }).join(' · ');

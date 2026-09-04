@@ -52,24 +52,34 @@ function adTermBid_(row, ratio) {
 function approveAdTerms() {
   var sh = getSheetOrThrow_(SHEET_ADTERM);
   if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADTERM + '" 이 비어 있습니다.');
+  fitCols_(sh, ADTERM_HEADER.length);
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADTERM_HEADER.length).getValues();
 
-  var up = 0, neg = 0, done = 0;
+  var up = 0, neg = 0, done = 0, noSku = 0;
   for (var i = 0; i < v.length; i++) {
     var t = String(v[i][AT_VERDICT]);
     if (String(v[i][AT_APPLIED] || '').indexOf('성공') === 0) { done++; continue; }
-    if (t === '승격') up++; else if (t === '부정') neg++;
+    if (t === '승격') {
+      // 어느 상품이 판 것인지 모르면 옮길 수동 캠페인이 없다 — 체크하지 않는다.
+      // 옛 캠페인은 한 광고그룹에 SKU 를 수천 개 담아 두어서, 검색어 리포트로는 알 길이 없다
+      if (!adTermPromoTarget_(v[i]).name) { noSku++; continue; }
+      up++;
+    } else if (t === '부정') neg++;
   }
   if (!up && !neg) {
     ui_().alert('반영할 판정이 없습니다.',
       '승격·부정으로 판정된 줄이 없습니다.' +
+      (noSku ? '\n\n승격 ' + noSku.toLocaleString() + '줄은 [승격SKU] 가 비어 있어 뺐습니다.\n' +
+               '[승격 캠페인 계획]을 먼저 실행하세요. 그래도 "' + ADPROMO_MARK_UNKNOWN +
+               '" 이면 옮길 곳을 정할 수 없는 줄입니다.' : '') +
       (done ? '\n(이미 반영한 줄 ' + done + '개는 셈에서 뺐습니다.)' : ''),
       ui_().ButtonSet.OK);
     return;
   }
 
   var ans = ui_().alert('검색어 판정 승인',
-    '승격 ' + up + '개 · 부정 ' + neg + '개' + (done ? ' (이미 반영 ' + done + '개 제외)' : '') + '\n\n' +
+    '승격 ' + up + '개 · 부정 ' + neg + '개' + (done ? ' (이미 반영 ' + done + '개 제외)' : '') + '\n' +
+    (noSku ? 'SKU 모름 ' + noSku.toLocaleString() + '개는 뺐습니다 — 옮길 수동 캠페인이 없습니다\n' : '') + '\n' +
     '[예]    승격만 체크 — 파는 말을 키우는 쪽. 먼저 이것부터 하는 것이 안전합니다\n' +
     '[아니오] 승격 + 부정 둘 다 체크\n' +
     '[취소]  아무것도 안 함\n\n' +
@@ -82,7 +92,8 @@ function approveAdTerms() {
   for (var j = 0; j < v.length; j++) {
     var vd = String(v[j][AT_VERDICT]);
     var already = String(v[j][AT_APPLIED] || '').indexOf('성공') === 0;
-    var pick = !already && (vd === '승격' || (withNeg && vd === '부정'));
+    var canUp = vd === '승격' && !!adTermPromoTarget_(v[j]).name;
+    var pick = !already && (canUp || (withNeg && vd === '부정'));
     col.push([pick ? true : false]);
     if (pick) n++;
   }
@@ -98,27 +109,36 @@ function applyAdTerms() {
   if (!adBusyGuard_('검색어 반영')) return;
   var sh = getSheetOrThrow_(SHEET_ADTERM);
   if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADTERM + '" 이 비어 있습니다.');
+  fitCols_(sh, ADTERM_HEADER.length);
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADTERM_HEADER.length).getValues();
 
-  var up = 0, neg = 0, skip = 0;
+  var up = 0, neg = 0, skip = 0, noCamp = 0;
   for (var i = 0; i < v.length; i++) {
     if (!adRowApproved_(v[i][AT_APPROVE])) continue;
     if (String(v[i][AT_APPLIED] || '').indexOf('성공') === 0) { skip++; continue; }
     var vd = String(v[i][AT_VERDICT]);
-    if (vd === '승격') up++; else if (vd === '부정') neg++;
+    if (vd === '승격') {
+      if (!adTermPromoTarget_(v[i]).gid) { noCamp++; continue; }
+      up++;
+    } else if (vd === '부정') neg++;
   }
   if (!up && !neg) {
     ui_().alert('반영할 줄이 없습니다.',
       '승인 ✓ 이면서 아직 안 올린 줄이 없습니다.' +
       (skip ? '\n이미 반영한 줄 ' + skip + '개는 다시 올리지 않습니다.' : '') +
+      (noCamp ? '\n\n승격 ' + noCamp.toLocaleString() + '줄은 옮겨 갈 수동 캠페인이 아직 없습니다.\n' +
+                '[승격 캠페인 계획] → 광고생성계획에서 승인 → [⑤ 승인분 캠페인 생성]\n' +
+                '을 먼저 하면 그 캠페인에 올라갑니다.' : '') +
       '\n\n[검색어 판정 승인]으로 먼저 체크하세요.', ui_().ButtonSet.OK);
     return;
   }
 
   var ok = ui_().alert('검색어 승인분 반영',
-    '올릴 것: 수동 정확 일치 키워드 ' + up + '개\n' +
+    '올릴 것: 수동 정확 일치 키워드 ' + up + '개 (그 SKU 의 승격 캠페인에)\n' +
     '막을 것: 부정 정확 일치 ' + neg + '개\n' +
-    (skip ? '건너뜀: 이미 반영한 ' + skip + '개\n' : '') + '\n' +
+    (up ? '함께: 올린 말은 원래 자동 그룹에서 부정으로 막습니다 — 우리끼리 값을 올리지 않게\n' : '') +
+    (skip ? '건너뜀: 이미 반영한 ' + skip + '개\n' : '') +
+    (noCamp ? '건너뜀: 승격 캠페인이 아직 없는 ' + noCamp.toLocaleString() + '개\n' : '') + '\n' +
     '키워드를 올리면 그 말에 돈이 나가기 시작합니다.\n' +
     '부정은 지워도 그 사이 놓친 노출은 돌아오지 않습니다.\n\n' +
     '계속할까요?', ui_().ButtonSet.OK_CANCEL);
@@ -176,6 +196,7 @@ function adTermSend_(token, kind, items) {
 function adTermApplyStep_(interactive) {
   var t0 = Date.now();
   var sh = getSheetOrThrow_(SHEET_ADTERM);
+  fitCols_(sh, ADTERM_HEADER.length);
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADTERM_HEADER.length).getValues();
   var basis = adBasis_();
   var ratio = Number(basis['목표 ACOS 비율']) || 0.65;
@@ -193,6 +214,7 @@ function adTermApplyStep_(interactive) {
 
   // 같은 종류끼리 모아 보낸다 — 한 줄씩 부르면 백 번을 부른다
   var pend = { '승격': [], '부정': [] };
+  var block = [];      // 승격 성공 뒤 원래 자동 그룹에 걸 부정 키워드
   var okN = 0, failN = 0, left = 0, timeUp = false, aborted = '', streak = 0;
 
   var send = function (kind) {
@@ -212,6 +234,14 @@ function adTermApplyStep_(interactive) {
         okN++; streak = 0;
         col[it.row][0] = '성공 · ' + (kind === '승격' ? '키워드' : '부정') +
                          ' ' + (r.id || '') + (kind === '승격' ? ' · ' + it.bid + '엔' : '');
+        if (kind === '승격') {
+          // 옮겼으면 원래 있던 자동 그룹에서는 막는다. 안 막으면 같은 말에
+          // 우리 캠페인 둘이 서로 값을 올린다 — 파는 쪽이 아니라 아마존이 번다
+          block.push({ row: it.row, camp: it.scamp, group: it.sgroup, text: it.text,
+            sku: it.sku, asin: it.asin, cid: it.cid, gid: it.gid,
+            payload: { campaignId: it.cid, adGroupId: it.gid, keywordText: it.text,
+                       matchType: 'NEGATIVE_EXACT', state: 'ENABLED' } });
+        }
         rows.push(adLogRow_({
           kind: kind === '승격' ? '키워드' : '부정키워드',
           camp: it.camp, group: it.group, target: it.text, item: kind === '승격' ? '입찰' : '차단',
@@ -219,7 +249,7 @@ function adTermApplyStep_(interactive) {
           sku: it.sku, asin: it.asin,
           sum: (kind === '승격' ? '올림 · ' : '막음 · ') + '"' + it.text + '" · ' + it.group +
                (kind === '승격' ? ' · ' + it.bid + '엔' : ''),
-          why: it.why, cid: it.cid, gid: it.gid, tid: r.id || ''
+          why: it.why, cid: it.tcid || it.cid, gid: it.tgid || it.gid, tid: r.id || ''
         }));
       } else {
         failN++; streak++;
@@ -261,9 +291,28 @@ function adTermApplyStep_(interactive) {
       continue;
     }
 
-    var payload = { campaignId: cid, adGroupId: gid, keywordText: text, state: 'ENABLED' };
+    // 부정은 나온 자리(자동 그룹)에 그대로 건다.
+    // 승격은 그 자리에 걸 수 없다 — 아마존은 자동 캠페인에 키워드를 받지 않는다.
+    // 그 SKU 의 수동 캠페인(72P 가 만든다)으로 보낸다.
+    var toCid = cid, toGid = gid, campName = String(v[i2][3] || ''), grpName = String(v[i2][4] || '');
     var bid = 0;
+    var payload = { keywordText: text, state: 'ENABLED' };
     if (vd === '승격') {
+      var tgt = adTermPromoTarget_(v[i2]);
+      if (!tgt.name) {
+        dirty = true; failN++;
+        col[i2][0] = '중단(SKU 모름): 이 광고그룹에는 SKU 가 여럿이라 어느 상품이 판 것인지 ' +
+                     '알 수 없습니다. 검색어 리포트는 광고그룹까지만 알려줍니다';
+        continue;
+      }
+      if (!tgt.gid) {
+        dirty = true; failN++;
+        col[i2][0] = '실패: 승격 캠페인 "' + tgt.name + '" 이 아직 만들어지지 않았습니다. ' +
+                     '[승격 캠페인 계획] → 광고생성계획 승인 → [⑤ 승인분 캠페인 생성]';
+        continue;
+      }
+      toCid = tgt.cid; toGid = tgt.gid;
+      campName = tgt.name; grpName = tgt.name;
       payload.matchType = 'EXACT';
       bid = adTermBid_(v[i2], ratio);
       if (!(bid > 0)) {
@@ -275,19 +324,61 @@ function adTermApplyStep_(interactive) {
     } else {
       payload.matchType = 'NEGATIVE_EXACT';
     }
+    payload.campaignId = toCid;
+    payload.adGroupId = toGid;
 
     pend[vd].push({
       row: i2, payload: payload, text: text, bid: bid,
-      camp: String(v[i2][3] || ''), group: String(v[i2][4] || ''),
-      sku: String(v[i2][7] || ''), asin: String(v[i2][8] || ''),
-      why: String(v[i2][AT_WHY] || ''), cid: cid, gid: gid
+      camp: campName, group: grpName,
+      sku: String(v[i2][AT_PROMO_SKU] || v[i2][7] || ''), asin: String(v[i2][8] || ''),
+      why: String(v[i2][AT_WHY] || ''),
+      scamp: String(v[i2][3] || ''), sgroup: String(v[i2][4] || ''),
+      cid: cid, gid: gid,           // 나온 자리 — 승격 뒤 여기를 막는다
+      tcid: toCid, tgid: toGid      // 실제로 올린 자리
     });
     if (pend[vd].length >= ADTERM_APPLY_BATCH) send(vd);
   }
   send('승격'); send('부정');
+
+  // 옮긴 말은 원래 자동 그룹에서 막는다. 실패해도 키워드는 이미 올라갔으므로
+  // 줄을 실패로 되돌리지 않고, 무엇이 안 막혔는지 [반영결과]에 덧붙인다
+  var blocked = 0, blockFail = 0;
+  for (var bi = 0; bi < block.length; bi += ADTERM_APPLY_BATCH) {
+    var part = block.slice(bi, bi + ADTERM_APPLY_BATCH);
+    var bres;
+    try { bres = adTermSend_(token, '부정', part); }
+    catch (e3) {
+      bres = part.map(function () { return { ok: false, msg: String(e3).substring(0, 140) }; });
+    }
+    var brows = [];
+    for (var bj = 0; bj < part.length; bj++) {
+      var bit = part[bj], br = bres[bj] || { ok: false, msg: '응답 없음' };
+      dirty = true;
+      if (br.ok) {
+        blocked++;
+        col[bit.row][0] = String(col[bit.row][0]) + ' · 원그룹 막음';
+        brows.push(adLogRow_({
+          kind: '부정키워드', camp: bit.camp, group: bit.group, target: bit.text,
+          item: '차단', from: '', to: '차단', sku: bit.sku, asin: bit.asin,
+          sum: '막음 · "' + bit.text + '" · ' + bit.group + ' (수동으로 옮겨서)',
+          why: '수동 캠페인으로 옮긴 말이라 자동 그룹에서는 뺀다 — 우리끼리 값을 올리지 않게',
+          cid: bit.cid, gid: bit.gid, tid: br.id || ''
+        }));
+      } else {
+        blockFail++;
+        col[bit.row][0] = String(col[bit.row][0]) + ' · 원그룹 못 막음: ' +
+                          adErrorText_(br.msg).substring(0, 80);
+      }
+    }
+    if (brows.length) logBuf.push(brows);
+    flushCol(); logBuf.flush();
+  }
+
   flushCol(); logBuf.flush();
 
   var msg = '검색어 반영 — ' + okN + '개 성공' + (failN ? ' · ' + failN + '개 실패' : '') +
+            (blocked ? ' · 원그룹 막음 ' + blocked : '') +
+            (blockFail ? ' · 원그룹 못 막음 ' + blockFail : '') +
             (left ? ' · 남음 ' + left : ' · 완료');
   if (aborted) {
     adAbortRun_('검색어 반영', ADTERM_APPLY_CONTINUE, aborted);

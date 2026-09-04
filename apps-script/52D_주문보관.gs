@@ -147,8 +147,21 @@ function fitRows_(name, header, rows) {
   return rows;
 }
 
+/**
+ * 시트가 머리글보다 좁으면 넓힌다.
+ *
+ * 새 시트는 26칸으로 시작한다. 머리글에 칸을 붙이다 그 수를 넘기면
+ * getRange 가 "범위를 벗어남" 한 줄만 던져서, 원인이 칸 수라는 것을 알기 어렵다.
+ */
+function fitCols_(sh, n) {
+  var have = sh.getMaxColumns();
+  if (have < n) sh.insertColumnsAfter(have, n - have);
+  return sh;
+}
+
 function writeTable_(sh, header, rows) {
   fitRows_(sh.getName(), header, rows);
+  fitCols_(sh, header.length);
   var before = sh.getLastRow();
   sh.getRange(1, 1, 1, header.length).setValues([header])
     .setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
