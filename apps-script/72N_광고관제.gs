@@ -17,9 +17,15 @@
  * 둘 다 가볍다. 매일 아침 트리거로 돈다. 사람은 표만 본다.
  *
  * ── 한도는 어디서 오나 ──────────────────────────────────
- * 광고기준의 [주간 광고비 한도(JPY)]. 비워 두면 승인 ✓ 캠페인의 일예산 합 × 7 을 쓴다 —
- * 승인한 만큼만 쓰는 것이 정상이므로, 그것을 넘으면 승인 안 한 것이 켜졌다는 뜻이다.
- * 숫자를 적으면 그 값이 우선한다 (트랙 B 의 '한 주 허용 손해' 도 여기에 적는다).
+ * 트랙마다 따로다. 섞으면 트랙 B 를 하나 켤 때마다 트랙 A 의 한도를 갉아먹는다.
+ *
+ *   트랙 A 한도 = 광고기준의 [주간 광고비 한도(JPY)].
+ *                 비우면 승인 ✓ 인 A 캠페인의 일예산 합 × 7.
+ *   트랙 B 한도 = 육성 표의 [주간광고비] 를 SKU 마다 따로 본다.
+ *                 전체 한도에는 그 합을 더하기만 한다.
+ *
+ * 그래서 트랙 B 를 켜도 트랙 A 의 여유가 줄지 않는다. 그리고 트랙 B 한 줄이
+ * 제 예산을 넘기면 그 줄만 멈춘다 — 남의 캠페인까지 끌어내리지 않는다.
  */
 
 var SHEET_ADWATCH = '광고관제';
@@ -53,7 +59,8 @@ function adWatchOurs_() {
     out.push({ row: i + 2, cid: cid, name: String(v[i][AP_NAME - 1]),
                approved: adRowApproved_(v[i][AP_APPROVE - 1]),
                daily: Number(v[i][AP_DAILY - 1]) || 0, bid: Number(v[i][AP_BID - 1]) || 0,
-               nSku: Number(v[i][7]) || 0, result: String(v[i][AP_RESULT - 1]) });
+               nSku: Number(v[i][7]) || 0, result: String(v[i][AP_RESULT - 1]),
+               track: String(v[i][AP_TRACK - 1] || 'A').trim().toUpperCase() });
   }
   return out;
 }
@@ -78,6 +85,25 @@ function adWatchOnSince_() {
     var d = (at instanceof Date) ? ymd_(at) : String(at || '').trim();
     if (!d) continue;
     if (!out[cid] || d > out[cid]) out[cid] = d;
+  }
+  return out;
+}
+
+/**
+ * 트랙 B 캠페인마다 제 주간 광고비. 육성 표에서 캠페인명으로 찾는다 (시트만 읽는다).
+ * 트랙 B 는 SKU 마다 '한 주에 얼마까지 잃어도 좋은가' 를 따로 정하므로
+ * 한도도 SKU 마다다. 하나로 묶으면 어느 상품이 넘었는지 알 수 없다.
+ */
+function adGrowWeeklyByCamp_() {
+  var out = {};
+  var sh = ss_().getSheetByName(SHEET_ADGROW);
+  if (!sh || sh.getLastRow() < 2) return out;
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADGROW_HEADER.length).getValues();
+  for (var i = 0; i < v.length; i++) {
+    var nm = String(v[i][AG_CAMP] || '').trim();
+    var w = Number(v[i][AG_WEEKLY]) || 0;
+    if (nm && w > 0) out[nm] = { weekly: w, sku: String(v[i][AG_SKU] || ''),
+                                 loss: Number(v[i][AG_LOSS]) || 0 };
   }
   return out;
 }
@@ -132,7 +158,7 @@ function adWatchReport_(token) {
  * 캠페인 한 줄을 본다. 순서가 곧 심각도다.
  * '승인 안 했는데 켜짐' 이 맨 위인 이유: 그것은 실적이 아니라 프로그램 오류의 증거다.
  */
-function adWatchVerdict_(c, live, p, margin, since, repFrom, repTo) {
+function adWatchVerdict_(c, live, p, margin, since, repFrom, repTo, ownWeekly) {
   var on = live && live.state === 'ENABLED';
   if (!live) return { v: '?', why: '아마존에 없음 — 지워졌거나 ID 가 낡았다', fix: '' };
 
@@ -140,9 +166,13 @@ function adWatchVerdict_(c, live, p, margin, since, repFrom, repTo) {
   if (on && !c.approved) {
     return { v: '⛔ 미승인 켜짐', why: '승인 칸이 비어 있는데 아마존에서 켜져 있다 — 프로그램 오류 신호', fix: 'PAUSE' };
   }
-  if (on && p.cost > c.daily * ADWATCH_DAYS * 1.1 && c.daily > 0) {
-    return { v: '⛔ 예산 초과', why: '7일 광고비 ¥' + Math.round(p.cost) + ' > 일예산×7 ¥' +
-             Math.round(c.daily * ADWATCH_DAYS) + ' — 예산이 안 먹히고 있다', fix: 'PAUSE' };
+  // 트랙 B 는 육성 표에 적힌 제 주간 광고비가 한도다. 트랙 A 는 일예산 × 7
+  var mine = (ownWeekly > 0) ? ownWeekly : c.daily * ADWATCH_DAYS;
+  if (on && mine > 0 && p.cost > mine * 1.1) {
+    return { v: '⛔ 예산 초과',
+             why: '7일 광고비 ¥' + Math.round(p.cost) + ' > 이 캠페인 한도 ¥' + Math.round(mine) +
+                  (ownWeekly > 0 ? ' (육성 표의 주간광고비)' : ' (일예산×7)') +
+                  ' — 예산이 안 먹히고 있다', fix: 'PAUSE' };
   }
   if (!on) return { v: '멈춤', why: c.approved ? '승인 ✓ 인데 멈춰 있음 — 켜려면 [캠페인 켜기]' : '', fix: '' };
 
@@ -169,13 +199,30 @@ function adWatchVerdict_(c, live, p, margin, since, repFrom, repTo) {
   return { v: '정상', why: '', fix: '' };
 }
 
-/** 한도. 광고기준에 숫자가 있으면 그것, 없으면 승인 ✓ 일예산 합 × 7 */
-function adWatchCap_(basis, ours) {
-  var set = Number(basis['주간 광고비 한도(JPY)']);
-  if (set > 0) return { cap: set, src: '광고기준에 적은 값' };
-  var sum = 0;
-  for (var i = 0; i < ours.length; i++) if (ours[i].approved) sum += ours[i].daily;
-  return { cap: sum * 7, src: '승인 ✓ 캠페인 일예산 합 × 7 (광고기준에 적으면 그 값이 우선)' };
+/**
+ * 한도를 트랙별로 낸다.
+ *   A = 광고기준에 적은 값, 없으면 승인 ✓ 인 A 캠페인의 일예산 합 × 7
+ *   B = 육성 표에 적힌 주간광고비의 합 (승인 ✓ 이고 살아 있는 줄만)
+ * 전체 한도는 둘의 합이다 — 트랙 B 를 켜도 트랙 A 의 여유가 줄지 않는다.
+ */
+function adWatchCap_(basis, ours, grow) {
+  var setA = Number(basis['주간 광고비 한도(JPY)']);
+  var sumA = 0, capB = 0, nB = 0;
+  for (var i = 0; i < ours.length; i++) {
+    var c = ours[i];
+    if (!c.approved) continue;
+    if (c.track === ADPLAN_TRACK_B) {
+      var g = grow[c.name];
+      if (g) { capB += g.weekly; nB++; }
+      else capB += c.daily * ADWATCH_DAYS;      // 육성 표에서 못 찾으면 일예산으로
+    } else {
+      sumA += c.daily;
+    }
+  }
+  var capA = setA > 0 ? setA : sumA * 7;
+  return { capA: capA, capB: capB, nB: nB, cap: capA + capB,
+           src: '트랙A ' + (setA > 0 ? '광고기준에 적은 값' : '승인 ✓ 일예산 합 × 7') +
+                (capB > 0 ? ' + 트랙B ' + nB + '개의 주간광고비 합' : '') };
 }
 
 // ── 실행 ────────────────────────────────────────────────
@@ -273,29 +320,43 @@ function adWatchRun_(interactive) {
   var margin = Number(basis['기본 마진율']) || 0.17;
   var warnAt = Number(basis['한도 경고 비율']) || 0.8;
   var autoStop = String(basis['한도 넘으면 자동 멈춤']).toUpperCase() !== 'FALSE';
-  var capInfo = adWatchCap_(basis, ours);
+  var grow = adGrowWeeklyByCamp_();
+  var capInfo = adWatchCap_(basis, ours, grow);
 
   var since = adWatchOnSince_();
   var now = new Date(), rows = [], stat = {}, total = 0, onN = 0, toPause = [], fresh = 0;
+  var spend = { A: 0, B: 0 };
   for (var i = 0; i < ours.length; i++) {
     var c = ours[i], L = live[c.cid], p = rep.perf[c.cid] || { im: 0, ck: 0, cost: 0, sales: 0, ord: 0 };
     total += p.cost;
+    spend[c.track === ADPLAN_TRACK_B ? 'B' : 'A'] += p.cost;
     if (L && L.state === 'ENABLED') onN++;
     if (L && L.state === 'ENABLED' && since[c.cid] && since[c.cid] > rep.to) fresh++;
-    var d = adWatchVerdict_(c, L, p, margin, since[c.cid] || '', rep.from, rep.to);
+    var own = (c.track === ADPLAN_TRACK_B && grow[c.name]) ? grow[c.name].weekly : 0;
+    var d = adWatchVerdict_(c, L, p, margin, since[c.cid] || '', rep.from, rep.to, own);
     stat[d.v] = (stat[d.v] || 0) + 1;
     if (d.fix === 'PAUSE' && autoStop) toPause.push(c);
-    rows.push([c.name, L ? L.state : '없음', c.approved, (L && L.budget !== '') ? L.budget : c.daily, c.bid, c.nSku,
+    rows.push([c.name + (c.track === ADPLAN_TRACK_B ? '  [B]' : ''),
+               L ? L.state : '없음', c.approved, (L && L.budget !== '') ? L.budget : c.daily, c.bid, c.nSku,
                p.im, p.ck, Math.round(p.cost), Math.round(p.sales), p.ord, p.sales > 0 ? p.cost / p.sales : '',
                d.v, d.why, false, c.cid, now]);
   }
 
-  // 한도
+  /**
+   * 한도는 트랙마다 따로 본다. 트랙 A 가 넘쳤다고 트랙 B 를 끄면
+   * 애써 순위를 만들던 상품이 남의 사고로 죽는다. 그 반대도 마찬가지다.
+   * 넘친 트랙의 켜져 있는 캠페인만 멈춘다.
+   */
   var cap = capInfo.cap, ratio = cap > 0 ? total / cap : 0;
-  var capState = cap <= 0 ? '한도 없음' : ratio >= 1 ? '⛔ 초과' : ratio >= warnAt ? '⚠ 근접' : '정상';
-  if (cap > 0 && ratio >= 1 && autoStop) {
-    // 전부 멈춘다 — 켜져 있는 것 모두
+  var overA = capInfo.capA > 0 && spend.A >= capInfo.capA;
+  var overB = capInfo.capB > 0 && spend.B >= capInfo.capB;
+  var capState = (overA || overB) ? '⛔ 초과'
+               : (cap > 0 && ratio >= warnAt) ? '⚠ 근접'
+               : (cap <= 0 ? '한도 없음' : '정상');
+  if (autoStop && (overA || overB)) {
     for (var k = 0; k < ours.length; k++) {
+      var isB = ours[k].track === ADPLAN_TRACK_B;
+      if (isB ? !overB : !overA) continue;              // 안 넘친 트랙은 그대로 둔다
       var Lk = live[ours[k].cid];
       if (Lk && Lk.state === 'ENABLED' && toPause.indexOf(ours[k]) < 0) toPause.push(ours[k]);
     }
@@ -304,9 +365,11 @@ function adWatchRun_(interactive) {
   // 멈춘다
   var paused = [];
   if (toPause.length) {
-    paused = adWatchPause_(token, toPause, cap > 0 && ratio >= 1
-      ? '주간 한도 초과 (¥' + Math.round(total).toLocaleString() + ' / ¥' + Math.round(cap).toLocaleString() + ')'
-      : '관제 자동 멈춤');
+    var overWhy = [];
+    if (overA) overWhy.push('트랙A ¥' + Math.round(spend.A).toLocaleString() + ' / ¥' + Math.round(capInfo.capA).toLocaleString());
+    if (overB) overWhy.push('트랙B ¥' + Math.round(spend.B).toLocaleString() + ' / ¥' + Math.round(capInfo.capB).toLocaleString());
+    paused = adWatchPause_(token, toPause, overWhy.length
+      ? '주간 한도 초과 (' + overWhy.join(' · ') + ')' : '관제 자동 멈춤');
     for (var r2 = 0; r2 < rows.length; r2++) {
       if (paused.indexOf(rows[r2][0]) >= 0) { rows[r2][AW_STATE] = 'PAUSED'; rows[r2][AW_VERDICT] = rows[r2][AW_VERDICT] + ' → 멈춤'; }
     }
@@ -316,10 +379,18 @@ function adWatchRun_(interactive) {
   var rank = function (v) { return v.indexOf('⛔') === 0 ? 0 : v.indexOf('⚠') === 0 ? 1 : v === '정상' ? 2 : v.indexOf('·') === 0 ? 3 : 4; };
   rows.sort(function (a, b) { var d0 = rank(a[AW_VERDICT]) - rank(b[AW_VERDICT]); return d0 !== 0 ? d0 : b[AW_COST] - a[AW_COST]; });
 
+  var pctOf = function (a, b) { return b > 0 ? ' (' + Math.round(a / b * 100) + '%)' : ''; };
   var banner = rep.from + ' ~ ' + rep.to + ' (7일)  |  우리 캠페인 ' + ours.length + '개 · 켜짐 ' + onN +
-               '  |  광고비 ¥' + Math.round(total).toLocaleString() +
-               (cap > 0 ? ' / 한도 ¥' + Math.round(cap).toLocaleString() + ' (' + Math.round(ratio * 100) + '%) ' + capState
-                        : ' / 한도 없음 ⚠') +
+               '  |  트랙A ¥' + Math.round(spend.A).toLocaleString() + ' / ¥' +
+               Math.round(capInfo.capA).toLocaleString() + pctOf(spend.A, capInfo.capA) +
+               (overA ? ' ⛔' : '') +
+               (capInfo.capB > 0
+                 ? '  |  트랙B ¥' + Math.round(spend.B).toLocaleString() + ' / ¥' +
+                   Math.round(capInfo.capB).toLocaleString() + pctOf(spend.B, capInfo.capB) +
+                   (overB ? ' ⛔' : '')
+                 : '') +
+               '  |  합계 ¥' + Math.round(total).toLocaleString() +
+               (cap > 0 ? ' / ¥' + Math.round(cap).toLocaleString() + ' ' + capState : ' ⚠ 한도 없음') +
                (fresh ? '  |  ⓘ ' + fresh + '개는 이 기간 뒤에 켜서 실적이 아직 없습니다' : '') +
                '  |  한도 출처: ' + capInfo.src;
   var writeErr = '';
@@ -341,10 +412,12 @@ function adWatchRun_(interactive) {
   } else if (capState === '⛔ 초과') {
     // 자동 멈춤을 꺼 둔 경우다 — 그럴수록 메일은 가야 한다
     adWatchMailOnce_('over', '광고비가 주간 한도를 넘었습니다 (자동 멈춤 꺼짐)',
-      banner + '\n\n[한도 넘으면 자동 멈춤] 이 FALSE 라 멈추지 않았습니다. 직접 [전부 멈추기] 를 누르거나 광고기준에서 TRUE 로 바꾸세요.');
+      banner + '\n\n[한도 넘으면 자동 멈춤] 이 FALSE 라 멈추지 않았습니다. 직접 [전부 멈추기] 를 누르거나 광고기준에서 TRUE 로 바꾸세요.\n' +
+      '넘친 트랙: ' + ((overA ? '트랙A ' : '') + (overB ? '트랙B' : '')).trim());
   } else if (capState === '⚠ 근접') {
     adWatchMailOnce_('warn', '광고비가 주간 한도의 ' + Math.round(ratio * 100) + '% 입니다',
-      banner + '\n\n한도를 넘으면 자동으로 전부 멈춥니다. 한도는 광고기준 [주간 광고비 한도(JPY)] 에서 바꿉니다.');
+      banner + '\n\n한도를 넘으면 그 트랙의 캠페인만 자동으로 멈춥니다.\n' +
+      '트랙 A 한도는 광고기준 [주간 광고비 한도(JPY)], 트랙 B 는 육성 표의 SKU 마다 [주간허용손해] 에서 바꿉니다.');
   }
   return { banner: banner, paused: paused, statLine: statLine, writeErr: writeErr };
 }
@@ -441,6 +514,7 @@ function adWatchWrite_(banner, rows, now) {
       '아마존상태': '아마존이 지금 말하는 상태. 시트의 표시가 아니라 진짜 값이다.',
       '승인': '광고생성계획의 승인 칸. 여기서 바꿔도 반영되지 않는다 — 계획 표에서 바꾼다.',
       '판정': '⛔ = 자동으로 멈춘다 (한도 넘으면 자동 멈춤 이 TRUE 일 때)\n⚠ = 사람이 볼 것\n· = 참고',
+    '캠페인': '이름 뒤 [B] 는 트랙 B(육성) 입니다. 한도를 트랙 A 와 따로 봅니다.',
       '멈춤': '체크한 뒤 [📣 광고 → 관제 표에서 체크한 캠페인 멈춤]. 여러 개를 한 번에.',
       '7일ACOS': '광고매출은 클릭 후 14일까지 붙는다. 최근 7일은 실제보다 높게 보인다.'
     });
