@@ -80,6 +80,7 @@ function buildPriceMenu_() {
       .addItem('캠페인 전부 멈추기', 'pauseAllCampaigns')
       .addSeparator()
       .addItem('검색어 수집 (자동 캠페인)', 'fetchAdSearchTerms')
+      .addItem('검색어 판정 다시 계산 (원본 합치기)', 'rollupAdTerms')
       .addItem('검색어 판정 승인', 'approveAdTerms')
       .addItem('검색어 승인분 반영 (키워드 올림 · 막음)', 'applyAdTerms')
       .addSeparator()

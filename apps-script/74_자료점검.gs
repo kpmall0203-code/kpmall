@@ -683,7 +683,9 @@ function collectStatus() {
     { label: '검색어 수집', on: q(PROP_ADTERM_QUEUE) > 0,
       note: function () {
         var t = adTermLastIn_();
-        return q(PROP_ADTERM_QUEUE) + '개 주 남음' +
+        var qq = JSON.parse(props.getProperty(PROP_ADTERM_QUEUE) || '[]');
+        var wk = qq.filter(function (x) { return x !== ADTERM_ROLLUP; }).length;
+        return (wk ? '주 ' + wk + '개 남음' : '합쳐서 판정하는 중') +
                (t ? ' · 마지막 ' + (t.mins < 1 ? '방금' : t.mins + '분 전') +
                     (t.mins > 3 ? ' ⚠ 멈춘 듯' : '') : '');
       },
@@ -794,10 +796,10 @@ function collectStatus() {
 
 /** 광고검색어에 마지막으로 줄이 들어온 때. 없으면 null */
 function adTermLastIn_() {
-  var sh = ss_().getSheetByName(SHEET_ADTERM);
+  var sh = ss_().getSheetByName(SHEET_ADTERM_RAW);
   if (!sh || sh.getLastRow() < 2) return null;
-  // 수집일시는 새 구간이 위로 오게 정렬되므로 첫 줄이 가장 최근이다
-  var v = sh.getRange(2, 26).getValue();
+  // 원본은 덧붙이기만 하므로 마지막 줄이 가장 최근이다
+  var v = sh.getRange(sh.getLastRow(), AR_AT + 1).getValue();
   if (!(v instanceof Date)) return null;
   return { at: v, mins: Math.round((Date.now() - v.getTime()) / 60000) };
 }

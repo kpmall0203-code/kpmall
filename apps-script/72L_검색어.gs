@@ -43,8 +43,21 @@ var PROP_ADTERM_QUEUE = 'ADTERM_QUEUE';
 var PROP_ADTERM_REPORT = 'ADTERM_REPORT_ID';
 var PROP_ADTERM_LEVEL = 'ADTERM_COL_LEVEL';
 var ADTERM_CONTINUE_HANDLER = 'continueAdTerms';
-var ADTERM_WEEKS_DEFAULT = 2;      // 한 주에 1만 줄 — 4주는 무겁다
-var ADTERM_KEEP_WEEKS = 13;
+var ADTERM_WEEKS_DEFAULT = 2;      // 한 번에 받을 주 수. 이미 받은 주는 다시 안 받는다
+var ADTERM_KEEP_WEEKS = 8;         // 주간 원본 보관. 한 주 1만 줄 × 12칸 — 8주면 셀 100만
+var ADTERM_REPORT_WAIT_MS = 90 * 1000;   // 한 실행에서 리포트를 기다리는 최대. 넘으면 1분 뒤 다시
+var ADTERM_ROLLUP = 'ROLLUP';      // 큐의 마지막 항목 — 원본을 합쳐 판정한다
+
+/**
+ * 주간 원본. 받은 그대로 덧붙이기만 한다 — 절대 통째로 다시 쓰지 않는다.
+ * 처음엔 판정 표 하나에 주마다 1만 줄을 얹고 매번 전체를 정렬해 다시 썼다.
+ * 4주가 되니 123만 셀을 주마다 다시 쓰는 꼴이 됐고, 그것이 타임아웃이었다.
+ */
+var SHEET_ADTERM_RAW = '광고검색어주간';
+var ADTERM_RAW_HEADER = ['기간시작', '기간종료', '캠페인ID', '광고그룹ID', '검색어', '겨냥',
+                         '노출', '클릭', '광고비(JPY)', '광고매출(JPY)', '주문', '수집일시'];
+var AR_FROM = 0, AR_TO = 1, AR_CID = 2, AR_GID = 3, AR_TERM = 4, AR_MATCH = 5,
+    AR_IM = 6, AR_CLICKS = 7, AR_COST = 8, AR_SALES = 9, AR_ORDERS = 10, AR_AT = 11;
 var ADTERM_JUDGE_ORDERS = 3;      // 판정에 필요한 손익분기 주문 수
 var ADTERM_PROMOTE_ORDERS = 2;    // 이만큼 팔렸으면 표본이 작아도 올린다
 
@@ -265,88 +278,114 @@ function adTermVerdict_(o, basis) {
            cpc: cpc, needCvr: needCvr, N: N };
 }
 
-/** 같은 구간을 다시 받으면 그 구간만 갈아끼운다 */
-function writeAdTermRows_(rows, from, to) {
-  var sh = ensureSheet_(SHEET_ADTERM, ADTERM_HEADER);
-  var keep = [], mark = {}, oldest = addDays_(ymd_(new Date()), -7 * ADTERM_KEEP_WEEKS);
+// ── 주간 원본 쓰기 (덧붙이기만) ─────────────────────────
 
-  /**
-   * 시트는 한 번만 읽는다. 셀이 삼백만 칸인 문서라 한 번 훑는 값이 싸지 않고,
-   * 두 번 읽으면 그 사이 트리거가 끼어들어 '스프레드시트 서비스 타임아웃' 이 난다.
-   *
-   * 한 번 훑으며 두 가지를 챙긴다:
-   *   ① 남길 줄  — 이번에 받은 구간이 아니고 보관 기간 안인 줄
-   *   ② 이름표   — 승인 ✓ 와 반영결과. 사람이 찍고 기계가 채운 칸이라
-   *                같은 주를 다시 받아도 잃으면 안 된다. 잃으면 이미 아마존에
-   *                올린 키워드를 또 올린다.
-   */
-  if (sh.getLastRow() > 1) {
-    var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADTERM_HEADER.length).getValues();
-    for (var i = 0; i < v.length; i++) {
-      var mk = adTermKey_(v[i]);
-      if (mk && (v[i][AT_APPROVE] || v[i][AT_APPLIED])) {
-        mark[mk] = [v[i][AT_APPROVE], v[i][AT_APPLIED]];
-      }
-      var f = v[i][AT_FROM] instanceof Date ? ymd_(v[i][AT_FROM]) : String(v[i][AT_FROM]);
-      var t = v[i][AT_TO] instanceof Date ? ymd_(v[i][AT_TO]) : String(v[i][AT_TO]);
-      if (!f || (f === from && t === to) || f < oldest) continue;
-      keep.push(v[i]);
-    }
+/** 원본 표에서 기간별로 몇 줄째부터 몇 줄인지 (A·B 두 칸만 읽는다 — 싸다) */
+function adTermRawBlocks_(sh) {
+  var n = sh.getLastRow() - 1, out = {};
+  if (n < 1) return out;
+  var v = sh.getRange(2, 1, n, 2).getValues();
+  for (var i = 0; i < v.length; i++) {
+    var f = v[i][0] instanceof Date ? ymd_(v[i][0]) : String(v[i][0]);
+    var t = v[i][1] instanceof Date ? ymd_(v[i][1]) : String(v[i][1]);
+    var k = f + '|' + t;
+    if (!out[k]) out[k] = { start: i + 2, n: 0, from: f, to: t };
+    out[k].n++;
   }
-  for (var n2 = 0; n2 < rows.length; n2++) {
-    var got = mark[adTermKey_(rows[n2])];
-    if (!got) continue;
-    rows[n2][AT_APPROVE] = got[0];
-    rows[n2][AT_APPLIED] = got[1];
-  }
-
-  var all = keep.concat(rows);
-  all.sort(function (a, b) {
-    var x = String(a[AT_FROM]), y = String(b[AT_FROM]);
-    if (x !== y) return x > y ? -1 : 1;
-    return (b[10] || 0) - (a[10] || 0);          // 클릭 많은 것부터
-  });
-  var need = Math.max(all.length + 1, 2);
-  if (sh.getMaxRows() < need) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
-  for (var d = 0; d < ADTERM_ID_COLS.length; d++) {
-    sh.getRange(2, ADTERM_ID_COLS[d], need - 1, 1).setNumberFormat('@');
-  }
-  writeTable_(sh, ADTERM_HEADER, all);
-  if (all.length) {
-    sh.getRange(2, 15, all.length, 2).setNumberFormat('0.00%');   // CTR·CVR
-    sh.getRange(2, 17, all.length, 1).setNumberFormat('#,##0.0'); // CPC
-    sh.getRange(2, 18, all.length, 1).setNumberFormat('0.0%');    // ACOS
-    sh.getRange(2, 20, all.length, 1).setNumberFormat('0.00%');   // 필요CVR
-  }
-  headerNotes_(sh, 1, ADTERM_HEADER, {
-    '필요CVR': '지금 이 검색어의 CPC 로 본전이 되려면 필요한 전환율.\n= CPC ÷ 손익분기CPA. 광고 이력이 아니라 채산성에서 나온 값이다.',
-    'N(판정최소클릭)': '필요CVR 에서 주문 3건이 나왔어야 할 클릭 수.\n이만큼 클릭하고 주문 0이면 우연이 아니다.',
-    '판정': '승격 = 수동 정확 일치 키워드로 올릴 것\n부정 = 막을 것\n더 봄 = 아직 표본이 모자람',
-    '잠정': '광고매출은 클릭 후 14일까지 붙는다. 이 표시가 있는 구간은 아직 늘어난다.',
-    '승인': '체크한 줄만 아마존에 반영한다.\n승격 → 수동 정확 일치 키워드로 올림\n부정 → 부정 정확 일치로 막음',
-    '반영결과': '[검색어 승인분 반영]이 채운다. 성공한 줄은 다시 올리지 않는다.'
-  });
-  return all.length;
+  return out;
 }
+
+/**
+ * 한 주치를 덧붙인다. 같은 주가 이미 있으면 그 덩어리만 지우고, 보관 기간을 넘긴 주도 지운다.
+ * 덩어리 단위로만 지우므로 지운 뒤에도 나머지는 붙어 있다.
+ */
+function adTermRawAppend_(rows, from, to) {
+  var sh = ensureSheet_(SHEET_ADTERM_RAW, ADTERM_RAW_HEADER);
+  var blocks = adTermRawBlocks_(sh);
+  var oldest = addDays_(ymd_(new Date()), -7 * ADTERM_KEEP_WEEKS);
+  // 아래쪽부터 지워야 위 덩어리의 줄 번호가 안 흔들린다
+  var kill = [];
+  for (var k in blocks) {
+    if (k === from + '|' + to || blocks[k].from < oldest) kill.push(blocks[k]);
+  }
+  kill.sort(function (x, y) { return y.start - x.start; });
+  for (var d = 0; d < kill.length; d++) sh.deleteRows(kill[d].start, kill[d].n);
+
+  if (!rows.length) return 0;
+  fitRows_(SHEET_ADTERM_RAW, ADTERM_RAW_HEADER, rows);
+  var at = sh.getLastRow() + 1;
+  var need = at + rows.length - 1;
+  if (sh.getMaxRows() < need) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
+  sh.getRange(at, AR_CID + 1, rows.length, 2).setNumberFormat('@');
+  var CH = 2000;
+  for (var i = 0; i < rows.length; i += CH) {
+    var part = rows.slice(i, i + CH);
+    sh.getRange(at + i, 1, part.length, ADTERM_RAW_HEADER.length).setValues(part);
+  }
+  return rows.length;
+}
+
+/** 원본 표에 이미 있는 주 */
+function adTermRawWeeks_() {
+  var sh = ss_().getSheetByName(SHEET_ADTERM_RAW);
+  if (!sh || sh.getLastRow() < 2) return {};
+  return adTermRawBlocks_(sh);
+}
+
+// ── 메뉴 · 이어달리기 ───────────────────────────────────
 
 /** 메뉴: 검색어 수집 */
 function fetchAdSearchTerms() {
   if (!adBusyGuard_('검색어 수집')) return;
-  if (adResumeIfQueued_('검색어 수집', PROP_ADTERM_QUEUE, adTermStep_)) return;
+  if (adResumeIfQueued_('검색어 수집', PROP_ADTERM_QUEUE, adTermStepLocked_)) return;
   var props = PropertiesService.getScriptProperties();
   if (!props.getProperty(PROP_ADS_PROFILE)) adsPickProfile_();
   if (!ss_().getSheetByName(SHEET_REALLOC)) {
     throw new Error('"' + SHEET_REALLOC + '" 이 없습니다.\n' +
       '판정에 손익분기 CPA 가 필요합니다 — [📣 광고 → ② 광고 재배분 계산]을 먼저 실행하세요.');
   }
+  var have = adTermRawWeeks_();
+  var nHave = Object.keys(have).length;
   var wins = adAskWeeks_('검색어 수집',
-    '자동 캠페인이 어떤 검색어로 노출·클릭·판매됐는지 주 단위로 받아 판정합니다.\n' +
-    '승격 = 수동 키워드로 올릴 것 · 부정 = 막을 것 · 더 봄 = 표본 부족.\n' +
-    '한 주에 1만 줄 안팎이라 보통 2주면 충분합니다.',
+    '자동 캠페인이 어떤 검색어로 노출·클릭·판매됐는지 주 단위로 받습니다.\n' +
+    '받은 주는 원본(' + SHEET_ADTERM_RAW + ')에 쌓이고, 끝나면 최근 ' + ADTERM_KEEP_WEEKS +
+    '주를 합쳐 검색어마다 한 줄로 판정합니다 — 클릭이 주를 넘어 쌓여야 판정선에 닿습니다.\n' +
+    (nHave ? '이미 받아 둔 주 ' + nHave + '개는 건너뜁니다.' : ''),
     ADTERM_WEEKS_DEFAULT, ADTERM_KEEP_WEEKS);
   if (!wins) return;
-  props.setProperty(PROP_ADTERM_QUEUE, JSON.stringify(wins));
-  adTermStep_(true);
+  // 이미 있는 주는 다시 안 받는다 — 한 주에 1만 줄이다
+  var todo = wins.filter(function (w) { return !have[w]; });
+  todo.push(ADTERM_ROLLUP);
+  props.setProperty(PROP_ADTERM_QUEUE, JSON.stringify(todo));
+  toast_('받을 주 ' + (todo.length - 1) + '개' + (todo.length === 1 ? ' — 바로 판정만 다시 합니다' : ''));
+  adTermStepLocked_(true);
+}
+
+/** 메뉴: 검색어 판정 다시 계산 (원본은 그대로, 합치기·판정만) */
+function rollupAdTerms() {
+  if (!adBusyGuard_('검색어 판정')) return;
+  if (!ss_().getSheetByName(SHEET_ADTERM_RAW)) {
+    ui_().alert('원본이 없습니다.', '[검색어 수집]을 먼저 하세요.', ui_().ButtonSet.OK);
+    return;
+  }
+  PropertiesService.getScriptProperties().setProperty(PROP_ADTERM_QUEUE, JSON.stringify([ADTERM_ROLLUP]));
+  adTermStepLocked_(true);
+}
+
+/**
+ * 메뉴에서 부른 한 걸음도 잠금을 잡고 돈다.
+ * 실제로 같은 주가 두 번 기록됐다 (11:29 · 11:30) — 메뉴 실행과 1분 트리거가 나란히 돈 것이다.
+ * adBusyGuard_ 는 들어올 때 한 번 볼 뿐 잡고 있지는 않아서 그 틈이 있었다.
+ */
+function adTermStepLocked_(interactive) {
+  var lock = null;
+  try { lock = LockService.getScriptLock(); } catch (e) { return adTermStep_(interactive); }
+  if (!lock.tryLock(10000)) {
+    ui_().alert('검색어 수집 — 지금은 안 됩니다', '다른 작업이 돌고 있습니다. 잠시 뒤 다시 하세요.',
+                ui_().ButtonSet.OK);
+    return;
+  }
+  try { return adTermStep_(interactive); } finally { try { lock.releaseLock(); } catch (e2) {} }
 }
 
 function continueAdTerms() {
@@ -363,31 +402,133 @@ function adTermScheduleContinue_(more) {
   if (more) ScriptApp.newTrigger(ADTERM_CONTINUE_HANDLER).timeBased().after(60 * 1000).create();
 }
 
-/** 한 주를 처리한다 */
+/**
+ * 리포트를 잠깐만 기다린다. 한 실행에서 4분을 기다리면 남는 시간에 1만 줄을 못 쓴다.
+ * 준비가 안 됐으면 null — 1분 뒤 트리거가 같은 리포트 번호로 이어받는다.
+ */
+function adTermReportShort_(token, from, to) {
+  var saved = ADS_SOFT_MS;
+  ADS_SOFT_MS = ADTERM_REPORT_WAIT_MS;
+  try { return adTermReport_(token, from, to); }
+  finally { ADS_SOFT_MS = saved; }
+}
+
+/** 큐의 맨 앞 하나를 처리한다 — 주 하나, 또는 마지막의 합치기 */
 function adTermStep_(interactive) {
   var props = PropertiesService.getScriptProperties();
   var queue = JSON.parse(props.getProperty(PROP_ADTERM_QUEUE) || '[]');
   if (!queue.length) { adTermScheduleContinue_(false); return '완료'; }
 
+  if (queue[0] === ADTERM_ROLLUP) {
+    var r = adTermRollup_();
+    queue.shift();
+    props.setProperty(PROP_ADTERM_QUEUE, JSON.stringify(queue));
+    adTermScheduleContinue_(false);
+    showSheet_(SHEET_ADTERM);
+    log_('ads', 'INFO', '검색어 판정 — ' + r.msg);
+    toast_(r.msg);
+    if (interactive) {
+      ui_().alert('검색어 판정 완료', r.msg + '\n\n' +
+        '승격 = 수동 정확 일치로 올릴 검색어\n' +
+        '부정 = 클릭만 먹고 안 팔려 막을 검색어\n' +
+        '더 봄 = 아직 표본이 모자란 것\n\n' +
+        '검색어마다 한 줄이고, 최근 ' + r.weeks + '주가 합쳐진 값입니다.\n' +
+        '아직 아무것도 바꾸지 않았습니다 — [검색어 판정 승인]으로 고르세요.', ui_().ButtonSet.OK);
+    }
+    return r.msg;
+  }
+
   var token = adsToken_();
   var win = queue[0].split('|'), from = win[0], to = win[1];
   toast_('검색어 리포트 요청 중… (' + from + '~' + to + ')');
-  var rep = adTermReport_(token, from, to);
+  var rep = adTermReportShort_(token, from, to);
   if (rep === null) {
     adTermScheduleContinue_(true);
     log_('ads', 'INFO', '검색어 리포트 준비 대기 — 1분 뒤 재시도 (' + from + '~' + to + ')');
     if (interactive) {
       ui_().alert('검색어 수집 — 리포트 준비 중',
         '아마존이 리포트를 만들고 있습니다 (오류 아님).\n\n' +
-        '남은 주 ' + queue.length + '개\n1분 뒤 자동으로 이어받습니다.', ui_().ButtonSet.OK);
+        '남은 주 ' + (queue.length - 1) + '개\n1분 뒤 자동으로 이어받습니다. 창을 닫아도 됩니다.',
+        ui_().ButtonSet.OK);
     }
     return;
   }
 
+  var now = new Date(), rows = [];
+  for (var i = 0; i < rep.length; i++) {
+    var x = rep[i];
+    var term = String(x.searchTerm || '').trim();
+    if (!term) continue;
+    rows.push([from, to, String(x.campaignId || ''), String(x.adGroupId || ''), term,
+               String(x.keyword || x.matchType || ''),
+               Number(x.impressions) || 0, Number(x.clicks) || 0,
+               Math.round(Number(x.cost) || 0), Math.round(Number(x.sales14d) || 0),
+               Number(x.purchases14d) || 0, now]);
+  }
+  var n = adTermRawAppend_(rows, from, to);
+
+  queue.shift();
+  props.setProperty(PROP_ADTERM_QUEUE, JSON.stringify(queue));
+  props.deleteProperty(PROP_ADTERM_REPORT);
+
+  var left = queue.length - 1;          // 마지막 ROLLUP 은 주가 아니다
+  var msg = from + '~' + to + ' — 검색어 ' + n + '줄 받음' +
+            (left > 0 ? ' · 남은 주 ' + left : ' · 다음은 합쳐서 판정');
+  log_('ads', 'INFO', '검색어 — ' + msg);
+  toast_(msg);
+  adTermScheduleContinue_(true);
+  if (interactive) {
+    ui_().alert('검색어 수집 — 진행 중',
+      msg + '\n\n1분 간격으로 자동 진행됩니다. 창을 닫아도 됩니다.', ui_().ButtonSet.OK);
+  }
+  return msg;
+}
+
+// ── 합치기 · 판정 ───────────────────────────────────────
+
+/**
+ * 원본 8주를 검색어+광고그룹으로 합쳐 한 줄씩 판정한다.
+ *
+ * 왜 합치나: 판정선 N 은 보통 200 클릭 안팎이다. 한 주에 그만큼 클릭하는 검색어는 드물어
+ * 주 단위로 보면 '더 봄' 만 1만 줄이 나온다 (실제로 부정이 0~1 이었다).
+ * 주를 넘어 쌓여야 판정이 선다. "몇 주 지났냐" 가 아니라 "어떤 신호가 먼저 뜨냐" 다.
+ *
+ * 한 실행에서 하는 일: 원본 읽기(8만×12) · 판정 표 읽기(승인·반영결과 이어붙이려고) ·
+ * 판정 표 쓰기(1.5만×28). 주를 받는 걸음과 따로 도니 시간이 넉넉하다.
+ */
+function adTermRollup_() {
+  var raw = ss_().getSheetByName(SHEET_ADTERM_RAW);
+  if (!raw || raw.getLastRow() < 2) return { msg: '원본이 비어 있습니다', weeks: 0 };
+  var rv = raw.getRange(2, 1, raw.getLastRow() - 1, ADTERM_RAW_HEADER.length).getValues();
+
+  // 검색어+그룹으로 합친다. 그룹 합계도 같이 (SKU 를 모르는 그룹의 채산성용)
+  var agg = {}, gsum = {}, weeks = {}, newestTo = '';
+  for (var i = 0; i < rv.length; i++) {
+    var r = rv[i];
+    var gid = String(r[AR_GID] || '').trim(), term = String(r[AR_TERM] || '').trim();
+    if (!gid || !term) continue;
+    var f = r[AR_FROM] instanceof Date ? ymd_(r[AR_FROM]) : String(r[AR_FROM]);
+    var t = r[AR_TO] instanceof Date ? ymd_(r[AR_TO]) : String(r[AR_TO]);
+    weeks[f + '|' + t] = true;
+    if (t > newestTo) newestTo = t;
+    var k = gid + ' ' + term.toLowerCase();
+    var a = agg[k] || (agg[k] = { gid: gid, cid: String(r[AR_CID] || ''), term: term,
+      match: String(r[AR_MATCH] || ''), im: 0, clicks: 0, cost: 0, sales: 0, orders: 0, from: f, to: t });
+    a.im += Number(r[AR_IM]) || 0; a.clicks += Number(r[AR_CLICKS]) || 0;
+    a.cost += Number(r[AR_COST]) || 0; a.sales += Number(r[AR_SALES]) || 0;
+    a.orders += Number(r[AR_ORDERS]) || 0;
+    if (f < a.from) a.from = f;
+    if (t > a.to) a.to = t;
+    var g = gsum[gid] || (gsum[gid] = { adGroupId: gid, sales14d: 0, purchases14d: 0 });
+    g.sales14d += Number(r[AR_SALES]) || 0; g.purchases14d += Number(r[AR_ORDERS]) || 0;
+  }
+  var nWeeks = Object.keys(weeks).length;
+  var prov = newestTo && daysBetween_(newestTo, ymd_(new Date())) < ADKW_PROVISIONAL_DAYS;
+
   var basis = adBasis_();
   var eco = adTermEconomics_(), negs = adTermNegatives_(), have = adTermExistingKw_();
-  // SKU 를 모르는 그룹은 그 그룹이 이 기간에 판 실적에서 채산성을 뽑는다
-  var gbase = adTermGroupBasis_(rep, Number(basis['기본 마진율']) || 0.17);
+  var gbase = adTermGroupBasis_(Object.keys(gsum).map(function (k) { return gsum[k]; }),
+                                Number(basis['기본 마진율']) || 0.17);
   var gname = {}, cname = {};
   var stSh = ss_().getSheetByName(SHEET_ADSTRUCT);
   if (stSh && stSh.getLastRow() > 1) {
@@ -398,81 +539,80 @@ function adTermStep_(interactive) {
     }
   }
 
-  var prov = daysBetween_(to, ymd_(new Date())) < ADKW_PROVISIONAL_DAYS;
-  var now = new Date(), rows = [], stat = {};
-  for (var i = 0; i < rep.length; i++) {
-    var r = rep[i];
-    var term = String(r.searchTerm || '').trim();
-    if (!term) continue;
-    var gd = String(r.adGroupId || ''), cid = String(r.campaignId || '');
-    var e = eco[gd] || { beCpa: 0, skus: [], asins: [] };
-    // SKU 로 아는 값이 먼저다. 없을 때만 그룹 실적에서 뽑은 값을 쓴다
-    var src = '';
-    var beCpa = e.beCpa;
-    if (!(beCpa > 0) && gbase[gd]) { beCpa = gbase[gd].beCpa; src = 'group'; }
-    var o = { clicks: Number(r.clicks) || 0, cost: Number(r.cost) || 0,
-              orders: Number(r.purchases14d) || 0, beCpa: beCpa, src: src };
-    var im = Number(r.impressions) || 0, sal = Number(r.sales14d) || 0;
-    var d = adTermVerdict_(o, basis);
-
-    // 이미 막았거나 이미 올린 검색어는 다시 하라고 하지 않는다
-    var low = term.toLowerCase();
-    if (d.v === '부정' && negs[gd] && negs[gd][low]) { d = { v: '이미 막음', why: '이 그룹에 부정 키워드로 있습니다' }; }
-    if (d.v === '승격' && have[low]) { d = { v: '이미 올림', why: '같은 키워드가 이미 있습니다' }; }
-    stat[d.v] = (stat[d.v] || 0) + 1;
-
-    rows.push([
-      from, to, prov ? '잠정' : '', cname[gd] || r.campaignName || '', gname[gd] || r.adGroupName || '',
-      term, String(r.keyword || r.matchType || ''),
-      adSkuText_(e.skus, 3), adSkuText_(e.asins, 3),
-      im, o.clicks, Math.round(o.cost), Math.round(sal), o.orders,
-      im > 0 ? o.clicks / im : '', o.clicks > 0 ? o.orders / o.clicks : '',
-      d.cpc || '', sal > 0 ? o.cost / sal : '',
-      Math.round(beCpa) || '', d.needCvr || '', d.N || '',
-      d.v, d.why, cid, gd, now,
-      '', ''            // 승인 · 반영결과 — 사람과 72M 이 채운다
-    ]);
-  }
-  var total = writeAdTermRows_(rows, from, to);
-
-  queue.shift();
-  props.setProperty(PROP_ADTERM_QUEUE, JSON.stringify(queue));
-  props.deleteProperty(PROP_ADTERM_REPORT);
-
-  var msg = from + '~' + to + ' — 검색어 ' + rows.length + '개 · ' +
-            ['승격', '부정', '더 봄'].map(function (k) {
-              return k + ' ' + (stat[k] || 0); }).join(' · ') +
-            (queue.length ? ' · 남은 주 ' + queue.length : ' · 완료');
-  log_('ads', 'INFO', '검색어 — ' + msg);
-  toast_(msg);
-
-  if (queue.length) {
-    adTermScheduleContinue_(true);
-    if (interactive) {
-      ui_().alert('검색어 수집 — 진행 중',
-        msg + '\n\n1분 간격으로 자동 진행됩니다. 창을 닫아도 됩니다.', ui_().ButtonSet.OK);
+  // 승인 ✓ · 반영결과는 사람이 찍고 기계가 채운 칸 — 다시 만들 때 잃으면 두 번 올린다
+  var sh = ensureSheet_(SHEET_ADTERM, ADTERM_HEADER);
+  var mark = {};
+  if (sh.getLastRow() > 1) {
+    var pv = sh.getRange(2, 1, sh.getLastRow() - 1, ADTERM_HEADER.length).getValues();
+    for (var m = 0; m < pv.length; m++) {
+      var mk = adTermKey_(pv[m]);
+      if (mk && (pv[m][AT_APPROVE] || pv[m][AT_APPLIED])) mark[mk] = [pv[m][AT_APPROVE], pv[m][AT_APPLIED]];
     }
-    return msg;
   }
-  adTermScheduleContinue_(false);
-  showSheet_(SHEET_ADTERM);
-  if (interactive) {
-    ui_().alert('검색어 수집 완료',
-      msg + '\n\n표 ' + total.toLocaleString() + '행\n\n' +
-      '승격 = 수동 정확 일치로 올릴 검색어\n' +
-      '부정 = 클릭만 먹고 안 팔려 막을 검색어\n' +
-      '더 봄 = 아직 표본이 모자란 것\n\n' +
-      '판정 기준은 광고 이력이 아니라 채산성에서 나옵니다 —\n' +
-      '필요CVR = CPC ÷ 손익분기CPA, N = 3 ÷ 필요CVR.\n\n' +
-      '아직 아무것도 바꾸지 않았습니다.', ui_().ButtonSet.OK);
-  }
-  return msg;
-}
 
+  var now = new Date(), rows = [], stat = {};
+  for (var k2 in agg) {
+    var o0 = agg[k2];
+    var e = eco[o0.gid] || { beCpa: 0, skus: [], asins: [] };
+    var src = '', beCpa = e.beCpa;
+    if (!(beCpa > 0) && gbase[o0.gid]) { beCpa = gbase[o0.gid].beCpa; src = 'group'; }
+    var o = { clicks: o0.clicks, cost: o0.cost, orders: o0.orders, beCpa: beCpa, src: src };
+    var d = adTermVerdict_(o, basis);
+    var low = o0.term.toLowerCase();
+    if (d.v === '부정' && negs[o0.gid] && negs[o0.gid][low]) d = { v: '이미 막음', why: '이 그룹에 부정 키워드로 있습니다' };
+    if (d.v === '승격' && have[low]) d = { v: '이미 올림', why: '같은 키워드가 이미 있습니다' };
+    stat[d.v] = (stat[d.v] || 0) + 1;
+    var row = [
+      o0.from, o0.to, prov ? '잠정' : '', cname[o0.gid] || '', gname[o0.gid] || '',
+      o0.term, o0.match, adSkuText_(e.skus, 3), adSkuText_(e.asins, 3),
+      o0.im, o0.clicks, Math.round(o0.cost), Math.round(o0.sales), o0.orders,
+      o0.im > 0 ? o0.clicks / o0.im : '', o0.clicks > 0 ? o0.orders / o0.clicks : '',
+      d.cpc || '', o0.sales > 0 ? o0.cost / o0.sales : '',
+      Math.round(beCpa) || '', d.needCvr || '', d.N || '',
+      d.v, d.why, o0.cid, o0.gid, now, '', ''
+    ];
+    var got = mark[adTermKey_(row)];
+    if (got) { row[AT_APPROVE] = got[0]; row[AT_APPLIED] = got[1]; }
+    rows.push(row);
+  }
+  // 판정 순(승격 → 부정 → 더 봄 …), 그 안에서 클릭 많은 것부터
+  var rank = { '승격': 0, '부정': 1, '더 봄': 2, '이미 올림': 3, '이미 막음': 4, '판정 안 함': 5 };
+  rows.sort(function (a, b) {
+    // 승격의 순위가 0 이라 `|| 9` 를 쓰면 맨 뒤로 간다 — 실제로 그랬다
+    var ra = rank.hasOwnProperty(a[AT_VERDICT]) ? rank[a[AT_VERDICT]] : 9;
+    var rb = rank.hasOwnProperty(b[AT_VERDICT]) ? rank[b[AT_VERDICT]] : 9;
+    var d0 = ra - rb;
+    return d0 !== 0 ? d0 : (b[AT_CLICKS] || 0) - (a[AT_CLICKS] || 0);
+  });
+
+  var need = Math.max(rows.length + 1, 2);
+  if (sh.getMaxRows() < need) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
+  for (var c = 0; c < ADTERM_ID_COLS.length; c++) sh.getRange(2, ADTERM_ID_COLS[c], need - 1, 1).setNumberFormat('@');
+  writeTable_(sh, ADTERM_HEADER, rows);
+  if (rows.length) {
+    sh.getRange(2, 15, rows.length, 2).setNumberFormat('0.00%');
+    sh.getRange(2, 17, rows.length, 1).setNumberFormat('#,##0.0');
+    sh.getRange(2, 18, rows.length, 1).setNumberFormat('0.0%');
+    sh.getRange(2, 20, rows.length, 1).setNumberFormat('0.00%');
+    sh.getRange(2, AT_APPROVE + 1, rows.length, 1).insertCheckboxes();
+  }
+  headerNotes_(sh, 1, ADTERM_HEADER, {
+    '기간시작': '이 검색어가 원본에 처음 나온 주. 최근 ' + ADTERM_KEEP_WEEKS + '주를 합친 값입니다.',
+    '필요CVR': '지금 이 검색어의 CPC 로 본전이 되려면 필요한 전환율.\n= CPC ÷ 손익분기CPA. 광고 이력이 아니라 채산성에서 나온 값이다.',
+    'N(판정최소클릭)': '필요CVR 에서 주문 3건이 나왔어야 할 클릭 수.\n이만큼 클릭하고 주문 0이면 우연이 아니다.',
+    '판정': '승격 = 수동 정확 일치 키워드로 올릴 것\n부정 = 막을 것\n더 봄 = 아직 표본이 모자람',
+    '잠정': '광고매출은 클릭 후 14일까지 붙는다. 이 표시가 있으면 최근 주가 아직 늘어난다.',
+    '승인': '체크한 줄만 아마존에 반영한다.\n승격 → 수동 정확 일치 키워드로 올림\n부정 → 부정 정확 일치로 막음',
+    '반영결과': '[검색어 승인분 반영]이 채운다. 성공한 줄은 다시 올리지 않는다.'
+  });
+  var msg = nWeeks + '주 합침 · 검색어 ' + rows.length.toLocaleString() + '개 · ' +
+            ['승격', '부정', '더 봄', '판정 안 함'].map(function (k) { return k + ' ' + (stat[k] || 0); }).join(' · ');
+  return { msg: msg, weeks: nWeeks, stat: stat };
+}
 
 /** 검색어 한 줄을 가리키는 이름표 — 같은 그룹의 같은 검색어는 같은 줄이다 */
 function adTermKey_(row) {
   var t = String(row[AT_TERM] == null ? '' : row[AT_TERM]).trim().toLowerCase();
   var g = String(row[AT_GID] == null ? '' : row[AT_GID]).trim();
-  return (t && g) ? (g + '\u0000' + t) : '';
+  return (t && g) ? (g + ' ' + t) : '';
 }

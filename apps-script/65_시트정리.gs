@@ -48,7 +48,7 @@ function tabModes_() {
      */
     { key: 'ads', name: '광고 (기준 · 재배분 · 캠페인 · 검색어)',
       tabs: [SHEET_ADBASIS, SHEET_REALLOC, SHEET_ADPLAN, SHEET_ADSTRUCT, SHEET_ADGRP,
-             SHEET_ADPROD, SHEET_ADTERM, SHEET_ADLOG, SHEET_ADCAMP, SHEET_ADKW,
+             SHEET_ADPROD, SHEET_ADTERM, SHEET_ADTERM_RAW, SHEET_ADLOG, SHEET_ADCAMP, SHEET_ADKW,
              SHEET_ADSREPORT, SHEET_ADS, SHEET_ADSDAY, SHEET_ADSUM, SHEET_SALES] },
 
     { key: 'invoice', name: '청구서·배송비 — 실측 무게와 요율',
