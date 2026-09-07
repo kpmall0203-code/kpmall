@@ -41,6 +41,9 @@ var SPEND_REPORT_LAG_DAYS = 2;       // 보고 지연 여유
  * 옛 날짜는 지난 실행에서 원장에 이미 쌓여 있다 — 이 표는 덧붙이기라
  * 매주 돌리면 기간이 끊기지 않는다.
  */
+/** 리포트가 아직 안 만들어졌다 — 오류가 아니라 '다시 오라' 는 뜻 */
+var ADSPEND_PENDING = '리포트 준비 중';
+
 var SPEND_FETCH_DAYS = 30;
 var SPEND_OVERSPEND_MULT = 1.25;     // 아마존 일예산은 평균값 — 하루 지출이 더 클 수 있다
 var PROP_SPENDDAY_REPORT = 'SPENDDAY_REPORT_ID';
@@ -89,7 +92,7 @@ function fetchAdSpendDaily() {
     ui_().alert('지출 원장 — 리포트 준비 중',
       '아마존이 실적을 만들고 있습니다 (오류 아님).\n1~2분 뒤 다시 누르면 이어받습니다.',
       ui_().ButtonSet.OK);
-    return;
+    return ADSPEND_PENDING;      // 트리거 걸음은 이것을 보고 몇 분 뒤 다시 건다
   }
 
   var today = ymd_(new Date()), now = new Date();

@@ -113,34 +113,52 @@ function adJobCurValue_(action, kind, tid) {
  * [자동운영] 인 것과 보호 멈춤만 보낸다 — 나머지는 '모의' 로 남아 아무 데도 안 간다.
  * 지출 원장 수집과 검증은 API 를 읽는 걸음이라 따로 둔다.
  */
-function runAdGrowCycle() {
-  if (!adBusyGuard_('트랙 B 한 바퀴')) return;
+function runAdGrowCycle(opts) {
+  /**
+   * quiet — 시간 트리거가 부르는 길 (72X). 사람에게 묻지 않는다.
+   *
+   * 묻지 않아도 되는 이유는 "창이 없어서" 가 아니라 승낙이 이미 있어서다:
+   * 보낼 수 있는 작업은 정책이 [자동운영] 이고 한도가 다 차고 승인된 대상의 것뿐이다
+   * (planAdGrowJobs 가 나머지는 '모의' 로 둔다). 아래의 확인 창은 손으로 누를 때의
+   * 예의지 승인 장치가 아니다 — 승인 장치는 광고운영정책 표다.
+   *
+   * 트리거가 이 함수를 곧바로 부르면 이벤트 객체가 opts 로 들어와 quiet 이 거짓이 된다.
+   * 그때는 창을 찾다 '아니오' 를 받아 아무것도 안 보낸다 — 안전한 쪽으로 넘어진다.
+   */
+  var quiet = !!(opts && opts.quiet);
+  if (!adBusyGuard_('트랙 B 한 바퀴')) return null;
   adGrowCalcAll_(true);
   reviewAdGrowState({ quiet: true });
   var plan = planAdGrowJobs({ quiet: true });
-  if (!plan) return;                      // 표를 방금 만들었다 — 다시 누르라고 이미 알렸다
+  if (!plan) return null;                 // 표를 방금 만들었다 — 다시 누르라고 이미 알렸다
   var q = adJobRead_();
   var nWait = 0;
   if (q) for (var i = 0; i < q.rows.length; i++) {
     var st = String(cellOf_(q.rows[i], q.map, '상태', ''));
     if (st === JOB_WAIT || st === JOB_RETRY) nWait++;
   }
+  var head = '새 작업 ' + plan.added + '건' +
+             (plan.pause ? ' · 보호 멈춤 ' + plan.pause : '') +
+             (plan.dry ? ' · 모의 ' + plan.dry : '');
   if (!nWait) {
+    var none = '한 바퀴 — ' + head + ' · 보낼 것 없음';
+    log_('ads', 'INFO', none);
+    if (quiet) return none;
     showSheet_(SHEET_ADGROW);
     ui_().alert('트랙 B 한 바퀴',
-      '계산 · 상태 점검 · 작업 계획을 했습니다.\n' +
-      '새 작업 ' + plan.added + '건 (모의 ' + plan.dry + ' · 보호 멈춤 ' + plan.pause + ')\n\n' +
+      '계산 · 상태 점검 · 작업 계획을 했습니다.\n' + head + '\n\n' +
       '아마존에 보낼 것은 없습니다 — 정책이 [' + POLICY_MODE_AUTO + '] 이 아니면 계산만 합니다.\n' +
       '광고육성 표의 [단계]·[다음 행동]·[목표클릭비용] 을 보세요.', ui_().ButtonSet.OK);
-    return;
+    return none;
   }
-  var ok = ui_().alert('트랙 B 한 바퀴',
-    '계산 · 상태 점검 · 작업 계획을 했습니다.\n' +
-    '새 작업 ' + plan.added + '건' + (plan.pause ? ' · 보호 멈춤 ' + plan.pause : '') + '\n\n' +
-    JOB_WAIT + ' ' + nWait + '건을 아마존에 보냅니다. 계속할까요?', ui_().ButtonSet.OK_CANCEL);
-  if (ok !== ui_().Button.OK) return;
-  toast_('작업 실행 중…');
-  adJobRunStep_(true);
+  if (!quiet) {
+    var ok = ui_().alert('트랙 B 한 바퀴',
+      '계산 · 상태 점검 · 작업 계획을 했습니다.\n' + head + '\n\n' +
+      JOB_WAIT + ' ' + nWait + '건을 아마존에 보냅니다. 계속할까요?', ui_().ButtonSet.OK_CANCEL);
+    if (ok !== ui_().Button.OK) return null;
+    toast_('작업 실행 중…');
+  }
+  return '한 바퀴 — ' + head + ' · ' + adJobRunStep_(!quiet);
 }
 
 /** 메뉴: 대기 중인 작업을 아마존에 보낸다 (한 바퀴 안에 들어 있다. 따로 누를 때) */

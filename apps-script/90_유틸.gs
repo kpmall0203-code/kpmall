@@ -4,7 +4,62 @@
 
 function ss_() { return SpreadsheetApp.getActiveSpreadsheet(); }
 
-function ui_() { return SpreadsheetApp.getUi(); }
+/**
+ * 사람에게 묻는 창.
+ *
+ * ── 트리거에는 사람이 없다 ──────────────────────────────
+ * 시간 트리거로 도는 동안 SpreadsheetApp.getUi() 는 예외를 던진다. 그러면
+ * 일을 다 해 놓고 마지막 알림창에서 걸음이 죽는다 — 표는 바뀌었는데 로그에는
+ * 실패로 남아, 다음 걸음이 무엇을 믿어야 할지 알 수 없게 된다.
+ *
+ * 그래서 창이 없으면 대신 답하는 흉내 창을 준다. 두 가지를 지킨다:
+ *   · 알리기만 하는 창(단추 하나)은 로그로 넘기고 OK 로 답한다 — 결정할 것이 없다
+ *   · 물어보는 창(OK_CANCEL·YES_NO)은 언제나 '아니오' 다 — 사람이 없는데
+ *     사람의 승낙을 지어내지 않는다. 물어야 하는 일은 트리거에서 안 하는 것이 맞다
+ */
+var UI_SILENT_ = false;
+var UI_STUB_BUTTON_ = { OK: 'ui.OK', CANCEL: 'ui.CANCEL', YES: 'ui.YES', NO: 'ui.NO' };
+var UI_STUB_SET_ = { OK: 'set.OK', OK_CANCEL: 'set.OK_CANCEL',
+                     YES_NO: 'set.YES_NO', YES_NO_CANCEL: 'set.YES_NO_CANCEL' };
+
+/** 트리거 걸음이 켜고 끈다. 켜면 창을 아예 찾지 않는다 */
+function uiSilent_(on) { UI_SILENT_ = !!on; }
+function uiIsSilent_() { return UI_SILENT_; }
+
+function uiStub_() {
+  var isSet = function (x) {
+    for (var k in UI_STUB_SET_) if (UI_STUB_SET_[k] === x) return true;
+    return false;
+  };
+  return {
+    ButtonSet: UI_STUB_SET_,
+    Button: UI_STUB_BUTTON_,
+    alert: function (a, b, c) {
+      var set = isSet(c) ? c : (isSet(b) ? b : UI_STUB_SET_.OK);
+      var text = [a, isSet(b) ? '' : b].filter(function (t) { return t; }).join(' — ');
+      if (set === UI_STUB_SET_.OK) {
+        log_('ui', 'INFO', '[창 없음] ' + String(text).replace(/\n/g, ' | ').substring(0, 400));
+        return UI_STUB_BUTTON_.OK;
+      }
+      log_('ui', 'WARN', '[창 없음 · 아니오로 답함] ' +
+           String(text).replace(/\n/g, ' | ').substring(0, 400));
+      return set === UI_STUB_SET_.OK_CANCEL ? UI_STUB_BUTTON_.CANCEL : UI_STUB_BUTTON_.NO;
+    },
+    prompt: function (a) {
+      log_('ui', 'WARN', '[창 없음 · 취소로 답함] ' + String(a).substring(0, 200));
+      return { getSelectedButton: function () { return UI_STUB_BUTTON_.CANCEL; },
+               getResponseText: function () { return ''; } };
+    }
+  };
+}
+
+function ui_() {
+  if (!UI_SILENT_) {
+    try { return SpreadsheetApp.getUi(); }
+    catch (e) { UI_SILENT_ = true; }      // 트리거·웹앱 문맥 — 이 실행 내내 창이 없다
+  }
+  return uiStub_();
+}
 
 function toast_(msg) {
   try { ss_().toast(msg, '사입도우미', 6); } catch (e) {}
