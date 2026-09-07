@@ -64,11 +64,34 @@ function adWatchOurs_() {
 }
 
 /**
+ * 대장의 일시 칸을 YYYY-MM-DD 로. 못 읽으면 빈 값 — 날짜를 지어내지 않는다.
+ *
+ * 날짜를 잘못 읽으면 '켠 지 며칠' 이 통째로 어긋나고, 그것이 그대로 오진이 된다.
+ * 그래서 형식이 확실하지 않으면 '모른다' 로 두고, 판정 쪽이 조심하게 만든다.
+ */
+function adLogYmd_(at) {
+  if (at instanceof Date) return ymd_(at);
+  var t = String(at == null ? '' : at).trim();
+  if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.substring(0, 10);
+  var m = /^(\d{4})\D+(\d{1,2})\D+(\d{1,2})/.exec(t);   // '2026. 9. 7' 같은 표시 형식
+  if (!m) return '';
+  var mm = m[2].length < 2 ? '0' + m[2] : m[2];
+  var dd = m[3].length < 2 ? '0' + m[3] : m[3];
+  return m[1] + '-' + mm + '-' + dd;
+}
+
+/**
  * 캠페인마다 마지막으로 켠 날. 광고변경대장에서 읽는다 (API 아님).
  *
  * 왜 필요한가: 리포트는 '어제까지 7일' 이다. 오늘 켠 캠페인은 그 기간에 꺼져 있었으므로
  * 노출 0 이 나온다. 그것을 '입찰이 낮다' 로 읽으면 정반대 처방을 하게 된다 —
  * 실제로 첫 실행에서 오늘 켠 세 개를 그렇게 판정했다.
+ *
+ * 켜지는 길은 둘이다. 처음엔 [켜기]가 남기는 [항목]='상태' 줄만 봤는데,
+ * 캠페인을 만들 때 "켜진 상태로 만든다" 를 고르면 그 줄이 아예 없다 —
+ * 그때는 [항목]='생성' · [후]='ENABLED' 가 켠 사건이다.
+ * 그것을 놓쳐서, 오늘 만들어 켠 트랙 B 세 개를 '켜진 지 7일인데 노출 0' 으로
+ * 판정했다 (2026-09-07). 켜진 길이 무엇이든 켜진 날은 하나여야 한다.
  */
 function adWatchOnSince_() {
   var out = {};
@@ -76,11 +99,13 @@ function adWatchOnSince_() {
   if (!sh || sh.getLastRow() < 2) return out;
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADLOG_HEADER.length).getValues();
   for (var i = 0; i < v.length; i++) {
-    if (String(v[i][8]) !== '상태' || String(v[i][10]) !== 'ENABLED') continue;
+    var item = String(v[i][8]);
+    if (item !== '상태' && item !== '생성') continue;
+    if (String(v[i][10]) !== 'ENABLED') continue;
+    if (item === '생성' && String(v[i][2]) !== '캠페인') continue;   // 광고그룹·상품 생성은 아니다
     var cid = String(v[i][14] || '').trim();
     if (!cid) continue;
-    var at = v[i][0];
-    var d = (at instanceof Date) ? ymd_(at) : String(at || '').trim();
+    var d = adLogYmd_(v[i][0]);
     if (!d) continue;
     if (!out[cid] || d > out[cid]) out[cid] = d;
   }
@@ -194,7 +219,13 @@ function adWatchVerdict_(c, live, p, margin, since, repFrom, repTo, ownWeekly) {
   if (p.ck >= 50 && p.ord === 0) {
     return { v: '⚠ 안 팔림', why: '클릭 ' + p.ck + span + ' · 주문 0 · ¥' + Math.round(p.cost), fix: '' };
   }
-  if (p.im === 0) return { v: '· 노출 없음', why: '켜진 지 ' + days + '일인데 노출 0 — 입찰이 낮거나 상품 자격 문제', fix: '' };
+  if (p.im === 0) {
+    // 켠 날을 모르면 며칠째인지도 모른다. 모르는 것을 아는 척하지 않는다
+    return { v: '· 노출 없음', fix: '',
+             why: (since ? '켜진 지 ' + days + '일인데' : '이 기간(' + repFrom + '~' + repTo + ')에')
+                  + ' 노출 0 — 입찰이 낮거나 상품 자격 문제' +
+                  (since ? '' : ' (켠 날을 대장에서 못 찾아 며칠째인지는 모릅니다)') };
+  }
   return { v: '정상', why: '', fix: '' };
 }
 
