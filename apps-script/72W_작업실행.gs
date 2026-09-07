@@ -79,6 +79,34 @@ function adGroupBidNow_(gid) {
 }
 
 /**
+ * 키워드의 지금 입찰 — 광고구조 수집이 가져다 놓은 값 (시트만 읽는다).
+ *
+ * 아마존은 키워드에 입찰이 있으면 광고그룹 기본입찰을 쓰지 않는다.
+ * 그래서 수동 캠페인의 실제 클릭 값은 여기에 있다.
+ */
+function adKeywordBidNow_(kid) {
+  var sh = ss_().getSheetByName(SHEET_ADSTRUCT);
+  if (!sh || sh.getLastRow() < 2) return null;
+  var map = hdrMap_(sh);
+  if (map['대상ID'] === undefined || map['입찰(JPY)'] === undefined) return null;
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(sh.getLastColumn(), 1)).getValues();
+  for (var i = 0; i < v.length; i++) {
+    if (String(cellOf_(v[i], map, '대상ID', '')).trim() !== String(kid)) continue;
+    var b = Number(cellOf_(v[i], map, '입찰(JPY)', ''));
+    return isFinite(b) && b > 0 ? b : null;
+  }
+  return null;
+}
+
+/** 이 작업이 겨누는 대상의 지금 값 (시트만 읽는다) */
+function adJobCurValue_(action, kind, tid) {
+  if (action !== '입찰변경') return null;
+  if (kind === '광고그룹') return adGroupBidNow_(tid);
+  if (kind === '키워드') return adKeywordBidNow_(tid);
+  return null;
+}
+
+/**
  * 메뉴: 트랙 B 한 바퀴 — 계산 · 상태 점검 · 작업 계획 · 실행.
  *
  * 앞의 셋은 시트만 읽는 계산이라 순서대로 무조건 같이 돈다. 실행은 정책이
@@ -170,6 +198,16 @@ function adJobSend_(token, action, targetKind, targetId, to) {
       ADSW_CT_ADGROUP, ADSW_CT_ADGROUP);
     return adsCreated_(res, 'adGroups', 'adGroupId');
   }
+  if (action === '입찰변경' && targetKind === '키워드') {
+    /**
+     * 키워드 입찰. 수동 캠페인에서는 이것이 실제로 사는 값이다 —
+     * 그룹 기본입찰만 바꾸면 아마존은 그것을 보지 않는다.
+     */
+    var rk = adsApiRetry_(token, 'put', '/sp/keywords',
+      { keywords: [{ keywordId: String(targetId), bid: Number(to) }] },
+      ADSW_CT_KEYWORD, ADSW_CT_KEYWORD);
+    return adsCreated_(rk, 'keywords', 'keywordId');
+  }
   if (action === '상태변경' && targetKind === '캠페인') {
     var r2 = adsApiRetry_(token, 'put', '/sp/campaigns',
       { campaigns: [{ campaignId: String(targetId), state: String(to) }] },
@@ -205,7 +243,7 @@ function adJobRunStep_(interactive) {
     var to = cellOf_(row, q.map, '목표값', '');
 
     // 보내기 직전에 다시 본다 — 오래된 계획이 새 정책을 덮지 못하게
-    var curVal = (action === '입찰변경' && kind === '광고그룹') ? adGroupBidNow_(tid) : null;
+    var curVal = adJobCurValue_(action, kind, tid);
     var why = adJobBlocked_(row, q.map, pol, curVal);
     if (why) {
       dirty = true; blockN++;
@@ -251,7 +289,8 @@ function adJobRunStep_(interactive) {
         why: String(cellOf_(row, q.map, '근거', '')),
         by: '작업 큐 · 정책 ' + cellOf_(row, q.map, '정책ID', '') +
             ' v' + cellOf_(row, q.map, '정책버전', ''),
-        gid: kind === '광고그룹' ? tid : '', cid: kind === '캠페인' ? tid : ''
+        gid: kind === '광고그룹' ? tid : '', cid: kind === '캠페인' ? tid : '',
+        tid: kind === '키워드' ? tid : ''
       })]);
     } else {
       failN++; streak++;
@@ -302,13 +341,23 @@ function verifyAdJobs() {
   var q = adJobRead_();
   if (!q) { ui_().alert('작업이 없습니다.', '', ui_().ButtonSet.OK); return; }
 
-  var gsh = ss_().getSheetByName(SHEET_ADGRP);
+  // 언제 수집한 자료와 맞대 보는 것인가 — 그룹과 구조는 같은 걸음이 함께 가져온다
   var collected = '';
+  var gsh = ss_().getSheetByName(SHEET_ADGRP);
   if (gsh && gsh.getLastRow() > 1) {
     var gv = gsh.getRange(2, 1, gsh.getLastRow() - 1, ADGRP_HEADER.length).getValues();
     for (var c = 0; c < gv.length; c++) {
       var at = adLogYmd_(gv[c][10]);
       if (at && at > collected) collected = at;
+    }
+  }
+  var ssh = ss_().getSheetByName(SHEET_ADSTRUCT);
+  if (ssh && ssh.getLastRow() > 1) {
+    var smap = hdrMap_(ssh);
+    var sv = ssh.getRange(2, 1, ssh.getLastRow() - 1, Math.max(ssh.getLastColumn(), 1)).getValues();
+    for (var c2 = 0; c2 < sv.length; c2++) {
+      var at2 = adLogYmd_(cellOf_(sv[c2], smap, '수집일시', ''));
+      if (at2 && at2 > collected) collected = at2;
     }
   }
 
@@ -323,7 +372,7 @@ function verifyAdJobs() {
     var tid = String(cellOf_(row, q.map, '대상ID', ''));
     var to = Number(cellOf_(row, q.map, '목표값', 0));
 
-    var cur = (action === '입찰변경' && kind === '광고그룹') ? adGroupBidNow_(tid) : null;
+    var cur = adJobCurValue_(action, kind, tid);
     dirty = true;
     if (cur === null) {
       noData++;

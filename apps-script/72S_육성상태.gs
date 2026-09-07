@@ -23,7 +23,7 @@ var ADGROW_EXT = [
   '마진출처', '마진확인일',
   '초기추정전환율(%)', '실제광고전환율(%)', '판단전환율(%)', '성숙클릭',
   '주문당공헌이익(JPY)', '손익분기클릭비용(JPY)', '목표클릭비용(JPY)',
-  '현재설정입찰(JPY)', '입찰차이',
+  '기준키워드ID', '현재설정입찰(JPY)', '입찰차이',
   '단계',
   '주간지출(JPY)', '주간위험손실(JPY)', '주간여력(JPY)',
   '누적지출(JPY)', '누적위험손실(JPY)', '누적여력(JPY)',
@@ -32,6 +32,15 @@ var ADGROW_EXT = [
   '멈춤필요',          // '예' 면 작업 계획이 캠페인 멈춤 작업을 만들고, 관제가 하루 안에 잡는다
   '다음 행동'
 ];
+
+/**
+ * 수동 캠페인에 올린 기준키워드의 ID.
+ *
+ * 이것이 있으면 입찰은 광고그룹이 아니라 이 키워드에 걸어야 한다 —
+ * 아마존은 키워드에 입찰이 있으면 광고그룹 기본입찰을 쓰지 않는다.
+ * 이 칸이 비어 있으면 그룹 기본입찰이 곧 그 그룹의 입찰이다 (자동 캠페인).
+ */
+var ADGROW_KWID = '기준키워드ID';
 
 /** 단계 (기획서 9.5) */
 var BSTAGE_INPUT = '입력대기';
@@ -226,7 +235,21 @@ function reviewAdGrowState(opts) {
     var mult = Number(v[i][AG_MULT]) || ADGROW_MULT_DEFAULT;
     var G = marginOk ? price * margin : 0;
     var breakEven = G * b.cvr;
-    var curBid = Number(v[i][AG_BID]) || 0;
+    /**
+      * 지금 실제로 걸려 있는 입찰. [시작입찰] 은 처음 한 번 정한 값이라
+     * 그 뒤 프로그램이 바꾼 값을 모른다 — 수집해 둔 실제 값이 있으면 그것을 쓴다.
+     * 키워드 입찰이 있으면 그것이 우선이다 (그룹 기본입찰은 이때 안 쓰인다).
+     */
+    var kid = String(cellOf_(v[i], map, ADGROW_KWID, '')).trim();
+    var gidNow = String(v[i][AG_GID] || '').trim();
+    var live = null, bidSrc = '';
+    if (kid) { live = adKeywordBidNow_(kid); if (live !== null) bidSrc = '키워드 수집값'; }
+    if (live === null && gidNow) {
+      live = adGroupBidNow_(gidNow);
+      if (live !== null) bidSrc = kid ? '광고그룹 수집값 (키워드는 아직 수집 전)' : '광고그룹 수집값';
+    }
+    var curBid = live !== null ? live : (Number(v[i][AG_BID]) || 0);
+    if (live === null) bidSrc = '시작입찰 (아직 수집 전)';
     // 수동 캠페인인가 — 계획 표의 [유형] 이 답이다
     var manual = adGrowIsManual_(String(v[i][AG_CAMP] || '').trim());
 
@@ -254,9 +277,10 @@ function reviewAdGrowState(opts) {
     setCell_(v[i], map, '목표클릭비용(JPY)', target ? Math.round(target * 100) / 100 : '');
     setCell_(v[i], map, '현재설정입찰(JPY)', curBid || '');
     setCell_(v[i], map, '입찰차이', (target > 0 && curBid > 0)
-      ? (Math.abs(curBid - target) < 0.5 ? '같음'
-         : (curBid > target ? '설정이 ¥' + (Math.round((curBid - target) * 10) / 10) + ' 높다'
-                            : '설정이 ¥' + (Math.round((target - curBid) * 10) / 10) + ' 낮다'))
+      ? ((Math.abs(curBid - target) < 0.5 ? '같음'
+          : (curBid > target ? '설정이 ¥' + (Math.round((curBid - target) * 10) / 10) + ' 높다'
+                             : '설정이 ¥' + (Math.round((target - curBid) * 10) / 10) + ' 낮다')) +
+         ' · ' + bidSrc)
       : '');
 
     // 옛 누적 칸도 원장에서 채운다 — 옛 주간 판정이 없어져 이것 말고는 채울 곳이 없다
@@ -329,6 +353,12 @@ function adGrowIsManual_(campName) {
 function adGrowStateNotes_(sh) {
   notesByName_(sh, {
     '정책상태': '운영 정책의 한도·모드·승인이 다 있어야 "유효".\n미확정이면 이 상품은 켜지지도 증액되지도 않는다.',
+    '기준키워드ID': '수동 캠페인에 올린 기준키워드의 ID.\n' +
+      '이 칸이 차 있으면 입찰을 광고그룹이 아니라 이 키워드에 건다 —\n' +
+      '아마존은 키워드에 입찰이 있으면 광고그룹 기본입찰을 쓰지 않는다.\n' +
+      '자동에서 수동으로 갈아탈 때 비운다 (옛 캠페인의 키워드니까).',
+    '현재설정입찰(JPY)': '지금 실제로 걸려 있는 값. 광고 구조 수집이 가져온 것을 쓴다.\n' +
+      '수집 전이면 [시작입찰] — 그때는 [입찰차이] 에 "아직 수집 전" 이라 적는다.',
     '초기추정전환율(%)': '[목표전환율(%)] 에 적은 값. 실적이 쌓여도 덮어쓰지 않는다.',
     '실제광고전환율(%)': '성숙한 광고주문 ÷ 성숙한 광고클릭. 표본이 없으면 빈칸.',
     '판단전환율(%)': '입찰 계산에 쓰는 값.\n= (성숙주문 + 사전클릭 × 초기추정) ÷ (성숙클릭 + 사전클릭)\n' +

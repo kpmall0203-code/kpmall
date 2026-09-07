@@ -719,7 +719,7 @@ function switchAdGrowToManual() {
   var planAt = {};
   for (var p = 0; p < pv.length; p++) planAt[String(pv[p][AP_NAME - 1]).trim()] = p;
 
-  var pick = [], noKw = 0, already = 0, notMade = 0;
+  var pick = [], noKw = 0, already = 0, notMade = 0, clearKw = {};
   for (var i = 0; i < v.length; i++) {
     var kw = String(v[i][AG_KW] || '').trim();
     if (!kw) { noKw++; continue; }
@@ -782,6 +782,9 @@ function switchAdGrowToManual() {
     v[x.row][AG_CID] = ''; v[x.row][AG_GID] = '';
     v[x.row][AG_RESULT] = '';
     v[x.row][AG_WHY] = '자동에서 수동으로 갈아타는 중 — 새 캠페인을 만들고 켜세요';
+    // 새 캠페인에는 아직 키워드가 없다. 옛 키워드ID 를 남겨 두면
+    // 작업 큐가 이미 멈춘 캠페인의 키워드에 입찰을 걸게 된다
+    clearKw[x.row] = '';
   }
 
   var need = Math.max(pv.length + 1, 2);
@@ -791,6 +794,7 @@ function switchAdGrowToManual() {
   writeTable_(psh, ADPLAN_HEADER, pv);
   if (pv.length) psh.getRange(2, AP_APPROVE, pv.length, 1).insertCheckboxes();
   sh.getRange(2, 1, v.length, ADGROW_HEADER.length).setValues(v);
+  adGrowKwIdWrite_(sh, clearKw, v.length);
 
   log_('ads', 'INFO', '트랙 B 자동→수동 갈아타기 ' + pick.length + '줄');
   showSheet_(SHEET_ADPLAN_GROW);
@@ -864,7 +868,7 @@ function applyAdGrowKeyword(opts) {
     '켜기 전까지는 돈이 나가지 않습니다.\n\n계속할까요?', ui_().ButtonSet.OK_CANCEL);
   if (ok !== ui_().Button.OK) return null;
 
-  var token = adsToken_(), okN = 0, failN = 0, logs = [];
+  var token = adsToken_(), okN = 0, failN = 0, logs = [], kwIds = {};
   for (var b = 0; b < pick.length; b += 50) {
     var part = pick.slice(b, b + 50);
     var res;
@@ -880,6 +884,7 @@ function applyAdGrowKeyword(opts) {
       var it = part[j], r = res[j] || { ok: false, msg: '응답 없음' };
       if (r.ok) {
         okN++;
+        kwIds[it.row] = String(r.id || '');
         v[it.row][AG_RESULT] = String(v[it.row][AG_RESULT] || '') + ' · 키워드 ' + (r.id || '');
         logs.push(adLogRow_({ kind: '키워드', camp: it.camp, group: it.camp, target: it.kw,
           item: '입찰', from: '', to: it.bid, sku: it.sku, asin: it.asin,
@@ -894,6 +899,7 @@ function applyAdGrowKeyword(opts) {
     }
   }
   sh.getRange(2, 1, v.length, ADGROW_HEADER.length).setValues(v);
+  adGrowKwIdWrite_(sh, kwIds, v.length);
   if (logs.length) adLogWrite_(logs);
 
   // 갈아탄 줄이면 이제 옛 자동 캠페인을 멈춘다.
@@ -914,6 +920,27 @@ function applyAdGrowKeyword(opts) {
     (okN ? '다음: [켜기 — 승인 ✓ 만] — 여기서부터 돈이 나갑니다.\n' +
            '⚠ 켜기 전에 관제의 트랙 B 한도를 한 번 보세요.' : ''),
     ui_().ButtonSet.OK);
+}
+
+/**
+ * [기준키워드ID] 칸을 쓴다 (뒤에 붙는 칸이라 본문 배열과 따로 쓴다).
+ *
+ * 이 ID 가 있어야 작업 큐가 광고그룹이 아니라 키워드에 입찰을 건다.
+ * 자릿수가 길어 지수 표기로 뭉개지지 않게 글자 서식으로 못 박는다.
+ *
+ * @param {Object} byRow  줄번호(0부터) → 키워드ID. 빈 글자면 지운다
+ */
+function adGrowKwIdWrite_(sh, byRow, nRows) {
+  var keys = Object.keys(byRow || {});
+  if (!keys.length || !(nRows > 0)) return;
+  var map = ensureCols_(sh, [ADGROW_KWID]);
+  var rng = sh.getRange(2, map[ADGROW_KWID] + 1, nRows, 1);
+  var cur = rng.getValues();
+  for (var i = 0; i < keys.length; i++) {
+    var r = Number(keys[i]);
+    if (r >= 0 && r < nRows) cur[r][0] = byRow[keys[i]];
+  }
+  rng.setNumberFormat('@').setValues(cur);
 }
 
 /**

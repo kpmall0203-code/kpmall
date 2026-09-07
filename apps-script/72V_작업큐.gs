@@ -225,12 +225,20 @@ function planAdGrowJobs(opts) {
     // 멈출 이유가 있는 단계에서는 입찰을 계획하지 않는다
     if (stage === BSTAGE_STOP || stage === BSTAGE_INPUT || !stage) { skipped['단계']++; continue; }
 
+    /**
+      * 무엇에 입찰을 거는가 — 기준키워드를 올렸으면 그 키워드다.
+      * 아마존은 키워드에 입찰이 있으면 광고그룹 기본입찰을 보지 않는다.
+      * 그룹에만 걸면 수동으로 갈아탄 뒤로는 값이 얼어붙는다.
+      */
     var gid = String(gv[i][AG_GID] || '').trim();
+    var kid = String(cellOf_(gv[i], gmap, ADGROW_KWID, '')).trim();
+    var tKind = kid ? '키워드' : '광고그룹';
+    var tId = kid || gid;
     var cur = Number(cellOf_(gv[i], gmap, '현재설정입찰(JPY)', 0)) || Number(gv[i][AG_BID]) || 0;
     var target = Number(cellOf_(gv[i], gmap, '목표클릭비용(JPY)', 0)) || 0;
-    if (!gid || !(target > 0)) { skipped['값없음']++; continue; }
+    if (!tId || !(target > 0)) { skipped['값없음']++; continue; }
 
-    var hrs = adJobHoursSince_(jrows, jmap, gid, '입찰변경', now);
+    var hrs = adJobHoursSince_(jrows, jmap, tId, '입찰변경', now);
     if (hrs >= 0 && hrs < JOB_MIN_HOURS) { skipped['간격']++; continue; }
 
     var step = adBidStep_(cur, target);
@@ -238,11 +246,13 @@ function planAdGrowJobs(opts) {
 
     jobs.push({
       policyId: pp ? pp.id : '', policyVer: pp ? pp.ver : 0, track: 'B', sku: sku,
-      targetKind: '광고그룹', targetId: gid,
-      targetName: String(gv[i][AG_CAMP] || ''),
+      targetKind: tKind, targetId: tId,
+      targetName: String(gv[i][AG_CAMP] || '') +
+                  (kid ? ' · 기준키워드 "' + String(gv[i][AG_KW] || '') + '"' : ''),
       action: '입찰변경', from: cur, to: step.to,
       why: step.why + ' · 판단전환율 ' + cellOf_(gv[i], gmap, '판단전환율(%)', '?') + '%' +
-           ' · 단계 ' + stage,
+           ' · 단계 ' + stage +
+           (kid ? ' · 키워드 입찰 (그룹 기본입찰은 이 캠페인에서 안 쓰입니다)' : ''),
       canAuto: !!(pp && pp.canAuto)
     });
   }
