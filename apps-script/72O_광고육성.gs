@@ -43,7 +43,7 @@ var ADGROW_HEADER = [
   '마진율(%)', '전환율예측(%)', '주간허용손해(JPY)', '손해배수',
   '손익분기CPA(JPY)', 'CPC상한(JPY)', '시작입찰(JPY)', '주간광고비(JPY)', '하루예산(JPY)',
   '시작일', '지난주수', '누적광고비(JPY)', '누적광고매출(JPY)', '누적손해(JPY)',
-  '판정', '사유', '승인', '캠페인명', '캠페인ID', '광고그룹ID', '결과',
+  '판정', '사유', '승인', '모드', '캠페인명', '캠페인ID', '광고그룹ID', '결과',
   '이전캠페인ID들'   // 자동→수동으로 갈아타며 버린 캠페인. 누적 손해는 이어서 센다
 ];
 // 0부터 세는 자리
@@ -51,9 +51,9 @@ var AG_SKU = 0, AG_ASIN = 1, AG_NAME = 2, AG_KW = 3, AG_PRICE = 4,
     AG_MARGIN = 5, AG_CVR = 6, AG_LOSS = 7, AG_MULT = 8,
     AG_BECPA = 9, AG_CAP = 10, AG_BID = 11, AG_WEEKLY = 12, AG_DAILY = 13,
     AG_START = 14, AG_WEEKS = 15, AG_COST = 16, AG_SALES = 17, AG_LOSSSUM = 18,
-    AG_VERDICT = 19, AG_WHY = 20, AG_APPROVE = 21, AG_CAMP = 22, AG_CID = 23,
-    AG_GID = 24, AG_RESULT = 25, AG_PREVCID = 26;
-var ADGROW_ID_COLS = [24, 25, 27];    // 1부터 — 캠페인ID·광고그룹ID·이전캠페인ID들 은 글자로
+    AG_VERDICT = 19, AG_WHY = 20, AG_APPROVE = 21, AG_MODE = 22, AG_CAMP = 23,
+    AG_CID = 24, AG_GID = 25, AG_RESULT = 26, AG_PREVCID = 27;
+var ADGROW_ID_COLS = [25, 26, 28];    // 1부터 — 캠페인ID·광고그룹ID·이전캠페인ID들 은 글자로
 
 /**
  * 갈아탄 줄의 옛 계획 줄에 남기는 표시.
@@ -308,6 +308,7 @@ function addAdGrowSku() {
     row[AG_MARGIN] = rec.margin.v;
     row[AG_CVR] = rec.cvr.v;
     row[AG_LOSS] = rec.loss.v;
+    row[AG_MODE] = POLICY_MODE_AUTO;      // 승인 옆에서 고르는 칸. 기본은 자동운영
     row[AG_VERDICT] = '값 확인 필요';
     row[AG_WHY] = '추천값입니다 — 마진율: ' + rec.margin.why + ' / 허용손해: ' + rec.loss.why;
     recWhy.push(sku + ' — 마진율 ' + rec.margin.v + '% · 전환율예측 ' + rec.cvr.v +
@@ -441,7 +442,13 @@ function adGrowNotes_(sh) {
       '상태 점검이 이 캠페인들의 지출까지 합쳐 누적 손실을 셉니다.',
     '판정': '만들기 전의 상태만 적습니다 (준비됨 · 값 입력 필요 · 돌고 있음).\n' +
       '돌기 시작한 뒤의 판단은 [단계]와 [다음 행동] 이 합니다 — 상태 점검이 매일 다시 씁니다.',
-    '승인': '체크한 줄만 [계획에 넣기]가 광고생성계획으로 보냅니다.'
+    '승인': '이 체크가 돈이 나가는 유일한 승낙입니다.\n' +
+      '체크하고 [모드]가 ' + POLICY_MODE_AUTO + ' 이면 다음 새벽부터 저절로 돕니다.',
+    '모드': '골라 넣는 칸입니다 (셋 중 하나).\n' +
+      POLICY_MODE_AUTO + ' = 한도 안에서 만들고·켜고·입찰을 바꿉니다\n' +
+      POLICY_MODE_DRY + ' = 계산만 하고 아마존을 건드리지 않습니다\n' +
+      POLICY_MODE_HOLD + ' = 새 변경만 멈춥니다 (켜진 광고를 끄지는 않습니다)\n' +
+      '비워 두면 ' + POLICY_MODE_AUTO + ' 으로 봅니다.'
   });
 }
 

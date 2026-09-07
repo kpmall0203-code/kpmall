@@ -22,7 +22,7 @@ var ADGROW_EXT = [
   // 한도·모드 — 트랙 B 의 정책은 이 표에 산다 (광고운영정책은 트랙 A 만 쓴다).
   // 셋(마진율·전환율예측·주간허용손해)은 앞쪽 본문 칸에 이미 있고, 여기 것들은
   // 비워도 되는 칸이다: 모드는 자동운영, 최대 기간은 56일, 누적 한도는 없음.
-  '모드', '최대 기간(일)', '누적 지출한도(JPY)', '누적 손실한도(JPY)', '정책버전', '한도지문',
+  '최대 기간(일)', '누적 지출한도(JPY)', '누적 손실한도(JPY)', '정책버전', '한도지문',
   '정책ID', '정책상태',
   '마진출처', '마진확인일',
   '초기추정전환율(%)', '실제광고전환율(%)', '판단전환율(%)', '성숙클릭',
@@ -437,8 +437,8 @@ function adGrowPolicySeed_(sh, map) {
   for (var i = 0; i < v.length; i++) {
     var sku = String(v[i][AG_SKU] || '').trim();
     if (!sku) continue;
-    if (!String(cellOf_(v[i], map, '모드', '')).trim()) {
-      setCell_(v[i], map, '모드', POLICY_MODE_AUTO); dirty = true; out.added++;
+    if (!String(v[i][AG_MODE] || '').trim()) {
+      v[i][AG_MODE] = POLICY_MODE_AUTO; dirty = true; out.added++;
     }
     var fp = [v[i][AG_MARGIN], v[i][AG_CVR], v[i][AG_LOSS], v[i][AG_MULT],
               cellOf_(v[i], map, '최대 기간(일)', ''),
@@ -456,14 +456,13 @@ function adGrowPolicySeed_(sh, map) {
     }
     if (oldFp !== fp) { setCell_(v[i], map, '한도지문', fp); dirty = true; }
   }
-  if (dirty) {
-    sh.getRange(2, 1, v.length, width).setValues(v);
-    try {
-      sh.getRange(2, map['모드'] + 1, v.length, 1).setDataValidation(
-        SpreadsheetApp.newDataValidation().requireValueInList(POLICY_MODES, true)
-          .setAllowInvalid(false).build());
-    } catch (e) {}
-  }
+  if (dirty) sh.getRange(2, 1, v.length, width).setValues(v);
+  // 드롭다운은 값이 안 바뀌어도 늘 걸어 둔다 — 골라 넣는 칸인 줄 알아야 고른다
+  try {
+    sh.getRange(2, AG_MODE + 1, Math.max(v.length, 1), 1).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(POLICY_MODES, true)
+        .setAllowInvalid(false).build());
+  } catch (e) {}
   return out;
 }
 

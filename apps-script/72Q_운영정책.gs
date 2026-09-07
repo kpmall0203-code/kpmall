@@ -212,7 +212,7 @@ function adGrowPolicyRows_() {
     if (!(cvr > 0 && cvr < 100)) miss.push(AG_CVR_NAME);
     if (!(loss > 0)) miss.push('주간허용손해(JPY)');
 
-    var mode = String(cellOf_(v[i], map, '모드', POLICY_MODE_AUTO)).trim() || POLICY_MODE_AUTO;
+    var mode = String(v[i][AG_MODE] || '').trim() || POLICY_MODE_AUTO;
     if (POLICY_MODES.indexOf(mode) < 0) { mode = POLICY_MODE_DRY; miss.push('모드(값이 이상함)'); }
     var approved = adRowApproved_(v[i][AG_APPROVE]);
     if (!approved) miss.push('승인');
