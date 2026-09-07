@@ -241,6 +241,13 @@ function setupAdPolicy() {
   if (rows.length && (!hadBox || added)) {
     sh.getRange(2, map['승인'] + 1, rows.length, 1).insertCheckboxes();
   }
+  // [모드]는 골라 넣게 한다 — 오타가 나면 조용히 모의운영으로 떨어져
+  // "왜 자동으로 안 도나" 를 한참 찾게 된다
+  if (rows.length) {
+    sh.getRange(2, map['모드'] + 1, rows.length, 1).setDataValidation(
+      SpreadsheetApp.newDataValidation().requireValueInList(POLICY_MODES, true)
+        .setAllowInvalid(false).build());
+  }
   adPolicyNotes_(sh);
   var nReq = adInboxAdd_(req);
 
