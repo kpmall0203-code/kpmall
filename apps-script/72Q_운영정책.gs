@@ -169,6 +169,75 @@ function adPolicyFor_(all, track, target) {
  * 여기에 기본값을 넣으면 사람이 정하지 않은 금액이 승인된 것처럼 보인다.
  * 대신 무엇이 비었는지 [무엇이 비었나] 칸과 요청함에 적는다.
  */
+/**
+ * 육성 표에 있는데 정책 줄이 없는 SKU 의 줄을 만든다 (한도는 비운 채로).
+ *
+ * 상품을 등록한 뒤 사람이 [운영 정책 만들기] 를 눌러야만 줄이 생겼다.
+ * 안 누르면 단계가 '입력대기' 에 머무는데, 표에는 "정책 줄이 없습니다" 라고만
+ * 적혀 있어 무엇을 눌러야 하는지 알기 어려웠다. 줄은 프로그램이 만들고,
+ * 한도는 사람이 채운다 — 빈 한도는 여전히 '멈춤' 이라 돈이 나가지 않는다.
+ *
+ * @return {{added:number, skus:Array}} 새로 만든 줄
+ */
+function adPolicyEnsureGrowRows_() {
+  var out = { added: 0, skus: [] };
+  var sh = ss_().getSheetByName(SHEET_POLICY);
+  var gsh = ss_().getSheetByName(SHEET_ADGROW);
+  if (!sh || !gsh || gsh.getLastRow() < 2) return out;      // 표가 없으면 여기서 만들지 않는다
+
+  var map = ensureCols_(sh, POLICY_HEADER);
+  var last = sh.getLastRow();
+  var have = {}, nRows = 0;
+  if (last > 1) {
+    var ex = sh.getRange(2, 1, last - 1, Math.max(sh.getLastColumn(), 1)).getValues();
+    for (var i = 0; i < ex.length; i++) {
+      var tg = String(cellOf_(ex[i], map, '대상', '')).trim();
+      if (!tg) continue;
+      nRows++;
+      have[String(cellOf_(ex[i], map, '소유트랙', '')).trim().toUpperCase() + ' ' + tg] = true;
+    }
+  }
+
+  var gv = gsh.getRange(2, 1, gsh.getLastRow() - 1, ADGROW_HEADER.length).getValues();
+  var width = Math.max(sh.getLastColumn(), POLICY_HEADER.length);
+  var add = [], req = [];
+  for (var g = 0; g < gv.length; g++) {
+    var sku = String(gv[g][AG_SKU] || '').trim();
+    if (!sku || have['B ' + sku]) continue;
+    have['B ' + sku] = true;
+    var row = new Array(width).fill('');
+    setCell_(row, map, '정책ID', 'B' + (nRows + add.length + 1));
+    setCell_(row, map, '버전', 1);
+    setCell_(row, map, '소유트랙', 'B');
+    setCell_(row, map, '대상', sku);
+    setCell_(row, map, '모드', POLICY_MODE_DRY);
+    setCell_(row, map, '승인', false);
+    setCell_(row, map, '상태', '미확정');
+    setCell_(row, map, '무엇이 비었나', POLICY_NEED.B.join(' · ') + ' · 승인');
+    setCell_(row, map, '비고', String(gv[g][AG_NAME] || '').substring(0, 40));
+    add.push(row);
+    out.skus.push(sku);
+    req.push({ kind: '한도확정', target: 'B · ' + sku,
+               what: POLICY_NEED.B.join(' · ') + ' · 승인',
+               now: '(빈칸 — 이 다섯 칸이 차고 [모드]가 ' + POLICY_MODE_AUTO +
+                    ' 여야 이 상품이 움직입니다)' });
+  }
+  if (!add.length) return out;
+
+  var at = Math.max(last, 1) + 1;
+  var need = at + add.length - 1;
+  if (sh.getMaxRows() < need) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
+  sh.getRange(at, 1, add.length, width).setValues(add);
+  sh.getRange(at, map['승인'] + 1, add.length, 1).insertCheckboxes();
+  sh.getRange(at, map['모드'] + 1, add.length, 1).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireValueInList(POLICY_MODES, true)
+      .setAllowInvalid(false).build());
+  adInboxAdd_(req);
+  log_('ads', 'INFO', '운영 정책 줄 자동 생성 ' + add.length + '개: ' + out.skus.join(', '));
+  out.added = add.length;
+  return out;
+}
+
 function setupAdPolicy() {
   // 이 작업이 쓸 표를 먼저. 한 실행에 하나만 만든다 (문서가 무겁다)
   var made = makeOneSheet_([{ name: SHEET_POLICY, header: POLICY_HEADER },

@@ -29,6 +29,7 @@ var ADGROW_EXT = [
   '누적지출(JPY)', '누적위험손실(JPY)', '누적여력(JPY)',
   '미집계준비액(JPY)', '경과일', '자료기준일',
   '스스로버나',        // 성숙 기준으로 광고비를 공헌이익이 덮고 있나
+  '최근7일노출', '최근7일클릭', '실제클릭비용(JPY)', '예산소진율(%)', '노출진단',
   '멈춤필요',          // '예' 면 작업 계획이 캠페인 멈춤 작업을 만들고, 관제가 하루 안에 잡는다
   '다음 행동'
 ];
@@ -50,6 +51,67 @@ var BSTAGE_GROW = '집중육성';
 var BSTAGE_HOLD = '유지확인';
 var BSTAGE_HANDOVER = 'A인계';
 var BSTAGE_STOP = '보류/중단';
+
+/**
+ * 시장가 대비 우리 입찰이 어디에 있나 (기획서 6장 '예산 소진율').
+ *
+ * 아마존은 '이 말의 시장가' 를 알려주지 않는다. 그러나 우리가 실제로 낸 값과
+ * 예산을 얼마나 썼는지는 원장에 있다. 그 둘을 겹쳐 보면 답이 나온다:
+ *
+ *   예산을 다 못 쓰는데 낸 값이 목표에 붙어 있다 → 시장가가 우리 천장 위다.
+ *      더 내지 않는 한 살 수 있는 노출이 적다 (그런데 더 내면 손해가 커진다)
+ *   예산을 다 못 쓰는데 낸 값이 목표보다 한참 아래다 → 값 문제가 아니라
+ *      살 물건이 적은 것이다 (겨냥이 좁거나 검색량이 적다)
+ *   예산이 다 나간다 → 값은 통한다. 더 사려면 예산을 올려야 한다
+ *
+ * 여기서 입찰을 스스로 올리지 않는다. 천장은 마진과 전환율이 정한 값이고,
+ * 그 위는 순위를 사는 값이 아니라 그냥 손해다 — 넘길지 말지는 사람이 정한다.
+ */
+var REACH_BURN_LOW = 0.4;         // 예산을 이만큼도 못 쓰면 '못 사고 있다'
+var REACH_BURN_FULL = 0.9;        // 이만큼 쓰면 예산이 한계다
+var REACH_CPC_NEAR = 0.9;         // 낸 값이 목표의 이만큼이면 천장에 붙은 것
+var REACH_MIN_DAYS = 3;           // 이만큼은 돌아 봐야 말할 수 있다
+
+var REACH_NONE = '노출 없음';
+var REACH_CEIL = '천장에 막힘';
+var REACH_THIN = '노출이 모자람';
+var REACH_FULL = '예산이 한계';
+var REACH_OK = '정상';
+
+/**
+ * @param {Object} o {days, im, clicks, cost, daily, target}
+ * @return {{state:string, note:string}} state 가 '' 이면 아직 말하지 않는다
+ */
+function adGrowReach_(o) {
+  if (!(o.days >= REACH_MIN_DAYS) || !(o.daily > 0)) {
+    return { state: '', note: '' };      // 자료가 모자라면 진단하지 않는다
+  }
+  var burn = o.cost / (o.daily * o.days);
+  var cpc = o.clicks > 0 ? o.cost / o.clicks : 0;
+  if (!o.im) {
+    return { state: REACH_NONE,
+             note: '최근 ' + o.days + '일 노출 0 — 입찰이 시장가보다 낮거나 상품 자격 문제입니다' };
+  }
+  if (burn >= REACH_BURN_FULL) {
+    return { state: REACH_FULL,
+             note: '예산을 다 쓰고 있습니다 (소진율 ' + Math.round(burn * 100) + '%). ' +
+                   '더 사려면 하루 예산을 올려야 합니다' };
+  }
+  if (burn < REACH_BURN_LOW) {
+    if (o.target > 0 && cpc >= o.target * REACH_CPC_NEAR) {
+      return { state: REACH_CEIL,
+               note: '낸 값 ¥' + Math.round(cpc * 10) / 10 + ' 이 목표 ¥' +
+                     Math.round(o.target * 10) / 10 + ' 에 붙었는데 예산은 ' +
+                     Math.round(burn * 100) + '% 만 썼습니다 — 시장가가 우리 천장 위입니다. ' +
+                     '마진율이 맞는지 보고, 아니면 손해배수를 올릴지 이 상품을 뺄지 정해 주세요' };
+    }
+    return { state: REACH_THIN,
+             note: '예산을 ' + Math.round(burn * 100) + '% 만 썼는데 낸 값은 ¥' +
+                   Math.round(cpc * 10) / 10 + ' 로 목표보다 낮습니다 — ' +
+                   '값 문제가 아니라 살 노출이 적은 것입니다 (겨냥이 좁거나 검색량이 적음)' };
+  }
+  return { state: REACH_OK, note: '' };
+}
 
 /** 이 육성 줄이 쓰는 캠페인ID 전부 (지금 것 + 갈아타며 버린 것) */
 function adGrowCids_(row) {
@@ -157,6 +219,8 @@ function reviewAdGrowState(opts) {
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, width).getValues();
 
   var led = adSpendRead_();
+  // 등록만 하고 정책 줄이 없는 상품이 있으면 여기서 만든다 (한도는 빈 채 = 멈춤)
+  var newPol = adPolicyEnsureGrowRows_();
   var pol = adPolicyAll_();
   var basis = adBasis_();
   var prior = Number(basis['판단전환율 사전클릭']) || CVR_PRIOR_CLICKS;
@@ -191,6 +255,7 @@ function reviewAdGrowState(opts) {
     var start = v[i][AG_START] instanceof Date ? ymd_(v[i][AG_START])
                                                : String(v[i][AG_START] || '').substring(0, 10);
     var wk = adSpendSum_(led, cids, wkFrom, today);
+    var w7 = adSpendSum_(led, cids, addDays_(today, -6), today);
     var tt = adSpendSum_(led, cids, start || '', today);
     var daily = Number(v[i][AG_DAILY]) || 0;
     var pending = adPendingSpend_(led.last, daily, today);
@@ -278,6 +343,31 @@ function reviewAdGrowState(opts) {
          ' · ' + bidSrc)
       : '');
 
+    /**
+     * 시장가 대비 — 낸 값과 예산 소진율로 본다. 입찰을 스스로 올리지는 않는다.
+     * 천장을 넘길지는 사람이 정할 일이라 요청함으로 올린다.
+     */
+    var days7 = Object.keys(w7.days).length;
+    var reach = adGrowReach_({ days: days7, im: w7.im, clicks: w7.ck, cost: w7.cost,
+                               daily: daily, target: target });
+    setCell_(v[i], map, '최근7일노출', days7 ? w7.im : '');
+    setCell_(v[i], map, '최근7일클릭', days7 ? w7.ck : '');
+    setCell_(v[i], map, '실제클릭비용(JPY)', w7.ck > 0 ? Math.round(w7.cost / w7.ck * 10) / 10 : '');
+    setCell_(v[i], map, '예산소진율(%)',
+             (days7 && daily > 0) ? Math.round(w7.cost / (daily * days7) * 100) : '');
+    setCell_(v[i], map, '노출진단', reach.state);
+    if (reach.note && st.stage !== BSTAGE_STOP && st.stage !== BSTAGE_INPUT) {
+      setCell_(v[i], map, '다음 행동', reach.note + ' / ' + st.next);
+    }
+    if (reach.state === REACH_CEIL || reach.state === REACH_NONE) {
+      req.push({ kind: '시장가', target: sku, what: reach.note,
+                 now: '목표 클릭비용 ¥' + (Math.round(target * 10) / 10 || '?') +
+                      ' · 낸 값 ¥' + (w7.ck > 0 ? Math.round(w7.cost / w7.ck * 10) / 10 : '?') +
+                      ' · 소진율 ' + (daily > 0 && days7 ? Math.round(w7.cost / (daily * days7) * 100) : '?') + '%' });
+    } else if (reach.state) {
+      adInboxClose_('시장가', sku);
+    }
+
     // 옛 누적 칸도 원장에서 채운다 — 옛 주간 판정이 없어져 이것 말고는 채울 곳이 없다
     v[i][AG_WEEKS] = days ? Math.max(1, Math.ceil(days / 7)) : '';
     v[i][AG_COST] = Math.round(tt.cost);
@@ -304,7 +394,7 @@ function reviewAdGrowState(opts) {
 
   var line = Object.keys(stat).map(function (k) { return k + ' ' + stat[k]; }).join(' · ');
   log_('ads', 'INFO', '트랙 B 상태 — ' + line);
-  if (quiet) return { line: line, nReq: nReq, nOver: nOver };
+  if (quiet) return { line: line, nReq: nReq, nOver: nOver, newPolicy: newPol.added };
   showSheet_(SHEET_ADGROW);
   ui_().alert('트랙 B 상태 점검',
     (led.has ? '지출 자료 기준일 ' + led.last : '⛔ 지출 원장이 비어 있습니다 — [지출 원장 수집]을 먼저 하세요') +
@@ -313,6 +403,8 @@ function reviewAdGrowState(opts) {
     '이번 주 지출 ' + fmtYen_(sumWeek) + ' · 누적 지출 ' + fmtYen_(sumTotal) +
     ' · 누적 위험손실 ' + fmtYen_(sumRisk) + '\n' +
     (nOver ? '⛔ 한도를 넘긴 상품 ' + nOver + '개\n' : '') +
+    (newPol.added ? '운영 정책에 줄 ' + newPol.added + '개를 새로 만들었습니다 (한도는 비어 있습니다): ' +
+                    newPol.skus.slice(0, 3).join(', ') + '\n' : '') +
     (nReq ? '요청함에 ' + nReq + '건 넣었습니다\n' : '') + '\n' +
     '여기서는 아무것도 바꾸지 않았습니다. 표의 [단계]와 [다음 행동]을 보세요.',
     ui_().ButtonSet.OK);
@@ -363,6 +455,16 @@ function adGrowStateNotes_(sh) {
       '아직 아마존에 보내지 않는다 — 한도가 정해지고 정책이 [자동운영]이 된 뒤에 보낸다.',
     '입찰차이': '지금 아마존에 걸린 설정 입찰과 목표의 차이.\n' +
       '판단전환율이 실제로 움직이면 목표도 따라 움직인다.',
+    '노출진단': '낸 값과 예산 소진율로 본 시장가 대비 우리 자리.\n' +
+      REACH_NONE + ' = 최근 ' + REACH_MIN_DAYS + '일 노출 0\n' +
+      REACH_CEIL + ' = 목표에 붙여 부르는데도 예산을 못 씀 — 시장가가 우리 천장 위\n' +
+      REACH_THIN + ' = 값은 여유 있는데 살 노출이 적음 (겨냥·검색량)\n' +
+      REACH_FULL + ' = 예산이 한계 — 더 사려면 예산을 올려야\n' +
+      '입찰을 스스로 올리지는 않는다. 천장 위는 순위가 아니라 손해라서, 넘길지는 사람이 정한다.',
+    '실제클릭비용(JPY)': '최근 7일 광고비 ÷ 클릭. 우리가 실제로 낸 값이다.\n' +
+      '목표 클릭비용에 붙어 있으면 경매가 우리 천장 근처라는 뜻.',
+    '예산소진율(%)': '최근 7일 광고비 ÷ (하루예산 × 자료가 있는 날 수).\n' +
+      '낮으면 계획한 손해도 안 나고 살 것도 못 사는 상태다.',
     '스스로버나': '성숙한 공헌이익이 광고비를 덮고 있나 (= 누적 위험손실 0).\n' +
       '덮으면 육성이 끝난 것이다 — 손해배수를 걷고 손익분기로 입찰을 낮춰 유지되는지 본다.\n' +
       '성숙 클릭이 사전클릭만큼 쌓이기 전에는 "아직 모름" — 우연을 졸업으로 읽지 않는다.',
