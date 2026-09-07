@@ -45,11 +45,14 @@ function ensureCols_(sh, names) {
   var add = [];
   for (var i = 0; i < names.length; i++) if (map[names[i]] === undefined) add.push(names[i]);
   if (!add.length) return map;
-  var at = Math.max(sh.getLastColumn(), 1) + 1;
+  // 빈 시트는 getLastColumn() 이 0 이다. 그때 +1 을 하면 2번 칸부터 쓰게 된다
+  var lastCol = sh.getLastColumn();
+  var at = lastCol > 0 ? lastCol + 1 : 1;
   fitCols_(sh, at + add.length - 1);
   sh.getRange(1, at, 1, add.length).setValues([add])
     .setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
   for (var j = 0; j < add.length; j++) map[add[j]] = at - 1 + j;
+  SpreadsheetApp.flush();     // 칸 붙이기는 구조 변경이라 다음 쓰기 전에 확정한다
   return map;
 }
 
@@ -167,7 +170,13 @@ function adPolicyFor_(all, track, target) {
  * 대신 무엇이 비었는지 [무엇이 비었나] 칸과 요청함에 적는다.
  */
 function setupAdPolicy() {
-  var sh = ensureSheet_(SHEET_POLICY, POLICY_HEADER);
+  // 이 작업이 쓸 표를 먼저. 한 실행에 하나만 만든다 (문서가 무겁다)
+  var made = makeOneSheet_([{ name: SHEET_POLICY, header: POLICY_HEADER },
+                            { name: SHEET_INBOX, header: INBOX_HEADER }]);
+  if (madeSheetStop_(made, '⓪ 운영 정책 만들기 · 정비')) return;
+
+  var sh = ss_().getSheetByName(SHEET_POLICY);
+  var hadBox = sh.getLastRow() > 1;
   var map = ensureCols_(sh, POLICY_HEADER);
   var have = {}, rows = [];
   if (sh.getLastRow() > 1) {
@@ -227,14 +236,11 @@ function setupAdPolicy() {
 
   var need = Math.max(rows.length + 1, 2);
   if (sh.getMaxRows() < need) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
-  fitCols_(sh, width);
-  sh.getRange(1, 1, 1, POLICY_HEADER.length).setValues([POLICY_HEADER])
-    .setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
-  if (rows.length) {
-    sh.getRange(2, 1, rows.length, width).setValues(rows);
+  if (rows.length) sh.getRange(2, 1, rows.length, width).setValues(rows);
+  // 체크박스 넣기는 구조를 바꾸는 일이라 새로 생긴 줄에만 한다
+  if (rows.length && (!hadBox || added)) {
     sh.getRange(2, map['승인'] + 1, rows.length, 1).insertCheckboxes();
   }
-  sh.setFrozenRows(1);
   adPolicyNotes_(sh);
   var nReq = adInboxAdd_(req);
 
@@ -253,7 +259,7 @@ function setupAdPolicy() {
 }
 
 function adPolicyNotes_(sh) {
-  headerNotes_(sh, 1, POLICY_HEADER, {
+  notesByName_(sh, {
     '대상': '트랙 B 는 SKU 하나. 트랙 A 는 "전체".',
     '모드': POLICY_MODE_DRY + ' = 계산·표시만, 아마존을 건드리지 않는다\n' +
             POLICY_MODE_AUTO + ' = 한도 안에서 생성·입찰·예산·중단을 자동으로\n' +
@@ -286,7 +292,8 @@ var INBOX_DONE = '처리됨';
  */
 function adInboxAdd_(reqs) {
   if (!reqs || !reqs.length) return 0;
-  var sh = ensureSheet_(SHEET_INBOX, INBOX_HEADER);
+  var sh = ss_().getSheetByName(SHEET_INBOX);
+  if (!sh) return 0;              // 표는 부른 쪽이 미리 만든다 (한 실행에 하나만)
   var map = ensureCols_(sh, INBOX_HEADER);
   var open = {};
   var last = sh.getLastRow();
@@ -346,7 +353,9 @@ function adInboxClose_(kind, target) {
 
 /** 메뉴: 요청함 열기 */
 function showAdInbox() {
-  var sh = ensureSheet_(SHEET_INBOX, INBOX_HEADER);
+  var made = makeOneSheet_([{ name: SHEET_INBOX, header: INBOX_HEADER }]);
+  if (madeSheetStop_(made, '요청함')) return;
+  var sh = ss_().getSheetByName(SHEET_INBOX);
   ensureCols_(sh, INBOX_HEADER);
   var open = 0, kinds = {};
   if (sh.getLastRow() > 1) {

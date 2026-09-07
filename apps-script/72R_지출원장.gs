@@ -65,6 +65,8 @@ function weekStart_(ymd) {
  */
 function fetchAdSpendDaily() {
   if (!adBusyGuard_('지출 원장 수집')) return;
+  var made = makeOneSheet_([{ name: SHEET_SPENDDAY, header: SPENDDAY_HEADER }]);
+  if (madeSheetStop_(made, '지출 원장 수집')) return;
   var to = ymd_(new Date(Date.now() - 86400000));           // 어제까지
   var from = addDays_(to, -(SPEND_FETCH_DAYS - 1));
 
@@ -102,8 +104,7 @@ function fetchAdSpendDaily() {
   }
 
   // 받은 구간의 옛 줄을 빼고 새 줄을 넣는다 (덧붙이기 + 그 구간만 갈아끼움)
-  var sh = ensureSheet_(SHEET_SPENDDAY, SPENDDAY_HEADER);
-  fitCols_(sh, SPENDDAY_HEADER.length);
+  var sh = ss_().getSheetByName(SHEET_SPENDDAY);
   var keep = [];
   if (sh.getLastRow() > 1) {
     var old = sh.getRange(2, 1, sh.getLastRow() - 1, SPENDDAY_HEADER.length).getValues();
@@ -127,7 +128,7 @@ function fetchAdSpendDaily() {
     sh.getRange(2, SPENDDAY_ID_COLS[c], need - 1, 1).setNumberFormat('@');
   }
   writeTable_(sh, SPENDDAY_HEADER, rows);
-  headerNotes_(sh, 1, SPENDDAY_HEADER, {
+  notesByName_(sh, {
     '광고매출(JPY)': '클릭일 기준으로 귀속한 매출. 귀속기간 칸의 날 수만큼 뒤늦게 붙는다.',
     '성숙': '"성숙" 은 귀속기간(' + SPEND_ATTRIB_DAYS + '일) + 보고 지연(' +
             SPEND_REPORT_LAG_DAYS + '일)이 지나 값이 더 안 자라는 날.\n' +

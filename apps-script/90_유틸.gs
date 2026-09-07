@@ -77,15 +77,92 @@ function showSheet_(name) {
  * @param {Object} notes {칸이름: 설명}
  * @param {Array<string>} header
  */
+/**
+ * 머리글에 설명을 단다.
+ *
+ * 칸마다 setNote 를 부르면 스무 번을 부른다. 탭 50개 · 셀 300만 문서에서는
+ * 그것만으로도 스프레드시트 서비스가 늦어진다. 지금 있는 설명을 한 번에 읽어
+ * 바뀐 것만 갈아끼우고 한 번에 쓴다 — 읽기 하나, 쓰기 하나.
+ */
 function headerNotes_(sh, headerRow, header, notes) {
   try {
-    for (var i = 0; i < header.length; i++) {
+    var w = Math.max(sh.getLastColumn(), header.length);
+    var rng = sh.getRange(headerRow, 1, 1, w);
+    var cur = rng.getNotes()[0];
+    var dirty = false;
+    for (var i = 0; i < header.length && i < w; i++) {
       var n = notes[header[i]];
-      if (n) sh.getRange(headerRow, i + 1).setNote(n);
+      if (n && cur[i] !== n) { cur[i] = n; dirty = true; }
     }
+    if (dirty) rng.setNotes([cur]);
   } catch (e) {
     log_('ui', 'WARN', '머리글 설명 실패: ' + e);
   }
+}
+
+/**
+ * 머리글 '이름' 으로 설명을 단다. 칸의 자리를 모를 때 쓴다.
+ *
+ * headerNotes_ 는 넘긴 배열의 순서를 곧 열 번호로 본다. 표 뒤에 덧붙인 칸에
+ * 그것을 쓰면 1번 칸부터 덮어써서 엉뚱한 머리글에 설명이 붙는다 — 실제로 그랬다.
+ */
+function notesByName_(sh, notes) {
+  try {
+    var w = Math.max(sh.getLastColumn(), 1);
+    var rng = sh.getRange(1, 1, 1, w);
+    var hdr = rng.getValues()[0];
+    var cur = rng.getNotes()[0];
+    var dirty = false;
+    for (var i = 0; i < w; i++) {
+      var k = String(hdr[i] == null ? '' : hdr[i]).trim();
+      var n = k ? notes[k] : null;
+      if (n && cur[i] !== n) { cur[i] = n; dirty = true; }
+    }
+    if (dirty) rng.setNotes([cur]);
+  } catch (e) {
+    log_('ui', 'WARN', '머리글 설명 실패: ' + e);
+  }
+}
+
+/**
+ * 이 작업이 쓸 표를 미리 만든다 — 한 실행에 하나만.
+ *
+ * 시트를 새로 만드는 것은 문서 전체를 다시 저장하는 일이다. 탭 50개 ·
+ * 셀 300만 문서에서 한 실행에 둘을 만들었더니 스프레드시트 서비스가
+ * 타임아웃됐다 (2026-09-07, 운영정책 + 요청함). 하나 만들면 그 이름을 주고,
+ * 부른 쪽은 거기서 멈춰 사람에게 다시 누르라고 한다.
+ *
+ * @return {string} 방금 만든 표 이름. 만들 것이 없으면 빈 문자열
+ */
+function makeOneSheet_(specs) {
+  for (var i = 0; i < specs.length; i++) {
+    var sh = ss_().getSheetByName(specs[i].name);
+    // 만들다 만 표(시트는 있는데 머리글이 없는 것)도 여기서 마저 채운다.
+    // 실제로 타임아웃이 그 사이를 갈라 놓은 적이 있다
+    if (sh && sh.getLastRow() > 0) continue;
+    if (!sh) sh = ss_().insertSheet(specs[i].name);
+    var h = specs[i].header;
+    if (h && h.length) {
+      fitCols_(sh, h.length);
+      sh.getRange(1, 1, 1, h.length).setValues([h])
+        .setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
+      sh.setFrozenRows(1);
+    }
+    SpreadsheetApp.flush();
+    return specs[i].name;
+  }
+  return '';
+}
+
+/** 표를 하나 만들었으면 알리고 멈춘다. @return {boolean} 멈춰야 하나 */
+function madeSheetStop_(made, menuName) {
+  if (!made) return false;
+  ui_().alert('표를 만들었습니다 — 한 번 더 눌러 주세요',
+    '"' + made + '" 표를 새로 만들었습니다.\n\n' +
+    '이 문서는 탭이 50개라 표 하나를 만드는 것만으로도 무겁습니다.\n' +
+    '한 실행에 하나씩만 만듭니다 (둘을 한꺼번에 만들다 타임아웃이 났습니다).\n\n' +
+    '[' + menuName + ']을 다시 눌러 주세요.', ui_().ButtonSet.OK);
+  return true;
 }
 
 function getSheetOrThrow_(name) {

@@ -123,6 +123,8 @@ function fmtYen_(n) {
  * 시트만 읽고 시트에만 쓴다 — API 를 부르지 않는다.
  */
 function reviewAdGrowState() {
+  var made = makeOneSheet_([{ name: SHEET_INBOX, header: INBOX_HEADER }]);
+  if (madeSheetStop_(made, '상태 점검')) return;
   var sh = getSheetOrThrow_(SHEET_ADGROW);
   if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADGROW + '" 이 비어 있습니다.');
   var map = ensureCols_(sh, ADGROW_EXT);
@@ -251,8 +253,13 @@ function adGrowIsManual_(campName) {
   return false;
 }
 
+/**
+ * 설명은 머리글 '이름' 으로 단다.
+ * headerNotes_ 에 ADGROW_EXT 를 넘기면 1번 칸(SKU)부터 덮어쓴다 —
+ * 그 배열의 순서를 곧 열 번호로 보기 때문이다. 뒤에 덧붙인 칸에는 쓸 수 없다.
+ */
 function adGrowStateNotes_(sh) {
-  headerNotes_(sh, 1, ADGROW_EXT, {
+  notesByName_(sh, {
     '정책상태': '운영 정책의 한도·모드·승인이 다 있어야 "유효".\n미확정이면 이 상품은 켜지지도 증액되지도 않는다.',
     '초기추정전환율(%)': '[목표전환율(%)] 에 적은 값. 실적이 쌓여도 덮어쓰지 않는다.',
     '실제광고전환율(%)': '성숙한 광고주문 ÷ 성숙한 광고클릭. 표본이 없으면 빈칸.',
