@@ -186,7 +186,7 @@ function addAdGrowSku() {
     row[AG_MULT] = ADGROW_MULT_DEFAULT;
     row[AG_LOSS] = ADGROW_LOSS_DEFAULT;
     row[AG_VERDICT] = '값 입력 필요';
-    row[AG_WHY] = '마진율 · 목표전환율 · 주간허용손해를 적고 [트랙 B 계산]을 누르세요';
+    row[AG_WHY] = '마진율을 적고 [② 한도 정하기] 로 가세요';
     add.push(row);
   }
   if (add.length) {
@@ -202,13 +202,27 @@ function addAdGrowSku() {
     sh.getRange(at, AG_APPROVE + 1, add.length, 1).insertCheckboxes();
   }
   sh.setFrozenRows(1);
+
+  /**
+   * 등록했으면 정책 줄도 있어야 한다 — 그것이 없으면 다음 걸음이 "정책이 없습니다" 에서
+   * 멈추는데, 사람 입장에서는 무엇을 눌러야 하는지 알 수 없다. 한도는 빈 채로 만든다.
+   */
+  var pol = { added: 0 };
+  try { pol = adPolicyEnsureGrowRows_(); } catch (e) {}
+
   showSheet_(SHEET_ADGROW);
-  ui_().alert('트랙 B — 등록',
+  ui_().alert('① 등록했습니다',
     add.length + '개를 넣었습니다' + (dup ? ' (이미 있는 ' + dup + '개는 건너뜀)' : '') + '.\n' +
+    (pol.added ? '운영 정책에 줄 ' + pol.added + '개도 만들어 두었습니다 (한도는 비어 있습니다).\n' : '') +
     (miss.length ? '\n⚠ 리스팅에 없어 가격을 못 채운 SKU ' + miss.length + '개:\n   ' +
                    miss.slice(0, 5).join(', ') + (miss.length > 5 ? ' 외' : '') +
                    '\n   가격을 직접 적으세요.\n' : '') +
-    '\n표에서 마진율 · 목표전환율 · 주간허용손해 · 기준키워드를 적은 뒤\n[트랙 B 계산]을 누르세요.',
+    '\n다음 두 가지만 하면 됩니다:\n' +
+    '  · 표의 [마진율(%)] 에 이 상품이 실제로 남기는 비율을 적고\n' +
+    '  · [② 한도 정하기] 에서 얼마까지 쓸지 정하고 승인\n\n' +
+    '그 뒤 [③ 시작] 을 누르면 나머지는 전부 저절로 돕니다 —\n' +
+    '계산 · 캠페인 만들기 · 겨냥 · 검색어에서 기준키워드 고르기 ·\n' +
+    '수동으로 갈아타기 · 켜기 · 입찰 조정 · 한도를 넘으면 멈추기.',
     ui_().ButtonSet.OK);
 }
 

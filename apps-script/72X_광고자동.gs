@@ -23,6 +23,8 @@
 
 /** 매일 거는 걸음. 이름은 사람이 읽는 것, handler 는 트리거가 부르는 것 */
 var AD_AUTOMATIONS = [
+  { name: '광고 · 검색어 수집·판정', handler: 'scheduledAdTerms', hour: 2, weekly: true,
+    why: '자동 캠페인이 무슨 말로 팔았나 — 기준키워드는 여기서 고른다' },
   { name: '광고 · 지출 원장 수집', handler: 'scheduledAdSpend', hour: 3,
     why: '얼마 썼나 — 여력 계산의 바탕' },
   { name: '광고 · 구조 수집', handler: 'scheduledAdStructure', hour: 4,
@@ -105,6 +107,31 @@ function adSchedRun_(handler, label, fn) {
 // 한 줄짜리인 것에 뜻이 있다. 트리거용 길을 따로 만들면 사람이 누르는 길과
 // 갈라져 서로 다르게 동작하기 시작한다. 같은 함수를 그대로 부른다.
 
+/**
+ * 검색어 수집·판정 — 주 1회.
+ *
+ * 사람이 누를 때는 '몇 주치를 받을까요' 를 묻는다. 트리거에는 물을 사람이 없으므로
+ * 기본 주 수를 그대로 쓰고 큐에 넣어 돌린다 (이미 받아 둔 주는 건너뛴다).
+ * 이 걸음이 없으면 기준키워드를 고를 자료가 영영 안 들어온다.
+ */
+function scheduledAdTerms() {
+  return adSchedRun_('scheduledAdTerms', '검색어 수집·판정', function () {
+    var props = PropertiesService.getScriptProperties();
+    if (props.getProperty(PROP_ADTERM_QUEUE)) {   // 지난번이 안 끝났으면 이어받는다
+      adTermStepLocked_(false);
+      return '이어받음';
+    }
+    var have = adTermRawWeeks_();
+    var wins = adkwWeeks_(ADTERM_WEEKS_DEFAULT);
+    var todo = [];
+    for (var i = 0; i < wins.length; i++) if (!have[wins[i]]) todo.push(wins[i]);
+    todo.push(ADTERM_ROLLUP);                     // 받을 것이 없어도 판정은 다시 한다
+    props.setProperty(PROP_ADTERM_QUEUE, JSON.stringify(todo));
+    adTermStepLocked_(false);
+    return '받을 주 ' + (todo.length - 1) + '개';
+  });
+}
+
 function scheduledAdSpend() {
   return adSchedRun_('scheduledAdSpend', '지출 원장 수집', fetchAdSpendDaily);
 }
@@ -140,8 +167,14 @@ function setupAdGrowTriggers() {
   var lines = [];
   for (var i = 0; i < AD_AUTOMATIONS.length; i++) {
     var au = AD_AUTOMATIONS[i];
-    ScriptApp.newTrigger(au.handler).timeBased().atHour(au.hour).everyDays(1).create();
-    lines.push('· ' + pad2_(au.hour) + '시  ' + au.name + '\n      ' + au.why);
+    if (au.weekly) {
+      ScriptApp.newTrigger(au.handler).timeBased()
+        .onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(au.hour).create();
+    } else {
+      ScriptApp.newTrigger(au.handler).timeBased().atHour(au.hour).everyDays(1).create();
+    }
+    lines.push('· ' + (au.weekly ? '월요일 ' : '매일 ') + pad2_(au.hour) + '시  ' + au.name +
+               '\n      ' + au.why);
   }
 
   // 관제(매일 아침)는 따로 켠다 — 이미 켜져 있는지 알려만 준다
@@ -158,9 +191,9 @@ function setupAdGrowTriggers() {
     (watchOn ? '· 08시  광고 관제 (이미 켜져 있습니다)\n\n'
              : '⚠ 광고 관제는 아직 꺼져 있습니다 — [캠페인 점검]에서 켜면\n' +
                '   매일 아침 이상한 캠페인을 잡아 줍니다.\n\n') +
-    '이제 사람이 매일 누를 것은 없습니다.\n\n' +
-    '기준키워드 고르기 · 갈아타기 · 만들기 · 켜기까지 자동으로 갑니다.\n' +
-    '사람이 할 일은 ① 상품 등록과 광고운영정책의 한도·승인뿐입니다.\n\n' +
+    '이제 사람이 누를 것은 ① 등록 · ② 한도 뿐입니다.\n' +
+    '검색어 수집 · 기준키워드 고르기 · 갈아타기 · 만들기 · 켜기 · 입찰 조정이\n' +
+    '전부 이 걸음들 안에서 저절로 이어집니다.\n\n' +
     '단, 정책이 [' + POLICY_MODE_AUTO + '] 이 아니거나 한도가 비면 아무것도 안 밉니다.\n' +
     '무엇을 정해야 하는지는 [요청함]과 표의 [다음 행동] 에 쌓입니다.',
     ui_().ButtonSet.OK);
@@ -190,7 +223,8 @@ function showAdTriggers() {
   var lines = [];
   for (var a = 0; a < AD_AUTOMATIONS.length; a++) {
     var au = AD_AUTOMATIONS[a];
-    lines.push((mine[au.handler] ? '✅ ' : '⬜ ') + pad2_(au.hour) + '시  ' + au.name);
+    lines.push((mine[au.handler] ? '✅ ' : '⬜ ') +
+               (au.weekly ? '월 ' : '매일 ') + pad2_(au.hour) + '시  ' + au.name);
   }
   lines.push((mine[ADWATCH_HANDLER] ? '✅ ' : '⬜ ') + '08시  광고 관제');
   ui_().alert('광고 자동 걸음', lines.join('\n') + '\n\n' +

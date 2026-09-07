@@ -68,22 +68,30 @@ function buildPriceMenu_() {
      * 작업 계획·관제가 나눠 한다. API 를 읽는 걸음(원장 수집·검증)만 따로 남겼다.
      */
     .addSubMenu(ui.createMenu('📣 광고')
+      /**
+       * 트랙 B 는 단추가 셋이다.
+       *
+       * 그전에는 여덟이었다 — 계획에 넣기 · 만들기 · 겨냥 맞추기 · 켜기 · 갈아타기 ·
+       * 한 바퀴 · 검증 · 자동 진행. 그런데 그것들은 사람이 정할 일이 아니라
+       * "자동으로 돌린다" 고 정한 순간 당연히 따라오는 일이다. 사람이 정하는 것은
+       * 무엇을 키울지(①)와 얼마까지 쓸지(②) 둘뿐이고, ③ 은 그 둘을 밀어 넣는 손잡이다.
+       */
       .addSubMenu(ui.createMenu('🌱 트랙 B — 새 상품 키우기')
-        .addItem('① 키울 상품 등록 (SKU 붙여넣기 → 표에 마진율·전환율·손해 적기)', 'addAdGrowSku')
-        .addItem('② 계획에 넣기 (승인 ✓ 만 → 광고육성계획)', 'pushAdGrowToPlan')
-        .addItem('③ 승인분 캠페인 생성 (멈춤 상태로)', 'executeAdPlan')
-        .addItem('④ 캠페인 겨냥 맞추기 (자동은 상품 겨냥 끔 · 수동은 기준키워드 올림)', 'setupAdGrowTargets')
-        .addItem('⑤ 켜기 — 승인 ✓ 만', 'enableApprovedCampaigns')
+        .addItem('① 키울 상품 등록 (SKU 붙여넣기 → 표에 마진율 적기)', 'addAdGrowSku')
+        .addItem('② 한도 정하기 · 승인 (얼마까지 쓸 것인가)', 'openAdPolicy')
+        .addItem('③ 시작 — 지금 한 번 돌리고 매일 저절로 돌게', 'startAdGrow')
         .addSeparator()
-        .addItem('매일 · 지출 원장 수집 (캠페인 일별)', 'fetchAdSpendDaily')
-        .addItem('매일 · 한 바퀴 (계산 → 상태 점검 → 작업 계획 → 실행)', 'runAdGrowCycle')
-        .addItem('매일 · 자동 진행 (키워드 고르기 → 갈아타기 → 만들기 → 켜기)', 'advanceAdGrow')
-        .addItem('매일 · 작업 검증 (구조 수집 뒤 — 실제로 그렇게 됐나)', 'verifyAdJobs')
-        .addItem('⏰ 매일 자동으로 돌리기 — 켜기 (새벽 3~6시)', 'setupAdGrowTriggers')
-        .addItem('⏰ 지금 무엇이 자동으로 도나', 'showAdTriggers')
-        .addItem('⏰ 자동으로 도는 것 멈추기', 'stopAdGrowTriggers')
+        .addItem('지금 어떻게 돌고 있나 (운영 현황)', 'showAdDashboard')
+        .addItem('사람이 정해야 할 것 (요청함)', 'showAdInbox')
         .addSeparator()
-        .addItem('자동 → 수동 갈아타기 (기준키워드가 생겼을 때)', 'switchAdGrowToManual'))
+        .addSubMenu(ui.createMenu('손으로 한 걸음씩 (평소엔 볼 일 없음)')
+          .addItem('한 바퀴 — 계산 · 상태 · 작업 계획 · 실행', 'runAdGrowCycle')
+          .addItem('자동 진행 — 키워드 · 갈아타기 · 만들기 · 켜기', 'advanceAdGrow')
+          .addItem('작업 검증 (구조 수집 뒤)', 'verifyAdJobs')
+          .addItem('지출 원장 수집', 'fetchAdSpendDaily')
+          .addSeparator()
+          .addItem('⏰ 지금 무엇이 자동으로 도나', 'showAdTriggers')
+          .addItem('⏰ 자동으로 도는 것 멈추기', 'stopAdGrowTriggers')))
       .addSubMenu(ui.createMenu('🔎 검색어 — 매주')
         .addItem('① 검색어 수집', 'fetchAdSearchTerms')
         .addItem('② 검색어 판정 다시 계산', 'rollupAdTerms')
