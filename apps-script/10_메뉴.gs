@@ -147,7 +147,8 @@ function buildPriceMenu_() {
 
     .addSubMenu(ui.createMenu('⚙ 설정')
       .addItem('처음 설정 (최초 1회)', 'setupAll')
-      .addItem('탭 정리 (작업별 보기)', 'organizeSheets')
+      .addItem('탭 정리 (하려는 일만 남기기)', 'organizeSheets')
+      .addItem('탭 안내 — 어느 탭이 무엇인가', 'showTabGuide')
       .addSeparator()
 
       .addSubMenu(ui.createMenu('🔑 연결 · 자격증명')

@@ -41,15 +41,27 @@ function tabModes_() {
              SHEET_BUYBOX, SHEET_SEASON, SHEET_DAILY] },
 
     /**
-     * 광고 묶음은 메뉴 [📣 광고] 의 순서를 따른다:
-     *   기준 → 재배분 → 계획 → (구조·그룹·상품은 계획의 재료) → 검색어 → 대장
-     * 수집 원자료(광고실적·광고일계)는 TACOS 가 이상할 때 보는 것이라 뒤에 둔다.
-     * 판매실적을 같이 남긴다 — 재배분의 세션·전환율이 거기서 나온다.
+     * 광고는 묶음이 셋이다. 하나로 두면 탭 스물세 개가 한꺼번에 펴져
+     * "무엇을 보고 있는지" 를 알 수 없다.
+     *
+     *   트랙 B   새 상품을 키우는 자리. 매일 보는 것은 여기뿐이다
+     *   트랙 A   이미 팔리는 상품의 광고를 손질하는 자리 (주·월 단위)
+     *   자료     프로그램이 읽고 쓰는 수집물. 사람은 무엇이 언제 들어왔는지만 본다
+     *
+     * 어느 탭이 무엇인지는 [탭 안내] 가 한 줄씩 적어 준다.
      */
-    { key: 'ads', name: '광고 (기준 · 재배분 · 캠페인 · 검색어)',
-      tabs: [SHEET_DASH, SHEET_ADWATCH, SHEET_ADGROW, SHEET_POLICY, SHEET_INBOX, SHEET_JOB, SHEET_SPENDDAY, SHEET_ADBASIS, SHEET_REALLOC, SHEET_ADPLAN, SHEET_ADPLAN_GROW, SHEET_ADSTRUCT, SHEET_ADGRP,
-             SHEET_ADPROD, SHEET_ADTERM, SHEET_ADTERM_RAW, SHEET_ADLOG, SHEET_ADCAMP, SHEET_ADKW,
-             SHEET_ADSREPORT, SHEET_ADS, SHEET_ADSDAY, SHEET_ADSUM, SHEET_SALES] },
+    { key: 'adsB', name: '🌱 광고 · 트랙 B — 새 상품 키우기 (매일)',
+      tabs: [SHEET_DASH, SHEET_ADGROW, SHEET_POLICY, SHEET_JOB, SHEET_INBOX,
+             SHEET_ADPLAN_GROW, SHEET_SPENDDAY, SHEET_ADWATCH, SHEET_ADTERM, SHEET_ADLOG] },
+
+    { key: 'adsA', name: '🏗 광고 · 트랙 A — 있는 광고 손질 (주·월)',
+      tabs: [SHEET_ADBASIS, SHEET_REALLOC, SHEET_ADPLAN, SHEET_ADTERM,
+             SHEET_ADPROD, SHEET_ADWATCH, SHEET_ADLOG, SHEET_SALES] },
+
+    { key: 'adsData', name: '📥 광고 · 자료 (수집물 — 프로그램이 읽는 것)',
+      tabs: [SHEET_ADSTRUCT, SHEET_ADGRP, SHEET_ADPROD, SHEET_ADKW, SHEET_ADTERM_RAW,
+             SHEET_ADCAMP, SHEET_SPENDDAY, SHEET_ADS, SHEET_ADSDAY, SHEET_ADSREPORT,
+             SHEET_ADSUM, SHEET_ADLOG] },
 
     { key: 'invoice', name: '청구서·배송비 — 실측 무게와 요율',
       tabs: [SHEET_SHIPHEAVY, SHEET_SHIPLOOKUP, '청구서검증', SHEET_PACKOPT,
@@ -265,4 +277,102 @@ function showHiddenSheets() {
     shown + '개를 다시 표시했습니다.\n' +
     '(스냅샷 탭은 갯수가 많아 그대로 두었습니다)\n\n' +
     '다시 정리하려면 [탭 정리]를 실행하세요.', ui_().ButtonSet.OK);
+}
+
+// ── 탭 안내 ─────────────────────────────────────────────
+//
+// "이 탭이 뭐지" 는 아무 때나 생긴다. 탭 이름만으로는 광고구조와 광고그룹이
+// 어떻게 다른지, 광고실적과 광고캠페인일별 중 어느 것이 여력 계산에 쓰이는지
+// 알 수 없다. 한 줄씩 적어 표로 만든다 — 설명서(77)가 '무슨 단추' 라면
+// 이것은 '무슨 표' 다.
+
+var SHEET_TABGUIDE = '탭안내';
+var TABGUIDE_HEADER = ['묶음', '탭', '무엇인가', '누가 쓰나', '언제 보나'];
+
+var TAB_WHO_HUMAN = '사람이 고침';
+var TAB_WHO_BOTH = '사람 ↔ 프로그램';
+var TAB_WHO_PROG = '프로그램이 씀 (읽기만)';
+
+/** 탭 하나하나가 무엇인가. 코드가 쓰는 이름을 그대로 쓴다 */
+function tabGuideRows_() {
+  var B = '🌱 트랙 B', A = '🏗 트랙 A', D = '📥 광고 자료', C = '공통';
+  return [
+    [B, SHEET_DASH, '지금 돈이 어디로 나가는지 한 장 — 관리하는 것과 관리 밖(옛 캠페인)을 갈라서 보여 준다',
+     TAB_WHO_PROG, '아침에 한 번'],
+    [B, SHEET_ADGROW, '트랙 B 의 본표. 상품마다 값·단계·다음 행동. 마진율과 등록만 사람이 하고 나머지는 프로그램이 채운다',
+     TAB_WHO_BOTH, '매일 (단계와 다음 행동만 봐도 된다)'],
+    [B, SHEET_POLICY, '한도·모드·승인. 돈이 나가는 모든 자동 동작의 열쇠 — 여기가 비면 아무것도 안 움직인다',
+     TAB_WHO_HUMAN, '상품을 새로 넣을 때 · 한도를 늘릴 때'],
+    [B, SHEET_JOB, '프로그램이 아마존에 보낼 변경 하나하나(입찰·멈춤)와 그 결과. 무엇을 왜 보냈는지가 줄마다 남는다',
+     TAB_WHO_PROG, '이상할 때만'],
+    [B, SHEET_INBOX, '사람이 정해야 할 것만 모아 놓은 곳. 비어 있으면 손댈 것이 없다는 뜻',
+     TAB_WHO_BOTH, '매일 (비어 있으면 넘어간다)'],
+    [B, SHEET_ADPLAN_GROW, '만들 트랙 B 캠페인 줄. 승인 ✓ 인 줄만 만들어지고 켜진다',
+     TAB_WHO_BOTH, '캠페인이 안 만들어질 때'],
+    [B, SHEET_SPENDDAY, '캠페인 × 날짜 지출·매출 원장. 여력·손실 계산은 이 표 하나만 본다',
+     TAB_WHO_PROG, '자료가 며칠 것인지 확인할 때'],
+    [B, SHEET_ADWATCH, '매일 아침 이상한 캠페인 — 노출 0, 멈춰야 하는데 켜져 있음, 예산 과다 등',
+     TAB_WHO_PROG, '매일'],
+    [B, SHEET_ADTERM, '자동 캠페인이 실제로 산 검색어와 판정. 기준키워드 자동 선정이 여기서 판 말을 고른다',
+     TAB_WHO_BOTH, '주 1회'],
+
+    [A, SHEET_ADBASIS, '트랙 A 계산의 기준값 (마진율·목표 ACOS·한도 등)', TAB_WHO_HUMAN, '기준을 바꿀 때'],
+    [A, SHEET_REALLOC, 'SKU 별 채산성 계산 결과 — 권장 클릭비용과 구간', TAB_WHO_PROG, '재배분을 돌린 뒤'],
+    [A, SHEET_ADPLAN, '만들 트랙 A·승격 캠페인 줄. 승인 ✓ 인 줄만 만들어진다', TAB_WHO_BOTH, '캠페인을 만들 때'],
+    [A, SHEET_ADPROD, '어느 광고그룹이 어느 SKU 를 광고하나 — 채산성과 입찰을 잇는 다리',
+     TAB_WHO_PROG, '이상할 때만'],
+    [A, SHEET_SALES, '세션·전환율의 출처. 트랙 A 계산이 이것을 본다', TAB_WHO_PROG, '이상할 때만'],
+
+    [D, SHEET_ADSTRUCT, '캠페인·광고그룹·키워드·겨냥의 지금 상태. 입찰을 확인하고 검증하는 기준',
+     TAB_WHO_PROG, '검증이 "자료 없음" 이라 할 때'],
+    [D, SHEET_ADGRP, '광고그룹별 기본입찰. 자동 캠페인의 입찰은 이 값이 곧 그 그룹의 입찰이다',
+     TAB_WHO_PROG, '입찰 검증이 이상할 때'],
+    [D, SHEET_ADKW, '키워드·타깃의 주간 실적 (노출·클릭·주문·상단 점유율)', TAB_WHO_PROG, '주 1회'],
+    [D, SHEET_ADTERM_RAW, '검색어 원자료 (주 단위). 광고검색어 판정의 재료', TAB_WHO_PROG, '거의 안 봄'],
+    [D, SHEET_ADCAMP, '캠페인 목록과 일예산 (이름·상태·예산만 따로 모은 것)',
+     TAB_WHO_PROG, '거의 안 봄'],
+    [D, SHEET_ADS, 'SKU × 날짜 광고비 (TACOS 분석용)', TAB_WHO_PROG, '거의 안 봄'],
+    [D, SHEET_ADSDAY, '하루 광고비 합계 (SKU 를 걸러 받아도 하루 총액은 여기 남는다)',
+     TAB_WHO_PROG, '거의 안 봄'],
+    [D, SHEET_ADSUM, '광고 자료를 접어 둔 요약 (오래된 것을 접을 때 만든다)',
+     TAB_WHO_PROG, '거의 안 봄'],
+    [D, SHEET_ADSREPORT, 'TACOS · 광고 효율 분석 결과', TAB_WHO_PROG, '분석을 돌린 뒤'],
+
+    [C, SHEET_ADLOG, '우리가 바꾼 모든 것의 기록 — 언제 무엇을 왜 바꿨나. 사고가 나면 여기서 찾는다',
+     TAB_WHO_PROG, '무엇이 왜 바뀌었는지 물을 때'],
+    [C, SHEET_MANUAL, '메뉴 단추마다 무슨 일을 하는지', TAB_WHO_PROG, '"이 단추 뭐지" 싶을 때'],
+    [C, SHEET_TABGUIDE, '지금 보고 있는 이 표', TAB_WHO_PROG, '"이 탭 뭐지" 싶을 때']
+  ];
+}
+
+/** 메뉴: 탭 안내 — 어느 탭이 무엇인가 */
+function showTabGuide() {
+  var made = makeOneSheet_([{ name: SHEET_TABGUIDE, header: TABGUIDE_HEADER }]);
+  if (madeSheetStop_(made, '탭 안내')) return;
+  var sh = ss_().getSheetByName(SHEET_TABGUIDE);
+
+  var rows = tabGuideRows_();
+  var ss = ss_(), out = [];
+  for (var i = 0; i < rows.length; i++) {
+    var name = rows[i][1];
+    var exists = !!ss.getSheetByName(name);
+    out.push([rows[i][0], name + (exists ? '' : '  (아직 없음)'),
+              rows[i][2], rows[i][3], rows[i][4]]);
+  }
+  writeTable_(sh, TABGUIDE_HEADER, out);
+  sh.getRange(1, 1, 1, TABGUIDE_HEADER.length).setValues([TABGUIDE_HEADER])
+    .setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
+  var wid = [90, 150, 520, 150, 200];
+  for (var w = 0; w < wid.length; w++) sh.setColumnWidth(w + 1, wid[w]);
+  sh.getRange(2, 3, out.length, 1).setWrap(true);
+
+  showSheet_(SHEET_TABGUIDE);
+  ui_().alert('탭 안내',
+    '탭 ' + out.length + '개가 무엇인지 적었습니다.\n\n' +
+    '탭이 많아 보이는 것은 대부분 프로그램이 읽는 자료라 그렇습니다 —\n' +
+    '[탭 정리]에서 지금 하려는 일을 고르면 그 일에 쓰는 탭만 남습니다:\n' +
+    '   🌱 트랙 B (매일 보는 것)\n' +
+    '   🏗 트랙 A (주·월)\n' +
+    '   📥 광고 자료 (수집물)',
+    ui_().ButtonSet.OK);
 }
