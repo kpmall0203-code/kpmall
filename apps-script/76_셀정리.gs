@@ -26,8 +26,23 @@ function trimSheet_(sh, width) {
   var maxR = sh.getMaxRows(), maxC = sh.getMaxColumns();
   var before = maxR * maxC;
 
-  // 열: 머리글 너비 밖은 쓸 일이 없다
-  if (width > 0 && maxC > width) sh.deleteColumns(width + 1, maxC - width);
+  /**
+   * 열: 머리글 너비 밖은 쓸 일이 없다.
+   *
+   * 다만 '머리글 너비' 를 코드의 상수로만 믿으면 안 된다. 뒤에 이름으로 붙는 칸
+   * (광고육성의 단계·다음 행동·한도 같은 것) 은 상수 배열에 없어서, 상수를 그대로
+   * 쓰면 사람이 [셀 여유 확보] 를 누르는 순간 그 칸들이 통째로 지워진다.
+   * 실제로 광고육성의 정책·상태 칸 서른 몇 개가 그렇게 날아갔다 (2026-09-07).
+   * 그래서 시트가 지금 쓰고 있는 머리글 너비와 견줘 더 넓은 쪽을 남긴다 —
+   * 셀을 아끼려다 자료를 잃지 않는다.
+   */
+  var hdrW = 0;
+  try {
+    var h = sh.getRange(1, 1, 1, maxC).getValues()[0];
+    for (var c = 0; c < h.length; c++) if (String(h[c]).trim()) hdrW = c + 1;
+  } catch (e) { hdrW = maxC; }
+  var keep = Math.max(Number(width) || 0, hdrW);
+  if (keep > 0 && maxC > keep) sh.deleteColumns(keep + 1, maxC - keep);
 
   // 행: 자료 + 여유분 밖은 비어 있다
   var need = Math.max(sh.getLastRow(), 1) + TRIM_SPARE_ROWS;

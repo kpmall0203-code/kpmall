@@ -276,7 +276,9 @@ function setupAdPolicy() {
   }
 
   // 트랙 B 의 한도는 광고육성 표에 산다 — 여기서는 트랙 A 만 다룬다
-  var want = [{ track: 'A', target: '전체', note: '트랙 A(재배분) 전체에 걸리는 한도' }];
+  var want = [{ track: 'A', target: '전체',
+                note: '이 표는 트랙 A(재배분) 전용입니다. ' +
+                      '트랙 B(육성)의 한도·모드·승인은 ' + SHEET_ADGROW + ' 표에 있습니다.' }];
 
   var added = 0, width = Math.max(sh.getLastColumn(), POLICY_HEADER.length);
   for (var w = 0; w < want.length; w++) {
@@ -348,7 +350,8 @@ function setupAdPolicy() {
 
 function adPolicyNotes_(sh) {
   notesByName_(sh, {
-    '대상': '트랙 B 는 SKU 하나. 트랙 A 는 "전체".',
+    '대상': '트랙 A 는 "전체" 한 줄뿐입니다.\n' +
+            '트랙 B 는 여기 없습니다 — 상품마다의 한도·모드·승인은 ' + SHEET_ADGROW + ' 표에 있습니다.',
     '모드': POLICY_MODE_DRY + ' = 계산·표시만, 아마존을 건드리지 않는다\n' +
             POLICY_MODE_AUTO + ' = 한도 안에서 생성·입찰·예산·중단을 자동으로\n' +
             POLICY_MODE_HOLD + ' = 새 변경을 멈춘다 (켜져 있는 광고를 끄지는 않는다)',
