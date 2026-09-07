@@ -36,7 +36,12 @@ var SPENDDAY_ID_COLS = [2];          // 1부터 — 캠페인ID 는 글자로
 
 var SPEND_ATTRIB_DAYS = 14;          // 쓰는 리포트 칸이 purchases14d · sales14d 다
 var SPEND_REPORT_LAG_DAYS = 2;       // 보고 지연 여유
-var SPEND_FETCH_DAYS = 35;           // 한 번에 받을 날짜 수
+/**
+ * 한 번에 받을 날짜 수. 아마존 리포트 상한이 31일이라 그 안에 둔다.
+ * 옛 날짜는 지난 실행에서 원장에 이미 쌓여 있다 — 이 표는 덧붙이기라
+ * 매주 돌리면 기간이 끊기지 않는다.
+ */
+var SPEND_FETCH_DAYS = 30;
 var SPEND_OVERSPEND_MULT = 1.25;     // 아마존 일예산은 평균값 — 하루 지출이 더 클 수 있다
 var PROP_SPENDDAY_REPORT = 'SPENDDAY_REPORT_ID';
 var SPENDDAY_REPORT_WAIT_MS = 90 * 1000;

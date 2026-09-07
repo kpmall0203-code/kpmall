@@ -975,6 +975,13 @@ function adGrowReview_(interactive) {
 
   var to = ymd_(new Date(Date.now() - 86400000));
   var from = oldest || addDays_(to, -27);
+  /**
+   * 누적은 지출 원장(광고캠페인일별)에서 센다. 리포트는 한 번에 31일까지만
+   * 받을 수 있어, 한 달 넘게 돈 상품의 누적을 리포트로는 셀 수가 없다 —
+   * 그대로 두면 누적 손해가 조용히 작게 나와 '아직 여유 있음' 이 된다.
+   * 원장은 덧붙이기라 시작일부터 이어져 있다. 원장이 비었을 때만 리포트를 쓴다.
+   */
+  var led = adSpendRead_();
   var saved = ADS_SOFT_MS;
   ADS_SOFT_MS = ADGROW_REPORT_WAIT_MS;
   var rep;
@@ -1009,14 +1016,21 @@ function adGrowReview_(interactive) {
      */
     var cids = [String(g[AG_CID]).trim()].concat(
       String(g[AG_PREVCID] || '').split(',').map(function (t) { return t.trim(); }));
-    var p = { ck: 0, cost: 0, sales: 0, ord: 0 }, seen = {};
+    var p = { ck: 0, cost: 0, sales: 0, ord: 0 }, seen = {}, cidSet = {};
     for (var ci = 0; ci < cids.length; ci++) {
       var cd = cids[ci];
       if (!cd || seen[cd]) continue;
       seen[cd] = true;
+      cidSet[cd] = true;
       var pp2 = perf[cd];
       if (!pp2) continue;
       p.ck += pp2.ck; p.cost += pp2.cost; p.sales += pp2.sales; p.ord += pp2.ord;
+    }
+    if (led.has) {
+      var st0 = g[AG_START] instanceof Date ? ymd_(g[AG_START])
+                                            : String(g[AG_START] || '').substring(0, 10);
+      var ls = adSpendSum_(led, cidSet, st0 || '', to);
+      p = { ck: ls.ck, cost: ls.cost, sales: ls.sales, ord: ls.ord };
     }
     var st2 = g[AG_START] instanceof Date ? ymd_(g[AG_START]) : String(g[AG_START] || '');
     var weeks = st2 ? Math.max(1, Math.ceil((daysBetween_(st2, to) + 1) / 7)) : 1;

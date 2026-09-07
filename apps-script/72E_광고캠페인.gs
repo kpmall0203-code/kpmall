@@ -50,7 +50,33 @@ var ADCAMP_COLS_OPT = ['topOfSearchImpressionShare'];
  * 리포트 하나를 요청 → 대기 → 내려받는다.
  * 시간 안에 안 끝나면 리포트 번호를 남기고 null 을 준다 (다시 실행하면 이어받는다).
  */
+/**
+ * 아마존 리포트가 받는 최대 기간. 넘기면 400 을 준다:
+ *   "startDate to endDate range (34 days) must not exceed maximum range (31 days)"
+ * 실제로 지출 원장 수집이 35일을 달라다 걸렸다 (2026-09-07).
+ */
+var ADS_REPORT_MAX_DAYS = 31;
+
+/**
+ * 기간을 상한 안으로 민다. 뒤(to)를 살리고 앞(from)을 당긴다 —
+ * 최근 자료가 더 중요하고, 옛 자료는 다음 실행에서 원장에 이미 쌓여 있다.
+ * @return {string} 쓸 수 있는 from
+ */
+function adsClampFrom_(from, to) {
+  if (!from || !to) return from;
+  var span = daysBetween_(from, to) + 1;              // 양끝 포함
+  if (span <= ADS_REPORT_MAX_DAYS) return from;
+  return addDays_(to, -(ADS_REPORT_MAX_DAYS - 1));
+}
+
 function adsRunReport_(token, propKey, config, from, to, name) {
+  // 부르는 쪽이 저마다 상한을 챙기게 하면 언젠가 하나가 빠진다. 여기서 한 번에 막는다
+  var from0 = from;
+  from = adsClampFrom_(from, to);
+  if (from !== from0) {
+    log_('ads', 'WARN', name + ' 리포트 기간을 ' + from0 + ' → ' + from +
+         ' 로 당겼습니다 (아마존 상한 ' + ADS_REPORT_MAX_DAYS + '일)');
+  }
   var props = PropertiesService.getScriptProperties();
   var t0 = Date.now();
   var reportId = props.getProperty(propKey);
