@@ -2,9 +2,16 @@
  * 72Z_초기화.gs — 이 프로그램이 만든 캠페인을 전부 걷어내고 처음으로 되돌린다
  *
  * ── 왜 '삭제' 가 아니라 '보관' 인가 ─────────────────────
- * 아마존은 캠페인을 지우는 길을 주지 않는다. 줄 수 있는 마지막 상태가
- * ARCHIVED(보관)이고, 보관하면 목록에서 사라지고 다시 켤 수 없다 —
- * 실질적으로 삭제와 같다. 되돌릴 수 없으므로 사람이 한 번 더 확인해야 한다.
+ * 아마존은 캠페인을 정말로 지우지 않는다. 마지막 상태가 ARCHIVED(보관)이고,
+ * 보관하면 목록에서 사라지고 다시 켤 수 없다 — 실질적으로 삭제와 같다.
+ * 되돌릴 수 없으므로 사람이 한 번 더 확인해야 한다.
+ *
+ * ── 보관은 PUT 으로 안 된다 (2026-09-07 에 배운 것) ──────
+ * 처음에는 다른 상태 바꾸기와 똑같이 PUT /sp/campaigns { state:'ARCHIVED' } 로
+ * 보냈다. 아마존은 그것을 받지 않는다 — 아흔 개가 전부 실패하고 '멈춤' 까지만 됐다.
+ * v3 에는 보관 전용 길이 따로 있다: POST /sp/campaigns/delete 에 지울 ID 목록을
+ * campaignIdFilter 로 준다. 그리고 보냈다고 믿지 않는다 — 끝나고 다시 조회해서
+ * 정말 목록에서 사라졌는지 세어 보고, 남아 있으면 남았다고 적는다.
  *
  * ── 무엇을 지우나 ───────────────────────────────────────
  * 이름이 [캠페인 이름 앞머리](기본 'KP')로 시작하는 캠페인 전부.
@@ -65,29 +72,73 @@ function resetKpCampaigns() {
 
   // ② 켜진 것부터 멈춘다 — 보관이 실패해도 돈은 그 자리에서 멎는다
   var paused = adResetPut_(token, mine.filter(function (c) { return c.state === 'ENABLED'; }), 'PAUSED');
-  var archived = adResetPut_(token, mine, 'ARCHIVED');
+  var archived = adResetArchive_(token, mine);
 
-  // ③ 표 되돌리기
+  // ③ 정말 사라졌나 — 보냈다는 말 대신 다시 세어 본다
+  var left = [];
+  try {
+    var again = adsPageAll_(token, '/sp/campaigns/list', ADSW_CT_CAMPAIGN, 'campaigns',
+                            { stateFilter: { include: ['ENABLED', 'PAUSED'] } });
+    for (var q = 0; q < again.length; q++) {
+      if (String(again[q].name || '').indexOf(prefix) === 0) left.push(String(again[q].name));
+    }
+  } catch (e) { left = null; }        // 확인을 못 했으면 '못 했다' 고 말한다
+
+  // ④ 표 되돌리기
   var wiped = adResetSheets_();
 
+  var leftMsg = (left === null) ? '남았는지 확인하지 못했습니다 (조회 실패)'
+                                : (left.length ? '⚠ 아직 남은 것 ' + left.length + '개: ' +
+                                                 left.slice(0, 5).join(', ')
+                                               : '확인함 — 목록에 하나도 남지 않았습니다');
   var logs = [adLogRow_({
     kind: '캠페인', item: '보관', from: '', to: 'ARCHIVED',
-    sum: prefix + ' 캠페인 초기화 · 보관 ' + archived.ok + '개 (멈춤 먼저 ' + paused.ok + '개)',
+    sum: prefix + ' 캠페인 초기화 · 보관 ' + archived.ok + '개 (멈춤 먼저 ' + paused.ok + '개) · ' + leftMsg,
     why: '사람이 처음부터 다시 하기로 했다', by: 'KP 캠페인 초기화'
   })];
   adLogWrite_(logs);
-  log_('ads', 'WARN', prefix + ' 캠페인 초기화 — 보관 ' + archived.ok + ' · 실패 ' + archived.fail);
+  log_('ads', 'WARN', prefix + ' 캠페인 초기화 — 보관 ' + archived.ok + ' · 실패 ' + archived.fail +
+       ' · ' + leftMsg);
 
   showSheet_(SHEET_ADGROW);
   ui_().alert('초기화했습니다',
     '보관 ' + archived.ok + '개' + (archived.fail ? ' · 실패 ' + archived.fail + '개' : '') +
-    ' (먼저 멈춤 ' + paused.ok + '개)\n\n' + wiped.join('\n') + '\n\n' +
+    ' (먼저 멈춤 ' + paused.ok + '개)\n' + leftMsg + '\n' +
+    (archived.msg ? '\n아마존이 말한 것: ' + archived.msg + '\n' : '') + '\n' +
+    wiped.join('\n') + '\n\n' +
     '다음:\n' +
     '  ① [📥 자료 받기 → 광고 구조 수집] — 보관된 것이 표에서도 사라집니다\n' +
     '  ② 광고육성 표에서 키울 상품과 마진율을 확인하고\n' +
     '  ③ 광고운영정책에서 한도를 채우고 [' + POLICY_MODE_AUTO + ']로 두면\n' +
     '     다음 새벽부터 자동으로 처음부터 다시 시작합니다.',
     ui_().ButtonSet.OK);
+}
+
+/**
+ * 보관 — v3 의 전용 길로 보낸다.
+ *
+ * PUT 으로 state 를 ARCHIVED 로 바꾸는 것은 받아 주지 않는다 (아흔 개가 전부 실패했다).
+ * 지울 ID 를 campaignIdFilter 에 담아 POST /sp/campaigns/delete 로 보낸다.
+ * 실패하면 아마존이 한 말을 그대로 들고 온다 — '0개 보관' 만 남으면 왜인지 알 수 없다.
+ */
+function adResetArchive_(token, list) {
+  var ok = 0, fail = 0, msg = '';
+  for (var b = 0; b < list.length; b += ADRESET_CHUNK) {
+    var part = list.slice(b, b + ADRESET_CHUNK);
+    try {
+      var r = adsApiRetry_(token, 'post', '/sp/campaigns/delete',
+        { campaignIdFilter: { include: part.map(function (c) { return c.cid; }) } },
+        ADSW_CT_CAMPAIGN, ADSW_CT_CAMPAIGN);
+      var got = adsCreated_(r, 'campaigns', 'campaignId');
+      if (got.ok) { ok += got.ids.length; fail += part.length - got.ids.length; }
+      else { fail += part.length; if (!msg) msg = adErrorText_(got.msg); }
+    } catch (e) {
+      fail += part.length;
+      if (!msg) msg = adErrorText_(String(e).substring(0, 200));
+      log_('ads', 'ERROR', '보관 실패: ' + String(e).substring(0, 200));
+    }
+  }
+  return { ok: ok, fail: fail, msg: msg };
 }
 
 /** 캠페인 상태를 한꺼번에 바꾼다 (묶음으로) */
