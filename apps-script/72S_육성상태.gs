@@ -22,10 +22,14 @@ var ADGROW_EXT = [
   '정책ID', '정책상태',
   '마진출처', '마진확인일',
   '초기추정전환율(%)', '실제광고전환율(%)', '판단전환율(%)', '성숙클릭',
+  '주문당공헌이익(JPY)', '손익분기클릭비용(JPY)', '목표클릭비용(JPY)',
+  '현재설정입찰(JPY)', '입찰차이',
   '단계',
   '주간지출(JPY)', '주간위험손실(JPY)', '주간여력(JPY)',
   '누적지출(JPY)', '누적위험손실(JPY)', '누적여력(JPY)',
-  '미집계준비액(JPY)', '경과일', '자료기준일', '다음 행동'
+  '미집계준비액(JPY)', '경과일', '자료기준일',
+  '최근순위', '순위관측일', '유효관측수', '순위변화', '순위신선도',
+  '다음 행동'
 ];
 
 /** 단계 (기획서 9.5) */
@@ -100,8 +104,13 @@ function adGrowStage_(o) {
   }
   if (o.rank <= 0) {
     return { stage: BSTAGE_GROW,
-             next: '기준키워드로 검색한 오가닉 순위를 [오가닉순위]에 적어 주세요 — ' +
+             next: '[순위 적을 줄 만들기]로 줄을 만들고 기준키워드로 검색한 순위를 적어 주세요 — ' +
                    '순위가 없으면 졸업을 판정할 수 없습니다' };
+  }
+  if (o.rankStale) {
+    return { stage: BSTAGE_GROW,
+             next: '순위 관측이 ' + ADRANK_FRESH_DAYS + '일보다 오래됐습니다 (지금 ' + o.rank + '위). ' +
+                   '다시 재기 전에는 졸업을 판정하지 않습니다' };
   }
   if (o.goal > 0 && o.rank <= o.goal) {
     return { stage: BSTAGE_HOLD,
@@ -123,7 +132,8 @@ function fmtYen_(n) {
  * 시트만 읽고 시트에만 쓴다 — API 를 부르지 않는다.
  */
 function reviewAdGrowState() {
-  var made = makeOneSheet_([{ name: SHEET_INBOX, header: INBOX_HEADER }]);
+  var made = makeOneSheet_([{ name: SHEET_INBOX, header: INBOX_HEADER },
+                            { name: SHEET_ADRANK, header: ADRANK_HEADER }]);
   if (madeSheetStop_(made, '상태 점검')) return;
   var sh = getSheetOrThrow_(SHEET_ADGROW);
   if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADGROW + '" 이 비어 있습니다.');
@@ -133,6 +143,7 @@ function reviewAdGrowState() {
 
   var led = adSpendRead_();
   var pol = adPolicyAll_();
+  var ranks = adRankSummary_(ymd_(new Date()));
   var basis = adBasis_();
   var prior = Number(basis['판단전환율 사전클릭']) || CVR_PRIOR_CLICKS;
   var today = ymd_(new Date());
@@ -182,16 +193,54 @@ function reviewAdGrowState() {
 
     var days = start ? daysBetween_(start, today) + 1 : 0;
     var expired = !!(p && p.maxDays > 0 && days > p.maxDays);
-    var rank = Number(v[i][AG_RANK]) || 0;
+    /**
+     * 순위는 관측 표(광고육성순위)가 먼저다. 거기 없으면 옛 [오가닉순위] 칸을 쓴다.
+     * 관측이 오래됐으면(순위신선도 = 오래됨) 졸업을 판정하지 않는다 —
+     * 지난주 순위로 이번 주 졸업을 말할 수 없다.
+     */
+    var ob = ranks[sku];
+    var rank = ob ? ob.rank : (Number(v[i][AG_RANK]) || 0);
+    var rankStale = ob ? ob.stale : true;      // 관측이 아예 없으면 '오래됨' 과 같이 다룬다
+    setCell_(v[i], map, '최근순위', ob ? (ob.rank || ('범위밖(' + ob.out + '회)')) : '');
+    setCell_(v[i], map, '순위관측일', ob ? ob.at : '');
+    setCell_(v[i], map, '유효관측수', ob ? ob.n : '');
+    setCell_(v[i], map, '순위변화', (ob && ob.delta !== null)
+      ? (ob.delta > 0 ? '+' + ob.delta + '위 올라옴' : (ob.delta < 0 ? ob.delta + '위 내려감' : '그대로'))
+      : '');
+    setCell_(v[i], map, '순위신선도', ob ? (ob.stale ? '오래됨' : '최근') : '관측 없음');
     var goal = Number(v[i][AG_RANKGOAL]) || 0;
     var keyword = String(v[i][AG_KW] || '').trim();
+
+    /**
+     * 모의운영 — 지금 자료로 계산하면 입찰이 얼마여야 하나 (기획서 9.2).
+     * 아직 아마존에 보내지 않는다. 사람이 한도를 정할 때 보라고 적어 두는 값이다.
+     *
+     *   주문당 공헌이익 G = 판매가 × 마진율   (주문 매출 실측이 없을 때의 초기값)
+     *   손익분기 클릭비용 = G × 판단전환율
+     *   육성 목표 클릭비용 = 손익분기 × 육성배수
+     */
+    var price = Number(v[i][AG_PRICE]) || 0;
+    var mult = Number(v[i][AG_MULT]) || ADGROW_MULT_DEFAULT;
+    var G = marginOk ? price * margin : 0;
+    var breakEven = G * b.cvr;
+    var target = breakEven * mult;
+    var curBid = Number(v[i][AG_BID]) || 0;
+    setCell_(v[i], map, '주문당공헌이익(JPY)', G ? Math.round(G) : '');
+    setCell_(v[i], map, '손익분기클릭비용(JPY)', breakEven ? Math.round(breakEven * 100) / 100 : '');
+    setCell_(v[i], map, '목표클릭비용(JPY)', target ? Math.round(target * 100) / 100 : '');
+    setCell_(v[i], map, '현재설정입찰(JPY)', curBid || '');
+    setCell_(v[i], map, '입찰차이', (target > 0 && curBid > 0)
+      ? (Math.abs(curBid - target) < 0.5 ? '같음'
+         : (curBid > target ? '설정이 ¥' + (Math.round((curBid - target) * 10) / 10) + ' 높다'
+                            : '설정이 ¥' + (Math.round((target - curBid) * 10) / 10) + ' 낮다'))
+      : '');
     // 수동 캠페인인가 — 계획 표의 [유형] 이 답이다
     var manual = adGrowIsManual_(String(v[i][AG_CAMP] || '').trim());
 
     var st = adGrowStage_({
       marginOk: marginOk, policy: p, expired: expired, days: days,
       week: weekLedger, total: totalLedger, pending: pending,
-      keyword: keyword, manual: manual, rank: rank, goal: goal,
+      keyword: keyword, manual: manual, rank: rank, goal: goal, rankStale: rankStale,
       room: Math.min(weekLedger.room < 0 ? Infinity : weekLedger.room,
                      totalLedger.room < 0 ? Infinity : totalLedger.room)
     });
@@ -208,10 +257,11 @@ function reviewAdGrowState() {
     setCell_(v[i], map, '경과일', days || '');
     setCell_(v[i], map, '자료기준일', led.last || '(없음)');
 
-    if (rank <= 0 && keyword) {
+    if (keyword && (rank <= 0 || rankStale)) {
       req.push({ kind: '순위입력', target: sku,
-                 what: '"' + keyword + '" 로 검색했을 때의 오가닉 순위를 [오가닉순위] 에 적어 주세요',
-                 now: '(빈칸)' });
+                 what: '"' + keyword + '" 로 검색했을 때의 순위를 광고육성순위 표에 적어 주세요 ' +
+                       '([순위 적을 줄 만들기]가 빈 줄을 만들어 둡니다)',
+                 now: ob ? ('마지막 관측 ' + ob.at + ' · ' + (ob.rank || '범위밖')) : '(관측 없음)' });
     } else if (rank > 0) {
       adInboxClose_('순위입력', sku);
     }
@@ -272,6 +322,17 @@ function adGrowStateNotes_(sh) {
       '주간과 누적 중 작은 쪽이 실제 여력이다.',
     '미집계준비액(JPY)': '마지막 지출 자료일 이후 아직 안 잡힌 지출의 추정.\n' +
       '= 지난 날 수 × 하루예산 × ' + SPEND_OVERSPEND_MULT + ' (아마존 일예산은 평균값이라 더 쓸 수 있다)',
+    '주문당공헌이익(JPY)': '= 판매가 × 마진율. 주문 하나가 남기는 돈 (광고비 빼기 전).\n' +
+      '실제 주문 매출이 쌓이면 그 값으로 바꾼다 — 지금은 판매가 기준의 초기값이다.',
+    '손익분기클릭비용(JPY)': '= 주문당공헌이익 × 판단전환율. 클릭 하나에 이만큼까지 쓰면 본전이다.',
+    '목표클릭비용(JPY)': '= 손익분기클릭비용 × 손해배수. 육성이 겨냥하는 값이다.\n' +
+      '아직 아마존에 보내지 않는다 — 한도가 정해지고 정책이 [자동운영]이 된 뒤에 보낸다.',
+    '입찰차이': '지금 아마존에 걸린 설정 입찰과 목표의 차이.\n' +
+      '판단전환율이 실제로 움직이면 목표도 따라 움직인다.',
+    '최근순위': '광고육성순위 표의 최근 ' + ADRANK_MEDIAN_N + '개 관측의 중앙값.\n' +
+      '"범위밖" 은 검색깊이까지 봤는데 없었다는 뜻이다 — 999 로 세지 않는다.',
+    '순위신선도': '"오래됨" 은 관측이 ' + ADRANK_FRESH_DAYS + '일보다 지났다는 뜻.\n' +
+      '그때는 졸업을 판정하지 않는다.',
     '단계': BSTAGE_INPUT + ' → ' + BSTAGE_FIND + ' → ' + BSTAGE_PREP + ' → ' +
             BSTAGE_GROW + ' → ' + BSTAGE_HOLD + ' → ' + BSTAGE_HANDOVER + '\n' +
             BSTAGE_STOP + ' 은 한도·기간·정책 때문에 멈춘 것이다.',
