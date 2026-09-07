@@ -84,6 +84,7 @@ function buildPriceMenu_() {
       .addSubMenu(ui.createMenu('🌱 트랙 B — 새 상품 키우기')
         .addItem('상태 점검 (지출 · 손실 · 여력 · 단계)', 'reviewAdGrowState')
         .addItem('순위 적을 줄 만들기 (기준키워드로 검색한 순위)', 'addAdGrowRankRows')
+        .addItem('작업 계획 (무엇을 왜 바꿀 것인가 · 안 보냄)', 'planAdGrowJobs')
         .addSeparator()
         .addItem('① 키울 상품 등록 (SKU 붙여넣기)', 'addAdGrowSku')
         .addItem('② 트랙 B 계산 (입찰 · 예산)', 'calcAdGrow')
