@@ -29,6 +29,12 @@ var SPAPI_BASE = 'https://sellingpartnerapi-fe.amazon.com';
 var MARKETPLACE_JP = 'A1VC38T7YXB528';
 var REPORT_TYPE = 'GET_MERCHANT_LISTINGS_ALL_DATA';
 
+// ── 라쿠텐 RMS API (상품 등록) ─────────────────────────────
+// 이치바에 입점한 판매자만 쓸 수 있다. serviceSecret/licenseKey는
+// RMS 관리화면 → 서비스 관리 → WEB SERVICE 연동설정에서 발급받는다.
+// 버전이 자주 바뀌므로 실사용 전 RMS 웹서비스 포털에서 최신 스펙을 확인할 것.
+var RMS_BASE = 'https://api.rms.rakuten.co.jp/es/2.0';
+
 // JP 마켓플레이스 리포트는 컬럼명이 일본어로 온다. 영문은 폴백.
 var HDR_SKU = ['出品者SKU', 'seller-sku', 'sku'];
 var HDR_NAME = ['商品名', 'item-name', 'title'];
@@ -86,5 +92,7 @@ var PROP_SHARE_TOKEN = 'SHARE_TOKEN';       // 웹앱 조회용 토큰
 var PROP_GEMINI_KEY = 'GEMINI_API_KEY';     // Gemini API 키 (없으면 LanguageApp으로 대체)
 var PROP_TR_CURSOR = 'TRANSLATE_CURSOR';    // 번역 이어실행 커서 (행 위치)
 var PROP_TR_PASS_PENDING = 'TR_PASS_PENDING'; // 이번 한 바퀴에서 남은 건수
+var PROP_RMS_SERVICE_SECRET = 'RMS_SERVICE_SECRET'; // 라쿠텐 RMS 서비스시크릿
+var PROP_RMS_LICENSE_KEY = 'RMS_LICENSE_KEY';       // 라쿠텐 RMS 스토어별 라이선스키
 
 var LOG_HEADER = ['일시', '구성요소', '레벨', '메시지'];
