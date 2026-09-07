@@ -378,7 +378,9 @@ function reviewAdGrowState(opts) {
     setCell_(v[i], map, '주간여력(JPY)', weekLedger.room < 0 ? '한도 미정' : Math.round(weekLedger.room));
     setCell_(v[i], map, '누적지출(JPY)', Math.round(tt.cost));
     setCell_(v[i], map, '누적위험손실(JPY)', Math.round(totalLedger.risk));
-    setCell_(v[i], map, '누적여력(JPY)', totalLedger.room < 0 ? '한도 미정' : Math.round(totalLedger.room));
+    // 누적 한도는 비워도 되는 칸이다 — 비었으면 '따로 제한 없음' 이지 '못 정했다' 가 아니다
+    setCell_(v[i], map, '누적여력(JPY)',
+             totalLedger.room < 0 ? '제한 없음 (주간·기간이 가둠)' : Math.round(totalLedger.room));
     setCell_(v[i], map, '미집계준비액(JPY)', pending === null ? '자료 없음' : pending);
     setCell_(v[i], map, '경과일', days || '');
     setCell_(v[i], map, '자료기준일', led.last || '(없음)');
@@ -446,6 +448,8 @@ function adGrowStateNotes_(sh) {
       '아직 자라는 중인 매출로 손실을 깎지 않는다.',
     '주간여력(JPY)': '= min(지출한도 − 쓴 광고비, 손실한도 − 위험손실) − 미집계준비액.\n' +
       '주간과 누적 중 작은 쪽이 실제 여력이다.',
+    '누적여력(JPY)': '누적 한도를 적었으면 남은 몫, 비웠으면 "제한 없음".\n' +
+      '비워도 총량은 갇혀 있다 — 주간 한도 × (최대 기간 ÷ 7) 이 최악의 노출이다.',
     '미집계준비액(JPY)': '마지막 지출 자료일 이후 아직 안 잡힌 지출의 추정.\n' +
       '= 지난 날 수 × 하루예산 × ' + SPEND_OVERSPEND_MULT + ' (아마존 일예산은 평균값이라 더 쓸 수 있다)',
     '주문당공헌이익(JPY)': '= 판매가 × 마진율. 주문 하나가 남기는 돈 (광고비 빼기 전).\n' +

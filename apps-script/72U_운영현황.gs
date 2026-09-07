@@ -115,7 +115,8 @@ function showAdDashboard() {
       polA && polA.weekSpend > 0 ? fmtYen_(polA.weekSpend) : '안 정함',
       polA && polA.weekSpend > 0
         ? '이번 주 트랙 A 지출 ' + fmtYen_(wkNow.A) + dashPct_(wkNow.A, polA.weekSpend)
-        : '광고운영정책 표에서 정하세요. 비어 있으면 무제한이 아니라 "멈춤" 입니다.');
+        : '광고운영정책 표에서 정하세요. 주간 한도가 비면 무제한이 아니라 "멈춤" 입니다 ' +
+          '(누적 한도는 비워도 됩니다 — 그때는 주간과 기간이 총량을 가둡니다).');
 
   // ── 트랙 B 상품별 ───────────────────────────────────
   var gsh = ss_().getSheetByName(SHEET_ADGROW);
