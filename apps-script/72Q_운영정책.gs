@@ -110,7 +110,8 @@ var POLICY_MODES = [POLICY_MODE_DRY, POLICY_MODE_AUTO, POLICY_MODE_HOLD];
  */
 var POLICY_NEED = {
   A: ['주간 지출한도(JPY)'],
-  B: ['주간 지출한도(JPY)', '주간 손실한도(JPY)', '최대 기간(일)']
+  // 트랙 B 는 광고육성 표에서 읽는다 (adGrowPolicyRows_). 사람이 적을 것은 셋뿐:
+  B: ['마진율(%)', '전환율예측(%)', '주간허용손해(JPY)']
 };
 
 /** 비워 두면 '따로 제한 없음' 인 칸 — 사람에게 그렇게 보여 준다 */
@@ -151,19 +152,94 @@ function adPolicyParse_(row, map) {
   };
 }
 
-/** 정책 전부. 트랙+대상으로 찾을 수 있게 색인도 준다 */
+/**
+ * 정책 전부. 트랙+대상으로 찾을 수 있게 색인도 준다.
+ *
+ * ── 트랙 B 의 정책은 광고육성 표에 산다 ─────────────────
+ * 표를 둘로 나눠 두니 같은 상품을 두 곳에서 봐야 했고, 한쪽에 줄이 없다는
+ * 이유로 멈추는 일이 생겼다. 트랙 B 는 값과 한도가 한 줄에 같이 있는 것이 맞다 —
+ * 마진율 옆에 '얼마까지 잃어도 좋은가' 가 있어야 둘을 견줘 보고 정할 수 있다.
+ * 트랙 A 는 대상이 '전체' 하나뿐이라 광고운영정책 표에 그대로 둔다.
+ */
 function adPolicyAll_() {
   var out = { rows: [], byKey: {} };
+
   var sh = ss_().getSheetByName(SHEET_POLICY);
+  if (sh && sh.getLastRow() > 1) {
+    var map = hdrMap_(sh);
+    var v = sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(sh.getLastColumn(), 1)).getValues();
+    for (var i = 0; i < v.length; i++) {
+      if (!String(cellOf_(v[i], map, '대상', '')).trim()) continue;
+      if (String(cellOf_(v[i], map, '소유트랙', '')).trim().toUpperCase() === 'B') continue;  // 옛 B 줄은 안 본다
+      var p = adPolicyParse_(v[i], map);
+      p.row = i + 2;
+      out.rows.push(p);
+      out.byKey[p.track + ' ' + p.target] = p;
+    }
+  }
+
+  var gv = adGrowPolicyRows_();
+  for (var g = 0; g < gv.length; g++) {
+    out.rows.push(gv[g]);
+    out.byKey['B ' + gv[g].target] = gv[g];
+  }
+  return out;
+}
+
+/**
+ * 광고육성 표의 각 줄을 정책으로 읽는다.
+ *
+ * 사람이 반드시 적어야 하는 것은 셋뿐이다: 마진율 · 전환율예측 · 주간허용손해.
+ * 나머지는 기본값이 있다 — 손해배수 1.5, 최대 기간 56일, 누적 한도 없음.
+ * 주간 지출한도는 따로 받지 않는다. 허용손해에서 이미 나온다 (주간광고비).
+ */
+function adGrowPolicyRows_() {
+  var out = [];
+  var sh = ss_().getSheetByName(SHEET_ADGROW);
   if (!sh || sh.getLastRow() < 2) return out;
   var map = hdrMap_(sh);
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(sh.getLastColumn(), 1)).getValues();
+
   for (var i = 0; i < v.length; i++) {
-    if (!String(cellOf_(v[i], map, '대상', '')).trim()) continue;
-    var p = adPolicyParse_(v[i], map);
-    p.row = i + 2;
-    out.rows.push(p);
-    out.byKey[p.track + ' ' + p.target] = p;
+    var sku = String(v[i][AG_SKU] || '').trim();
+    if (!sku) continue;
+
+    var miss = [];
+    var margin = Number(v[i][AG_MARGIN]);
+    var cvr = Number(v[i][AG_CVR]);
+    var loss = Number(v[i][AG_LOSS]);
+    if (!(margin > 0 && margin < 100)) miss.push('마진율(%)');
+    if (!(cvr > 0 && cvr < 100)) miss.push(AG_CVR_NAME);
+    if (!(loss > 0)) miss.push('주간허용손해(JPY)');
+
+    var mode = String(cellOf_(v[i], map, '모드', POLICY_MODE_AUTO)).trim() || POLICY_MODE_AUTO;
+    if (POLICY_MODES.indexOf(mode) < 0) { mode = POLICY_MODE_DRY; miss.push('모드(값이 이상함)'); }
+    var approved = adRowApproved_(v[i][AG_APPROVE]);
+    if (!approved) miss.push('승인');
+
+    // 주간 지출한도는 계산값이다. 아직 계산 전이면 허용손해에서 바로 낸다
+    var mult = Number(v[i][AG_MULT]) || ADGROW_MULT_DEFAULT;
+    var weekSpend = Number(v[i][AG_WEEKLY]) ||
+                    (loss > 0 && mult > 1 ? Math.round(loss * mult / (mult - 1)) : 0);
+
+    out.push({
+      id: 'B:' + sku,
+      ver: Number(cellOf_(v[i], map, '정책버전', 1)) || 1,
+      track: 'B',
+      target: sku,
+      mode: mode,
+      weekSpend: weekSpend,
+      weekLoss: loss > 0 ? loss : 0,
+      totalSpend: Number(cellOf_(v[i], map, '누적 지출한도(JPY)', 0)) || 0,
+      totalLoss: Number(cellOf_(v[i], map, '누적 손실한도(JPY)', 0)) || 0,
+      maxDays: Number(cellOf_(v[i], map, '최대 기간(일)', 0)) || ADGROW_MAXDAYS_DEFAULT,
+      start: v[i][AG_START] || '',
+      approved: approved,
+      miss: miss,
+      ready: miss.length === 0,
+      canAuto: miss.length === 0 && mode === POLICY_MODE_AUTO,
+      row: i + 2
+    });
   }
   return out;
 }
@@ -180,75 +256,6 @@ function adPolicyFor_(all, track, target) {
  * 여기에 기본값을 넣으면 사람이 정하지 않은 금액이 승인된 것처럼 보인다.
  * 대신 무엇이 비었는지 [무엇이 비었나] 칸과 요청함에 적는다.
  */
-/**
- * 육성 표에 있는데 정책 줄이 없는 SKU 의 줄을 만든다 (한도는 비운 채로).
- *
- * 상품을 등록한 뒤 사람이 [운영 정책 만들기] 를 눌러야만 줄이 생겼다.
- * 안 누르면 단계가 '입력대기' 에 머무는데, 표에는 "정책 줄이 없습니다" 라고만
- * 적혀 있어 무엇을 눌러야 하는지 알기 어려웠다. 줄은 프로그램이 만들고,
- * 한도는 사람이 채운다 — 빈 한도는 여전히 '멈춤' 이라 돈이 나가지 않는다.
- *
- * @return {{added:number, skus:Array}} 새로 만든 줄
- */
-function adPolicyEnsureGrowRows_() {
-  var out = { added: 0, skus: [] };
-  var sh = ss_().getSheetByName(SHEET_POLICY);
-  var gsh = ss_().getSheetByName(SHEET_ADGROW);
-  if (!sh || !gsh || gsh.getLastRow() < 2) return out;      // 표가 없으면 여기서 만들지 않는다
-
-  var map = ensureCols_(sh, POLICY_HEADER);
-  var last = sh.getLastRow();
-  var have = {}, nRows = 0;
-  if (last > 1) {
-    var ex = sh.getRange(2, 1, last - 1, Math.max(sh.getLastColumn(), 1)).getValues();
-    for (var i = 0; i < ex.length; i++) {
-      var tg = String(cellOf_(ex[i], map, '대상', '')).trim();
-      if (!tg) continue;
-      nRows++;
-      have[String(cellOf_(ex[i], map, '소유트랙', '')).trim().toUpperCase() + ' ' + tg] = true;
-    }
-  }
-
-  var gv = gsh.getRange(2, 1, gsh.getLastRow() - 1, ADGROW_HEADER.length).getValues();
-  var width = Math.max(sh.getLastColumn(), POLICY_HEADER.length);
-  var add = [], req = [];
-  for (var g = 0; g < gv.length; g++) {
-    var sku = String(gv[g][AG_SKU] || '').trim();
-    if (!sku || have['B ' + sku]) continue;
-    have['B ' + sku] = true;
-    var row = new Array(width).fill('');
-    setCell_(row, map, '정책ID', 'B' + (nRows + add.length + 1));
-    setCell_(row, map, '버전', 1);
-    setCell_(row, map, '소유트랙', 'B');
-    setCell_(row, map, '대상', sku);
-    setCell_(row, map, '모드', POLICY_MODE_DRY);
-    setCell_(row, map, '승인', false);
-    setCell_(row, map, '상태', '미확정');
-    setCell_(row, map, '무엇이 비었나', POLICY_NEED.B.join(' · ') + ' · 승인');
-    setCell_(row, map, '비고', String(gv[g][AG_NAME] || '').substring(0, 40));
-    add.push(row);
-    out.skus.push(sku);
-    req.push({ kind: '한도확정', target: 'B · ' + sku,
-               what: POLICY_NEED.B.join(' · ') + ' · 승인',
-               now: '(빈칸 — 이 다섯 칸이 차고 [모드]가 ' + POLICY_MODE_AUTO +
-                    ' 여야 이 상품이 움직입니다)' });
-  }
-  if (!add.length) return out;
-
-  var at = Math.max(last, 1) + 1;
-  var need = at + add.length - 1;
-  if (sh.getMaxRows() < need) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
-  sh.getRange(at, 1, add.length, width).setValues(add);
-  sh.getRange(at, map['승인'] + 1, add.length, 1).insertCheckboxes();
-  sh.getRange(at, map['모드'] + 1, add.length, 1).setDataValidation(
-    SpreadsheetApp.newDataValidation().requireValueInList(POLICY_MODES, true)
-      .setAllowInvalid(false).build());
-  adInboxAdd_(req);
-  log_('ads', 'INFO', '운영 정책 줄 자동 생성 ' + add.length + '개: ' + out.skus.join(', '));
-  out.added = add.length;
-  return out;
-}
-
 function setupAdPolicy() {
   // 이 작업이 쓸 표를 먼저. 한 실행에 하나만 만든다 (문서가 무겁다)
   var made = makeOneSheet_([{ name: SHEET_POLICY, header: POLICY_HEADER },
@@ -268,16 +275,8 @@ function setupAdPolicy() {
     }
   }
 
+  // 트랙 B 의 한도는 광고육성 표에 산다 — 여기서는 트랙 A 만 다룬다
   var want = [{ track: 'A', target: '전체', note: '트랙 A(재배분) 전체에 걸리는 한도' }];
-  var gsh = ss_().getSheetByName(SHEET_ADGROW);
-  if (gsh && gsh.getLastRow() > 1) {
-    var gv = gsh.getRange(2, 1, gsh.getLastRow() - 1, ADGROW_HEADER.length).getValues();
-    for (var g = 0; g < gv.length; g++) {
-      var sku = String(gv[g][AG_SKU] || '').trim();
-      if (sku) want.push({ track: 'B', target: sku,
-                           note: String(gv[g][AG_NAME] || '').substring(0, 40) });
-    }
-  }
 
   var added = 0, width = Math.max(sh.getLastColumn(), POLICY_HEADER.length);
   for (var w = 0; w < want.length; w++) {

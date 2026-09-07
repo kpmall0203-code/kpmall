@@ -19,6 +19,10 @@
 
 // 광고육성 표에 뒤로 붙일 칸. 머리글 이름으로 찾는다 (열 번호를 박지 않는다)
 var ADGROW_EXT = [
+  // 한도·모드 — 트랙 B 의 정책은 이 표에 산다 (광고운영정책은 트랙 A 만 쓴다).
+  // 셋(마진율·전환율예측·주간허용손해)은 앞쪽 본문 칸에 이미 있고, 여기 것들은
+  // 비워도 되는 칸이다: 모드는 자동운영, 최대 기간은 56일, 누적 한도는 없음.
+  '모드', '최대 기간(일)', '누적 지출한도(JPY)', '누적 손실한도(JPY)', '정책버전', '한도지문',
   '정책ID', '정책상태',
   '마진출처', '마진확인일',
   '초기추정전환율(%)', '실제광고전환율(%)', '판단전환율(%)', '성숙클릭',
@@ -219,8 +223,8 @@ function reviewAdGrowState(opts) {
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, width).getValues();
 
   var led = adSpendRead_();
-  // 등록만 하고 정책 줄이 없는 상품이 있으면 여기서 만든다 (한도는 빈 채 = 멈춤)
-  var newPol = adPolicyEnsureGrowRows_();
+  // 정책 칸의 기본값·버전을 먼저 굳힌다 — 그래야 이번 걸음이 읽는 정책이 지금 값이다
+  var newPol = adGrowPolicySeed_(sh, map);
   var pol = adPolicyAll_();
   var basis = adBasis_();
   var prior = Number(basis['판단전환율 사전클릭']) || CVR_PRIOR_CLICKS;
@@ -396,7 +400,7 @@ function reviewAdGrowState(opts) {
 
   var line = Object.keys(stat).map(function (k) { return k + ' ' + stat[k]; }).join(' · ');
   log_('ads', 'INFO', '트랙 B 상태 — ' + line);
-  if (quiet) return { line: line, nReq: nReq, nOver: nOver, newPolicy: newPol.added };
+  if (quiet) return { line: line, nReq: nReq, nOver: nOver, bumped: newPol.bumped.length };
   showSheet_(SHEET_ADGROW);
   ui_().alert('트랙 B 상태 점검',
     (led.has ? '지출 자료 기준일 ' + led.last : '⛔ 지출 원장이 비어 있습니다 — [지출 원장 수집]을 먼저 하세요') +
@@ -405,14 +409,64 @@ function reviewAdGrowState(opts) {
     '이번 주 지출 ' + fmtYen_(sumWeek) + ' · 누적 지출 ' + fmtYen_(sumTotal) +
     ' · 누적 위험손실 ' + fmtYen_(sumRisk) + '\n' +
     (nOver ? '⛔ 한도를 넘긴 상품 ' + nOver + '개\n' : '') +
-    (newPol.added ? '운영 정책에 줄 ' + newPol.added + '개를 새로 만들었습니다 (한도는 비어 있습니다): ' +
-                    newPol.skus.slice(0, 3).join(', ') + '\n' : '') +
+    (newPol.bumped.length ? '한도가 바뀌어 정책버전을 올린 상품 ' + newPol.bumped.length + '개: ' +
+                            newPol.bumped.slice(0, 3).join(', ') + '\n' : '') +
     (nReq ? '요청함에 ' + nReq + '건 넣었습니다\n' : '') + '\n' +
     '여기서는 아무것도 바꾸지 않았습니다. 표의 [단계]와 [다음 행동]을 보세요.',
     ui_().ButtonSet.OK);
 }
 
 /** 이 캠페인이 수동인가 — 육성 계획 표의 [유형] 을 본다 (시트만 읽는다) */
+/**
+ * 정책 칸의 기본값과 버전을 굳힌다 (광고육성 표 안에서).
+ *
+ * 모드가 비면 자동운영으로 본다 — 승낙은 [승인] 체크이고, 모드는
+ * "잠깐 멈춰 두고 싶다" 를 위한 칸이다. 한도(마진율·전환율예측·허용손해·배수·
+ * 기간·누적)가 바뀌면 버전을 올려, 옛 한도로 승인돼 아직 안 나간 작업이 취소되게 한다.
+ *
+ * 상태 점검이 표를 읽기 전에 부른다 — 그래야 이번 걸음이 지금 값으로 판단한다.
+ * @return {{added:number, bumped:Array}}
+ */
+function adGrowPolicySeed_(sh, map) {
+  var out = { added: 0, bumped: [] };
+  if (sh.getLastRow() < 2) return out;
+  var width = Math.max(sh.getLastColumn(), ADGROW_HEADER.length);
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, width).getValues();
+  var dirty = false;
+
+  for (var i = 0; i < v.length; i++) {
+    var sku = String(v[i][AG_SKU] || '').trim();
+    if (!sku) continue;
+    if (!String(cellOf_(v[i], map, '모드', '')).trim()) {
+      setCell_(v[i], map, '모드', POLICY_MODE_AUTO); dirty = true; out.added++;
+    }
+    var fp = [v[i][AG_MARGIN], v[i][AG_CVR], v[i][AG_LOSS], v[i][AG_MULT],
+              cellOf_(v[i], map, '최대 기간(일)', ''),
+              cellOf_(v[i], map, '누적 지출한도(JPY)', ''),
+              cellOf_(v[i], map, '누적 손실한도(JPY)', '')].join('|');
+    var oldFp = String(cellOf_(v[i], map, '한도지문', ''));
+    var ver = Number(cellOf_(v[i], map, '정책버전', 0)) || 0;
+    if (!ver) { ver = 1; setCell_(v[i], map, '정책버전', ver); dirty = true; }
+    else if (oldFp && oldFp !== fp) {
+      ver += 1;
+      setCell_(v[i], map, '정책버전', ver);
+      out.bumped.push(sku);
+      dirty = true;
+      log_('ads', 'INFO', sku + ' 한도가 바뀌어 정책버전 ' + ver + ' (안 나간 작업은 취소됩니다)');
+    }
+    if (oldFp !== fp) { setCell_(v[i], map, '한도지문', fp); dirty = true; }
+  }
+  if (dirty) {
+    sh.getRange(2, 1, v.length, width).setValues(v);
+    try {
+      sh.getRange(2, map['모드'] + 1, v.length, 1).setDataValidation(
+        SpreadsheetApp.newDataValidation().requireValueInList(POLICY_MODES, true)
+          .setAllowInvalid(false).build());
+    } catch (e) {}
+  }
+  return out;
+}
+
 function adGrowIsManual_(campName) {
   if (!campName) return false;
   var sh = ss_().getSheetByName(SHEET_ADPLAN_GROW);

@@ -168,36 +168,59 @@ function advanceAdGrow(opts) {
 // 그 뒤로 겨냥·승인·갈아타기·켜기·입찰은 사람이 정할 일이 아니다 —
 // "자동으로 돌린다" 고 정한 순간 당연히 따라오는 것들이라 단추를 두지 않는다.
 
-/** 메뉴 ②: 한도를 정할 자리로 데려간다 (없으면 줄부터 만든다) */
-function openAdPolicy() {
-  var made = makeOneSheet_([{ name: SHEET_POLICY, header: POLICY_HEADER },
-                            { name: SHEET_INBOX, header: INBOX_HEADER }]);
-  if (madeSheetStop_(made, '② 한도 정하기')) return;
-
-  var add = adPolicyEnsureGrowRows_();
-  var pol = adPolicyAll_();
-  var miss = [], ready = 0;
-  for (var i = 0; i < pol.rows.length; i++) {
-    var p = pol.rows[i];
-    if (p.track !== 'B') continue;
-    if (p.ready && p.mode === POLICY_MODE_AUTO) { ready++; continue; }
-    miss.push('· ' + p.target + ' — ' + (p.miss.length ? p.miss.join(' · ')
-                                                       : '모드를 ' + POLICY_MODE_AUTO + ' 으로'));
+/**
+ * 메뉴 ②: 값을 확인하고 승인한다 — 광고육성 표 한 장에서.
+ *
+ * 표를 둘로 나눠 두었던 것을 하나로 합쳤다. 사람이 적을 것은 셋뿐이고
+ * (마진율 · 전환율예측 · 주간허용손해) 나머지는 기본값이 있다.
+ * 빈칸이 있으면 추천값을 넣어 주고 왜 그 값인지 [사유] 에 적는다.
+ */
+function openAdGrowInputs() {
+  var sh = ss_().getSheetByName(SHEET_ADGROW);
+  if (!sh || sh.getLastRow() < 2) {
+    ui_().alert('② 값 확인하고 승인',
+      '아직 키울 상품이 없습니다. [① 키울 상품 등록] 을 먼저 하세요.', ui_().ButtonSet.OK);
+    return;
   }
+  var map = ensureCols_(sh, ADGROW_EXT);
+  var width = Math.max(sh.getLastColumn(), ADGROW_HEADER.length);
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, width).getValues();
 
-  showSheet_(SHEET_POLICY);
-  ui_().alert('② 한도 정하기',
-    (add.added ? '새 상품 ' + add.added + '개의 정책 줄을 만들었습니다.\n\n' : '') +
-    (miss.length
-      ? '아래 줄을 채우면 그 상품이 움직입니다:\n' + miss.slice(0, 8).join('\n') +
-        (miss.length > 8 ? '\n… 외 ' + (miss.length - 8) + '개' : '') + '\n\n' +
-        '반드시 채울 것: ' + POLICY_NEED.B.join(' · ') + '\n' +
-        '[모드]를 ' + POLICY_MODE_AUTO + ' 으로, [승인]을 체크하세요.\n' +
-        '이 칸이 비면 무제한이 아니라 "멈춤" 입니다.\n' +
-        '누적 지출·누적 손실은 비워도 됩니다 — 비우면 따로 제한을 두지 않습니다\n' +
-        '(주간 한도와 최대 기간이 이미 총량을 가둡니다).\n\n' +
-        '다 채웠으면 [③ 시작] 을 누르세요.'
-      : '트랙 B ' + ready + '개가 모두 준비됐습니다.\n\n[③ 시작] 을 누르세요.'),
+  var filled = [], needApprove = [], ready = 0, dirty = false;
+  for (var i = 0; i < v.length; i++) {
+    var sku = String(v[i][AG_SKU] || '').trim();
+    if (!sku) continue;
+
+    // 빈칸은 추천값으로 채운다 — 빈칸을 보여 주고 "알아서 적으세요" 하면 거기서 멈춘다
+    var need = !(Number(v[i][AG_MARGIN]) > 0) || !(Number(v[i][AG_CVR]) > 0) ||
+               !(Number(v[i][AG_LOSS]) > 0);
+    if (need) {
+      var rec = adGrowRecommend_(sku, v[i][AG_PRICE], v[i][AG_MARGIN], v[i][AG_MULT]);
+      var put = [];
+      if (!(Number(v[i][AG_MARGIN]) > 0)) { v[i][AG_MARGIN] = rec.margin.v; put.push('마진율 ' + rec.margin.v + '%'); }
+      if (!(Number(v[i][AG_CVR]) > 0)) { v[i][AG_CVR] = rec.cvr.v; put.push('전환율예측 ' + rec.cvr.v + '%'); }
+      if (!(Number(v[i][AG_LOSS]) > 0)) { v[i][AG_LOSS] = rec.loss.v; put.push('주간허용손해 ' + fmtYen_(rec.loss.v)); }
+      if (put.length) {
+        v[i][AG_WHY] = '추천값을 채웠습니다 — ' + rec.margin.why + ' / ' + rec.loss.why;
+        filled.push(sku + ' — ' + put.join(' · '));
+        dirty = true;
+      }
+    }
+    if (!adRowApproved_(v[i][AG_APPROVE])) needApprove.push(sku); else ready++;
+  }
+  if (dirty) sh.getRange(2, 1, v.length, width).setValues(v);
+
+  showSheet_(SHEET_ADGROW);
+  ui_().alert('② 값 확인하고 승인',
+    '반드시 볼 것은 셋입니다 — 마진율 · ' + AG_CVR_NAME + ' · 주간허용손해.\n' +
+    '나머지는 기본값이 있습니다 (손해배수 ' + ADGROW_MULT_DEFAULT + ' · 최대 기간 ' +
+    ADGROW_MAXDAYS_DEFAULT + '일 · 누적 한도 없음).\n\n' +
+    (filled.length ? '빈칸에 추천값을 채웠습니다 (근거는 [사유] 칸):\n   ' +
+                     filled.slice(0, 6).join('\n   ') + '\n\n' : '') +
+    (needApprove.length
+      ? '[승인] 을 체크해야 움직입니다 — 아직 안 한 상품 ' + needApprove.length + '개:\n   ' +
+        needApprove.slice(0, 6).join(', ') + '\n\n체크한 뒤 [③ 시작] 을 누르세요.'
+      : '승인된 상품 ' + ready + '개. [③ 시작] 을 누르세요.'),
     ui_().ButtonSet.OK);
 }
 
@@ -217,10 +240,10 @@ function startAdGrow() {
   }
   if (!ready) {
     ui_().alert('아직 시작할 것이 없습니다',
-      (blocked.length ? '한도·모드가 안 정해진 상품 ' + blocked.length + '개: ' +
+      (blocked.length ? '값이 모자라거나 승인이 안 된 상품 ' + blocked.length + '개: ' +
                         blocked.slice(0, 5).join(', ') + '\n\n'
                       : '트랙 B 상품이 없습니다.\n\n') +
-      '[② 한도 정하기] 에서 채우면 그때부터 저절로 돕니다.', ui_().ButtonSet.OK);
+      '[② 값 확인하고 승인] 에서 채우면 그때부터 저절로 돕니다.', ui_().ButtonSet.OK);
     return;
   }
 
@@ -262,7 +285,7 @@ function startAdGrow() {
   showSheet_(SHEET_ADGROW);
   ui_().alert('③ 시작했습니다',
     msg.join('\n') + '\n\n' +
-    (blocked.length ? '⚠ 한도가 안 찬 상품 ' + blocked.length + '개는 그대로 멈춰 있습니다: ' +
+    (blocked.length ? '⚠ 값·승인이 안 된 상품 ' + blocked.length + '개는 그대로 멈춰 있습니다: ' +
                       blocked.slice(0, 3).join(', ') + '\n\n' : '') +
     '이제 사람이 할 일은 없습니다.\n' +
     '매일 새벽에 지출·구조를 받고, 계산하고, 검색어에서 기준키워드를 고르고,\n' +

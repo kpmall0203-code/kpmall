@@ -40,7 +40,7 @@
 var SHEET_ADGROW = '광고육성';
 var ADGROW_HEADER = [
   'SKU', 'ASIN', '상품명', '기준키워드', '가격(JPY)',
-  '마진율(%)', '목표전환율(%)', '주간허용손해(JPY)', '손해배수',
+  '마진율(%)', '전환율예측(%)', '주간허용손해(JPY)', '손해배수',
   '손익분기CPA(JPY)', 'CPC상한(JPY)', '시작입찰(JPY)', '주간광고비(JPY)', '하루예산(JPY)',
   '시작일', '지난주수', '누적광고비(JPY)', '누적광고매출(JPY)', '누적손해(JPY)',
   '판정', '사유', '승인', '캠페인명', '캠페인ID', '광고그룹ID', '결과',
@@ -60,6 +60,17 @@ var ADGROW_ID_COLS = [24, 25, 27];    // 1부터 — 캠페인ID·광고그룹ID
  * 관제가 이 표시를 보고, 아직 켜져 있으면 멈춘다 (마지막 그물).
  */
 var ADGROW_SWITCHED_MARK = '· 수동으로 갈아탐';
+
+/** [전환율예측(%)] 칸의 이름. 여러 곳에서 사람에게 보여 주므로 한곳에 둔다 */
+var AG_CVR_NAME = '전환율예측(%)';
+
+/**
+ * 사람이 안 적어도 되는 값들의 기본치.
+ * 필수는 셋뿐이다 — 마진율 · 전환율예측 · 주간허용손해.
+ */
+var ADGROW_MAXDAYS_DEFAULT = 56;      // 최대 기간을 비우면 이 값 (8주)
+var ADGROW_PAYBACK_ORDERS = 10;       // 추천 주간허용손해 = 주문당 공헌이익 × 이 건수
+var ADGROW_MIN_DAILY = 100;           // 아마존이 캠페인을 돌리는 최소 하루 예산
 
 var ADGROW_MULT_DEFAULT = 1.5;        // 손해배수. 광고비 = 허용손해 × 3
 var ADGROW_LOSS_DEFAULT = 3000;       // 주간 허용 손해 (엔). 사람이 고친다
@@ -134,6 +145,111 @@ function adGrowSuggestCvr_() {
   return a[Math.floor(a.length / 2)] * 100;
 }
 
+/**
+ * 얼마를 넣으면 좋은지 셈해서 알려 준다 (사람이 고칠 수 있는 추천값).
+ *
+ * ── 마진율 ──────────────────────────────────────────────
+ * 이 시스템은 이미 SKU 마다 원가(원)·배송비(엔)·사내환율·판매수수료율을 안다.
+ * 그래서 추정이 아니라 계산이다:
+ *   건당 이익(원) = (판매가 × (1 − 수수료) − 배송비) × 환율 − 원가
+ *   마진율 = 건당 이익 ÷ 환율 ÷ 판매가
+ * 원가가 없는 SKU 는 계산이 안 된다 — 그때는 계정 기본 마진율을 권하되
+ * '확인 필요' 라고 적는다. 지어낸 값을 승인된 값처럼 보이게 두지 않는다.
+ *
+ * ── 전환율예측 ──────────────────────────────────────────
+ * 새 상품은 이력이 없다. 계정에서 이미 팔리는 상품들의 오가닉 전환율 중앙값을 권한다.
+ * 이것은 '이 상품이 이만큼 팔린다' 가 아니라 '모르면 계정 평균에서 시작한다' 는 뜻이고,
+ * 실제 클릭이 쌓이면 판단전환율이 실측으로 갈아탄다.
+ *
+ * ── 주간 허용 손해 ──────────────────────────────────────
+ * 이 값만은 계산으로 나오지 않는다 — 얼마를 잃어도 좋은지는 사람의 결정이다.
+ * 그래서 '이 상품 몇 건 판 이익만큼' 이라는 눈금으로 권한다:
+ *   추천 = 주문당 공헌이익 × 선불건수(기본 10)
+ * 열 건어치 이익을 먼저 태워 순위를 산다는 뜻이다. 다만 두 가지로 다듬는다:
+ *   · 하루 예산이 ¥100 밑이면 아마존이 캠페인을 안 돌린다 → 그만큼은 올린다
+ *   · 계정 주간 광고비의 5% 를 넘지 않게 → 한 상품이 계정을 흔들지 않게
+ *
+ * @return {{margin:{v,why}, cvr:{v,why}, loss:{v,why}}}
+ */
+function adGrowRecommend_(sku, priceJpy, marginPct, multiple) {
+  var out = {};
+  var price = Number(priceJpy) || 0;
+  var basis = adBasis_();
+  var mult = Number(multiple) || ADGROW_MULT_DEFAULT;
+
+  // ① 마진율 — 원가가 있으면 계산, 없으면 계정 기본값
+  var m = null, mWhy = '';
+  try {
+    var costs = costMap_();
+    var rate = fxHouseRate_();
+    var cost = Number(costs[sku]) || 0;
+    if (cost > 0 && rate > 0 && price > 0) {
+      var ship = 0, shipWhy = '';
+      try {
+        var r = resolveShipping_(sku, skuCostMap_(), costInfoMap_());
+        ship = Number(r.fee) || 0; shipWhy = r.src;
+      } catch (e2) { ship = 0; shipWhy = '배송비 모름'; }
+      var profitKrw = unitProfitKrw_(price, ship, cost, rate, DEFAULT_FEE_RATE);
+      var pct = profitKrw / rate / price * 100;
+      if (pct > 0 && pct < 100) {
+        m = Math.round(pct * 10) / 10;
+        mWhy = '원가 ' + Math.round(cost).toLocaleString() + '원 · 배송비 ¥' + Math.round(ship) +
+               ' (' + shipWhy + ') · 수수료 ' + Math.round(DEFAULT_FEE_RATE * 100) + '% · 환율 ' +
+               rate.toFixed(2) + ' 로 계산';
+      } else if (pct <= 0) {
+        m = 0;
+        mWhy = '⛔ 이 값·원가로는 팔수록 손해입니다 (건당 ' +
+               Math.round(profitKrw).toLocaleString() + '원). 광고로 키울 상품이 아닙니다';
+      }
+    }
+  } catch (e) { m = null; }
+  if (m === null) {
+    m = Math.round((Number(basis['기본 마진율']) || 0.17) * 1000) / 10;
+    mWhy = '원가를 몰라 계정 기본값을 넣었습니다 — 실제 마진율로 고치세요 (원가 탭에 이 SKU 를 넣으면 계산합니다)';
+  }
+  out.margin = { v: m, why: mWhy };
+
+  // ② 전환율예측 — 계정 중앙값
+  var q = adGrowSuggestCvr_();
+  out.cvr = q > 0
+    ? { v: Math.round(q * 10) / 10, why: '계정에서 팔리는 상품들의 오가닉 전환율 중앙값' }
+    : { v: 2, why: '계정 자료가 없어 2% 로 시작합니다 (실제 클릭이 쌓이면 실측으로 바뀝니다)' };
+
+  // ③ 주간 허용 손해 — 사람의 결정에 눈금을 준다
+  var useMargin = (Number(marginPct) > 0 ? Number(marginPct) : m) / 100;
+  var G = price * useMargin;
+  var base = G * ADGROW_PAYBACK_ORDERS;
+  var why = '주문당 공헌이익 ¥' + Math.round(G) + ' × ' + ADGROW_PAYBACK_ORDERS + '건';
+  // 하루 예산 바닥 — 주간광고비 = 손해 × r/(r−1)
+  var minLoss = ADGROW_MIN_DAILY * 7 * (mult - 1) / mult;
+  if (base < minLoss) {
+    base = minLoss;
+    why += ' → 하루 예산이 ¥' + ADGROW_MIN_DAILY + ' 은 돼야 아마존이 캠페인을 돌려서 올림';
+  }
+  // 계정 대비 상한
+  var cap = 0;
+  try {
+    var led = adSpendRead_();
+    if (led.has) {
+      var to = ymd_(new Date()), from = addDays_(to, -27);
+      var sum = 0;
+      for (var i = 0; i < led.rows.length; i++) {
+        if (led.rows[i].d >= from && led.rows[i].d <= to) sum += led.rows[i].cost;
+      }
+      if (sum > 0) cap = sum / 4 * 0.05;          // 최근 4주 평균 주간 광고비의 5%
+    }
+  } catch (e3) { cap = 0; }
+  if (cap > 0 && base > cap) {
+    base = cap;
+    why += ' → 계정 주간 광고비의 5% 로 낮춤 (한 상품이 계정을 흔들지 않게)';
+  }
+  // 100엔 단위로 다듬되, 바닥(하루 예산이 도는 최소) 밑으로는 내려가지 않게 올림한다
+  var v100 = Math.round(base / 100) * 100;
+  if (v100 < minLoss) v100 = Math.ceil(minLoss / 100) * 100;
+  out.loss = { v: Math.max(100, v100), why: why };
+  return out;
+}
+
 // ── 시트 ────────────────────────────────────────────────
 
 /** 메뉴: 육성 상품 등록 (SKU 를 붙여넣으면 나머지를 채운다) */
@@ -172,7 +288,7 @@ function addAdGrowSku() {
     for (var e = 0; e < ev.length; e++) have[String(ev[e][0]).trim()] = true;
   }
 
-  var add = [], miss = [], dup = 0;
+  var add = [], miss = [], dup = 0, recWhy = [];
   for (var w = 0; w < want.length; w++) {
     var sku = want[w];
     if (have[sku]) { dup++; continue; }
@@ -184,9 +300,18 @@ function addAdGrowSku() {
     row[AG_NAME] = f ? f.name : '';
     row[AG_PRICE] = f ? f.price : '';
     row[AG_MULT] = ADGROW_MULT_DEFAULT;
-    row[AG_LOSS] = ADGROW_LOSS_DEFAULT;
-    row[AG_VERDICT] = '값 입력 필요';
-    row[AG_WHY] = '마진율을 적고 [② 한도 정하기] 로 가세요';
+    /**
+     * 추천값을 넣어 둔다 — 빈칸을 주고 "알아서 적으세요" 하면 사람이 거기서 멈춘다.
+     * 근거를 [사유] 에 적으므로 납득이 안 되면 그 자리에서 고치면 된다.
+     */
+    var rec = adGrowRecommend_(sku, row[AG_PRICE], 0, ADGROW_MULT_DEFAULT);
+    row[AG_MARGIN] = rec.margin.v;
+    row[AG_CVR] = rec.cvr.v;
+    row[AG_LOSS] = rec.loss.v;
+    row[AG_VERDICT] = '값 확인 필요';
+    row[AG_WHY] = '추천값입니다 — 마진율: ' + rec.margin.why + ' / 허용손해: ' + rec.loss.why;
+    recWhy.push(sku + ' — 마진율 ' + rec.margin.v + '% · 전환율예측 ' + rec.cvr.v +
+                '% · 주간허용손해 ' + fmtYen_(rec.loss.v));
     add.push(row);
   }
   if (add.length) {
@@ -203,23 +328,18 @@ function addAdGrowSku() {
   }
   sh.setFrozenRows(1);
 
-  /**
-   * 등록했으면 정책 줄도 있어야 한다 — 그것이 없으면 다음 걸음이 "정책이 없습니다" 에서
-   * 멈추는데, 사람 입장에서는 무엇을 눌러야 하는지 알 수 없다. 한도는 빈 채로 만든다.
-   */
-  var pol = { added: 0 };
-  try { pol = adPolicyEnsureGrowRows_(); } catch (e) {}
-
   showSheet_(SHEET_ADGROW);
   ui_().alert('① 등록했습니다',
     add.length + '개를 넣었습니다' + (dup ? ' (이미 있는 ' + dup + '개는 건너뜀)' : '') + '.\n' +
-    (pol.added ? '운영 정책에 줄 ' + pol.added + '개도 만들어 두었습니다 (한도는 비어 있습니다).\n' : '') +
     (miss.length ? '\n⚠ 리스팅에 없어 가격을 못 채운 SKU ' + miss.length + '개:\n   ' +
                    miss.slice(0, 5).join(', ') + (miss.length > 5 ? ' 외' : '') +
                    '\n   가격을 직접 적으세요.\n' : '') +
+    (recWhy.length ? '\n추천값을 넣어 두었습니다 (그대로 써도 되고 고쳐도 됩니다):\n   ' +
+                     recWhy.slice(0, 5).join('\n   ') +
+                     '\n   왜 그 값인지는 표의 [사유] 칸에 있습니다.\n' : '') +
     '\n다음 두 가지만 하면 됩니다:\n' +
-    '  · 표의 [마진율(%)] 에 이 상품이 실제로 남기는 비율을 적고\n' +
-    '  · [② 한도 정하기] 에서 얼마까지 쓸지 정하고 승인\n\n' +
+    '  · 표에서 마진율 · ' + AG_CVR_NAME + ' · 주간허용손해 를 확인하고 (이 셋만 필수)\n' +
+    '  · [② 값 확인하고 승인] 에서 [승인] 체크\n\n' +
     '그 뒤 [③ 시작] 을 누르면 나머지는 전부 저절로 돕니다 —\n' +
     '계산 · 캠페인 만들기 · 겨냥 · 검색어에서 기준키워드 고르기 ·\n' +
     '수동으로 갈아타기 · 켜기 · 입찰 조정 · 한도를 넘으면 멈추기.',

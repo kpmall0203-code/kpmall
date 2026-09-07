@@ -78,7 +78,7 @@ function buildPriceMenu_() {
        */
       .addSubMenu(ui.createMenu('🌱 트랙 B — 새 상품 키우기')
         .addItem('① 키울 상품 등록 (SKU 붙여넣기 → 표에 마진율 적기)', 'addAdGrowSku')
-        .addItem('② 한도 정하기 · 승인 (얼마까지 쓸 것인가)', 'openAdPolicy')
+        .addItem('② 값 확인하고 승인 (마진율 · 전환율예측 · 주간허용손해)', 'openAdGrowInputs')
         .addItem('③ 시작 — 지금 한 번 돌리고 매일 저절로 돌게', 'startAdGrow')
         .addSeparator()
         .addItem('지금 어떻게 돌고 있나 (운영 현황)', 'showAdDashboard')
