@@ -39,6 +39,7 @@ function onOpen() {
 function buildPriceMenu_() {
   var ui = ui_();
   ui.createMenu('가격관리')
+    .addItem('📊 광고 운영 현황 — 돈이 어디로 나가나 · 다음에 뭘 하나', 'showAdDashboard')
     .addItem('🚦 광고 관제 — 뭐가 켜져 있고 얼마 쓰나', 'refreshAdWatch')
     .addItem('지금 무엇이 도는가 · 멈추기', 'collectStatus')
     .addItem('현재 상태 · 다음 할 일', 'showStatus')
