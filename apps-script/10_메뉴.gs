@@ -113,6 +113,7 @@ function buildPriceMenu_() {
         .addItem('요청함 — 사람이 정해야 하는 것', 'showAdInbox')
         .addItem('캠페인 점검 · 정리 후보', 'reviewAdCampaigns')
         .addItem('승인한 캠페인 보관 (되돌릴 수 없음)', 'archiveApprovedCampaigns')
+        .addItem('⚠ KP 캠페인 전부 보관 · 표 초기화 (되돌릴 수 없음)', 'resetKpCampaigns')
         .addSeparator()
         .addItem('광고 쓰기 권한 진단', 'diagnoseAdsWrite')
         .addItem('켜기 · 멈추기 한 개 실험', 'testCampaignToggle')
