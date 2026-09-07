@@ -169,7 +169,6 @@ function showAdDashboard() {
   else if (lag > 2) todo.push('[지출 원장 수집] 다시 — 자료가 ' + lag + '일 전입니다');
   if (nMiss) todo.push('광고운영정책 표에서 한도를 정하고 [승인] 체크 (' + nMiss + '줄)');
   if (kinds['B마진']) todo.push('광고육성 표에 마진율 적기 (' + kinds['B마진'] + '개)');
-  if (kinds['순위입력']) todo.push('[순위 적을 줄 만들기] → 순위 적기 (' + kinds['순위입력'] + '개)');
   if (!todo.length) todo.push('사람이 할 일이 없습니다 — 정해진 주기대로 돌면 됩니다');
   for (var t = 0; t < todo.length; t++) add('다음에 할 일', (t + 1) + '번', todo[t], '');
 

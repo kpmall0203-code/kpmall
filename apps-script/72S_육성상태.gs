@@ -28,7 +28,7 @@ var ADGROW_EXT = [
   '주간지출(JPY)', '주간위험손실(JPY)', '주간여력(JPY)',
   '누적지출(JPY)', '누적위험손실(JPY)', '누적여력(JPY)',
   '미집계준비액(JPY)', '경과일', '자료기준일',
-  '최근순위', '순위관측일', '유효관측수', '순위변화', '순위신선도',
+  '스스로버나',        // 성숙 기준으로 광고비를 공헌이익이 덮고 있나
   '멈춤필요',          // '예' 면 작업 계획이 캠페인 멈춤 작업을 만들고, 관제가 하루 안에 잡는다
   '다음 행동'
 ];
@@ -113,23 +113,27 @@ function adGrowStage_(o) {
     return { stage: BSTAGE_PREP,
              next: '기준키워드가 정해졌습니다 — [자동 → 수동 갈아타기] 로 수동 캠페인을 만드세요' };
   }
-  if (o.rank <= 0) {
-    return { stage: BSTAGE_GROW,
-             next: '[순위 적을 줄 만들기]로 줄을 만들고 기준키워드로 검색한 순위를 적어 주세요 — ' +
-                   '순위가 없으면 졸업을 판정할 수 없습니다' };
-  }
-  if (o.rankStale) {
-    return { stage: BSTAGE_GROW,
-             next: '순위 관측이 ' + ADRANK_FRESH_DAYS + '일보다 오래됐습니다 (지금 ' + o.rank + '위). ' +
-                   '다시 재기 전에는 졸업을 판정하지 않습니다' };
-  }
-  if (o.goal > 0 && o.rank <= o.goal) {
+  /**
+   * 육성이 끝났는지는 '스스로 버나' 로 본다.
+   *
+   * 오가닉 순위로 판정하던 것을 걷어냈다 — 아마존이 순위를 주지 않아 사람이
+   * 손으로 적어야 했고, 검색어·지역·기기·시각마다 흔들려 변수만 늘렸다.
+   * 대신 원장에 이미 있는 사실을 쓴다: 성숙한 공헌이익이 광고비를 덮으면
+   * 이 상품은 더 이상 손해를 보며 사는 것이 아니다. 그것이 육성의 끝이다.
+   *
+   * 표본이 모자랄 때 우연히 덮은 것을 졸업으로 읽지 않으려고, 성숙 클릭이
+   * 사전클릭(판단전환율의 무게)만큼은 쌓인 뒤에만 본다.
+   */
+  if (o.selfPay) {
     return { stage: BSTAGE_HOLD,
-             next: '목표 ' + o.goal + '위에 닿았습니다 (' + o.rank + '위). ' +
-                   '바로 끄지 않고 입찰을 낮춰 순위가 유지되는지 봅니다' };
+             next: '광고가 스스로 법니다 (성숙 클릭 ' + o.matureClicks + '회 · 위험손실 0). ' +
+                   '바로 끄지 않고 손해배수를 걷어 손익분기로 낮춘 뒤 유지되는지 봅니다. ' +
+                   '그대로 유지되면 트랙 A 로 옮기세요' };
   }
   return { stage: BSTAGE_GROW,
-           next: '순위 ' + o.rank + '위 → 목표 ' + (o.goal || '?') + '위. ' +
+           next: '아직 손해를 보며 사는 중입니다 (성숙 클릭 ' + o.matureClicks + '회' +
+                 (o.matureClicks < o.needClicks
+                   ? ' — ' + o.needClicks + '회는 돼야 스스로 버는지 판정합니다' : '') + '). ' +
                  '남은 여력 ' + (o.room >= 0 ? fmtYen_(o.room) : '계산 불가') };
 }
 
@@ -144,8 +148,7 @@ function fmtYen_(n) {
  */
 function reviewAdGrowState(opts) {
   var quiet = !!(opts && opts.quiet);
-  var made = makeOneSheet_([{ name: SHEET_INBOX, header: INBOX_HEADER },
-                            { name: SHEET_ADRANK, header: ADRANK_HEADER }]);
+  var made = makeOneSheet_([{ name: SHEET_INBOX, header: INBOX_HEADER }]);
   if (madeSheetStop_(made, '상태 점검')) return null;
   var sh = getSheetOrThrow_(SHEET_ADGROW);
   if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADGROW + '" 이 비어 있습니다.');
@@ -155,7 +158,6 @@ function reviewAdGrowState(opts) {
 
   var led = adSpendRead_();
   var pol = adPolicyAll_();
-  var ranks = adRankSummary_(ymd_(new Date()));
   var basis = adBasis_();
   var prior = Number(basis['판단전환율 사전클릭']) || CVR_PRIOR_CLICKS;
   var today = ymd_(new Date());
@@ -206,21 +208,13 @@ function reviewAdGrowState(opts) {
     var days = start ? daysBetween_(start, today) + 1 : 0;
     var expired = !!(p && p.maxDays > 0 && days > p.maxDays);
     /**
-     * 순위는 관측 표(광고육성순위)가 먼저다. 거기 없으면 옛 [오가닉순위] 칸을 쓴다.
-     * 관측이 오래됐으면(순위신선도 = 오래됨) 졸업을 판정하지 않는다 —
-     * 지난주 순위로 이번 주 졸업을 말할 수 없다.
+     * 스스로 버나 — 성숙한 공헌이익이 광고비를 덮고 있나 (누적 기준).
+     * totalLedger.risk 는 max(0, 광고비 − 성숙 공헌이익) 이므로 0 이면 덮은 것이다.
+     * 표본이 적을 때의 우연을 졸업으로 읽지 않게 성숙 클릭이 사전클릭만큼은 쌓여야 한다.
      */
-    var ob = ranks[sku];
-    var rank = ob ? ob.rank : (Number(v[i][AG_RANK]) || 0);
-    var rankStale = ob ? ob.stale : true;      // 관측이 아예 없으면 '오래됨' 과 같이 다룬다
-    setCell_(v[i], map, '최근순위', ob ? (ob.rank || ('범위밖(' + ob.out + '회)')) : '');
-    setCell_(v[i], map, '순위관측일', ob ? ob.at : '');
-    setCell_(v[i], map, '유효관측수', ob ? ob.n : '');
-    setCell_(v[i], map, '순위변화', (ob && ob.delta !== null)
-      ? (ob.delta > 0 ? '+' + ob.delta + '위 올라옴' : (ob.delta < 0 ? ob.delta + '위 내려감' : '그대로'))
-      : '');
-    setCell_(v[i], map, '순위신선도', ob ? (ob.stale ? '오래됨' : '최근') : '관측 없음');
-    var goal = Number(v[i][AG_RANKGOAL]) || 0;
+    var selfPay = (b.n >= prior) && (totalLedger.risk <= 0) && tt.cost > 0;
+    setCell_(v[i], map, '스스로버나',
+             selfPay ? '예' : (b.n >= prior ? '아니오' : '아직 모름 (성숙 클릭 ' + b.n + '/' + prior + ')'));
     var keyword = String(v[i][AG_KW] || '').trim();
 
     /**
@@ -256,7 +250,8 @@ function reviewAdGrowState(opts) {
     var st = adGrowStage_({
       marginOk: marginOk, policy: p, expired: expired, days: days,
       week: weekLedger, total: totalLedger, pending: pending,
-      keyword: keyword, manual: manual, rank: rank, goal: goal, rankStale: rankStale,
+      keyword: keyword, manual: manual,
+      selfPay: selfPay, matureClicks: b.n, needClicks: prior,
       room: Math.min(weekLedger.room < 0 ? Infinity : weekLedger.room,
                      totalLedger.room < 0 ? Infinity : totalLedger.room)
     });
@@ -297,15 +292,6 @@ function reviewAdGrowState(opts) {
     setCell_(v[i], map, '미집계준비액(JPY)', pending === null ? '자료 없음' : pending);
     setCell_(v[i], map, '경과일', days || '');
     setCell_(v[i], map, '자료기준일', led.last || '(없음)');
-
-    if (keyword && (rank <= 0 || rankStale)) {
-      req.push({ kind: '순위입력', target: sku,
-                 what: '"' + keyword + '" 로 검색했을 때의 순위를 광고육성순위 표에 적어 주세요 ' +
-                       '([순위 적을 줄 만들기]가 빈 줄을 만들어 둡니다)',
-                 now: ob ? ('마지막 관측 ' + ob.at + ' · ' + (ob.rank || '범위밖')) : '(관측 없음)' });
-    } else if (rank > 0) {
-      adInboxClose_('순위입력', sku);
-    }
 
     stat[st.stage] = (stat[st.stage] || 0) + 1;
     if (weekLedger.over || totalLedger.over) nOver++;
@@ -377,10 +363,9 @@ function adGrowStateNotes_(sh) {
       '아직 아마존에 보내지 않는다 — 한도가 정해지고 정책이 [자동운영]이 된 뒤에 보낸다.',
     '입찰차이': '지금 아마존에 걸린 설정 입찰과 목표의 차이.\n' +
       '판단전환율이 실제로 움직이면 목표도 따라 움직인다.',
-    '최근순위': '광고육성순위 표의 최근 ' + ADRANK_MEDIAN_N + '개 관측의 중앙값.\n' +
-      '"범위밖" 은 검색깊이까지 봤는데 없었다는 뜻이다 — 999 로 세지 않는다.',
-    '순위신선도': '"오래됨" 은 관측이 ' + ADRANK_FRESH_DAYS + '일보다 지났다는 뜻.\n' +
-      '그때는 졸업을 판정하지 않는다.',
+    '스스로버나': '성숙한 공헌이익이 광고비를 덮고 있나 (= 누적 위험손실 0).\n' +
+      '덮으면 육성이 끝난 것이다 — 손해배수를 걷고 손익분기로 입찰을 낮춰 유지되는지 본다.\n' +
+      '성숙 클릭이 사전클릭만큼 쌓이기 전에는 "아직 모름" — 우연을 졸업으로 읽지 않는다.',
     '멈춤필요': '"예" 면 한도·기간 때문에 멈춰야 한다. [작업 계획]이 캠페인 멈춤 작업을 만들고,\n' +
       '관제가 하루 안에 한 번 더 본다. 일시정지 정책은 여기 안 걸린다 — 새 변경만 멈춘다.',
     '단계': BSTAGE_INPUT + ' → ' + BSTAGE_FIND + ' → ' + BSTAGE_PREP + ' → ' +

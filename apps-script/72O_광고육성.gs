@@ -7,7 +7,7 @@
  *   손해             허용하지 않는다           허용한다 — 단 주마다 정한 금액 안에서
  *   자료             판매실적(세션·전환율)     없다. 새 상품이라 이력이 없다
  *   그래서 입력      계산으로 다 나온다        사람이 마진율·목표 전환율을 준다
- *   끝나는 조건      채산성이 안 맞으면 탈락   졸업(순위 도달) 또는 예산 소진
+ *   끝나는 조건      채산성이 안 맞으면 탈락   스스로 벌기 시작하거나 한도 소진
  *
  * 트랙 A 는 "이 값에 사면 이익인가"를 묻는다. 트랙 B 는 "순위를 만드는 데 얼마까지
  * 쓸 것인가"를 묻는다. 후자는 계산으로 정할 수 없다 — 얼마를 잃어도 좋은지는
@@ -43,7 +43,6 @@ var ADGROW_HEADER = [
   '마진율(%)', '목표전환율(%)', '주간허용손해(JPY)', '손해배수',
   '손익분기CPA(JPY)', 'CPC상한(JPY)', '시작입찰(JPY)', '주간광고비(JPY)', '하루예산(JPY)',
   '시작일', '지난주수', '누적광고비(JPY)', '누적광고매출(JPY)', '누적손해(JPY)',
-  '오가닉순위', '목표순위',
   '판정', '사유', '승인', '캠페인명', '캠페인ID', '광고그룹ID', '결과',
   '이전캠페인ID들'   // 자동→수동으로 갈아타며 버린 캠페인. 누적 손해는 이어서 센다
 ];
@@ -52,10 +51,9 @@ var AG_SKU = 0, AG_ASIN = 1, AG_NAME = 2, AG_KW = 3, AG_PRICE = 4,
     AG_MARGIN = 5, AG_CVR = 6, AG_LOSS = 7, AG_MULT = 8,
     AG_BECPA = 9, AG_CAP = 10, AG_BID = 11, AG_WEEKLY = 12, AG_DAILY = 13,
     AG_START = 14, AG_WEEKS = 15, AG_COST = 16, AG_SALES = 17, AG_LOSSSUM = 18,
-    AG_RANK = 19, AG_RANKGOAL = 20,
-    AG_VERDICT = 21, AG_WHY = 22, AG_APPROVE = 23, AG_CAMP = 24, AG_CID = 25,
-    AG_GID = 26, AG_RESULT = 27, AG_PREVCID = 28;
-var ADGROW_ID_COLS = [26, 27, 29];    // 1부터 — 캠페인ID·광고그룹ID·이전캠페인ID들 은 글자로
+    AG_VERDICT = 19, AG_WHY = 20, AG_APPROVE = 21, AG_CAMP = 22, AG_CID = 23,
+    AG_GID = 24, AG_RESULT = 25, AG_PREVCID = 26;
+var ADGROW_ID_COLS = [24, 25, 27];    // 1부터 — 캠페인ID·광고그룹ID·이전캠페인ID들 은 글자로
 
 /**
  * 갈아탄 줄의 옛 계획 줄에 남기는 표시.
@@ -69,36 +67,6 @@ var ADGROW_OVER_MULT = 1.5;           // 계획 손해의 이 배를 넘으면 �
 var ADGROW_MIN_WEEKS = 2;             // 이만큼은 지나야 실적으로 판단한다
 var ADGROW_REPORT_WAIT_MS = 90 * 1000;
 var PROP_ADGROW_REPORT = 'ADGROW_REPORT_ID';
-var ADGROW_PAGE1_DEFAULT = 16;        // 광고기준의 [1페이지 순위] 가 없을 때 쓴다
-
-/**
- * 이 상품이 이미 순위를 가졌나 — 그러면 트랙 B 가 아니다.
- *
- * 트랙 B 가 손해를 감수하는 것은 '아직 없는 순위' 를 사기 위해서다. 이미 첫 장에 있으면
- * 살 것이 없고, 손익분기를 넘겨 부르면 사는 것은 순위가 아니라 잠식이다 —
- * 어차피 오가닉으로 왔을 손님이 광고를 눌러, 공짜로 얻었을 주문에 돈을 내게 된다.
- *
- * 순위를 안 적었으면 막지 않는다. 모르는 것을 아는 척하지 않는다.
- * 순위는 검색어마다 다르므로, 여기서 보는 순위는 [기준키워드] 로 검색했을 때의 값이다 —
- * 기준키워드를 안 적었으면 'SKU 전체로 몇 위' 라는 뜻이 되어 한 단계 무른 근거다.
- *
- * @return {string} 막을 사유. 빈 문자열이면 통과
- */
-function adGrowRankBlock_(rank, goal, page1) {
-  var r = Number(rank) || 0;
-  if (!(r > 0)) return '';                       // 안 적었으면 판단하지 않는다
-  var g = Number(goal) || 0;
-  if (g > 0 && r <= g) {
-    return '이미 오가닉 ' + r + '위 — 목표 ' + g + '위에 들어 있습니다. ' +
-           '순위가 이미 있으니 트랙 B 로 더 쓸 것이 없습니다 (트랙 A 로 가세요)';
-  }
-  var p1 = Number(page1) || ADGROW_PAGE1_DEFAULT;
-  if (r <= p1) {
-    return '이미 오가닉 ' + r + '위 — 1페이지(' + p1 + '위) 안입니다. ' +
-           '여기서 손익분기를 넘겨 사면 순위가 아니라 잠식을 삽니다 (트랙 A 로 가세요)';
-  }
-  return '';
-}
 
 // ── 계산 ────────────────────────────────────────────────
 
@@ -265,21 +233,10 @@ function adGrowCalcAll_(quiet) {
   if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADGROW + '" 이 비어 있습니다. [키울 상품 등록]을 먼저 하세요.');
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADGROW_HEADER.length).getValues();
 
-  var basis = adBasis_();
-  var page1 = Number(basis['1페이지 순위']) || ADGROW_PAGE1_DEFAULT;
-
-  var ok = 0, bad = 0, blocked = 0, totWeekly = 0, totLoss = 0;
+  var ok = 0, bad = 0, totWeekly = 0, totLoss = 0;
   for (var i = 0; i < v.length; i++) {
     if (!String(v[i][AG_SKU]).trim()) continue;
 
-    // 이미 순위가 있으면 계산 자체를 하지 않는다. 값이 남아 있으면 실수로 켜게 된다
-    var block = adGrowRankBlock_(v[i][AG_RANK], v[i][AG_RANKGOAL], page1);
-    if (block && String(v[i][AG_RESULT]).indexOf('성공') !== 0) {
-      blocked++;
-      v[i][AG_BID] = ''; v[i][AG_WEEKLY] = ''; v[i][AG_DAILY] = '';
-      v[i][AG_VERDICT] = '트랙 A 로'; v[i][AG_WHY] = block;
-      continue;
-    }
     var c = adGrowCalc_(v[i][AG_PRICE], v[i][AG_MARGIN], v[i][AG_CVR], v[i][AG_LOSS], v[i][AG_MULT]);
     if (!c.ok) {
       bad++;
@@ -309,13 +266,10 @@ function adGrowCalcAll_(quiet) {
   }
   sh.getRange(2, 1, v.length, ADGROW_HEADER.length).setValues(v);
   adGrowNotes_(sh);
-  if (quiet) return { ok: ok, bad: bad, blocked: blocked };
+  if (quiet) return { ok: ok, bad: bad };
   showSheet_(SHEET_ADGROW);
   ui_().alert('트랙 B 계산',
-    '계산됨 ' + ok + '개' + (bad ? ' · 값이 모자란 줄 ' + bad + '개' : '') +
-    (blocked ? ' · 이미 순위가 있어 뺀 줄 ' + blocked + '개' : '') + '\n\n' +
-    (blocked ? '⚠ ' + blocked + '개는 이미 1페이지(' + page1 + '위) 안이라 트랙 B 에서 뺐습니다.\n' +
-               '   순위가 있으면 손익분기를 넘겨 사도 잠식만 삽니다 — [② 광고 재배분 계산]으로 가세요.\n\n' : '') +
+    '계산됨 ' + ok + '개' + (bad ? ' · 값이 모자란 줄 ' + bad + '개' : '') + '\n\n' +
     (ok ? '주간 광고비 합계 ¥' + totWeekly.toLocaleString() + '\n' +
           '그중 잃기로 한 돈 ¥' + totLoss.toLocaleString() +
           ' (나머지는 팔려서 돌아옵니다)\n\n' +
@@ -342,22 +296,17 @@ function adGrowNotes_(sh) {
     '손해배수': '입찰 = CPC상한 × 이 값. 1.5 면 손익분기보다 50% 비싸게 삽니다.\n주간 광고비 = 허용손해 × 배수 ÷ (배수 − 1). 1.5 면 3배, 2.0 이면 2배.',
     'CPC상한(JPY)': '손익분기CPA × 목표전환율. 트랙 A 라면 이 위로 안 삽니다.\n트랙 B 는 일부러 넘깁니다 — 그것이 순위를 사는 값입니다.',
     '주간광고비(JPY)': '허용손해 × 손해배수 ÷ (손해배수 − 1). 실제 전환율이 목표보다 나쁘면 손해가 더 큽니다.',
-    '기준키워드': '순위를 사려는 말. 이 말로 검색했을 때의 순위를 [오가닉순위]에 적습니다.\n' +
-      '적으면 그 말 하나만 사는 수동(MANUAL) 캠페인을 만듭니다 — 트랙 B 가 사려는 것이 바로 그 순위입니다.\n' +
-      '비우면 자동(AUTO) 캠페인이 되어 아마존이 고른 말에 손해배수 입찰이 나갑니다.\n' +
-      '어느 말로 팔릴지 아직 모를 때만 비우세요.',
-    '오가닉순위': '아마존이 API 로 주지 않습니다. 직접 보고 적으세요.\n' +
-      '순위는 검색어마다 다릅니다 — [기준키워드] 로 검색했을 때의 순위를 적으세요.\n' +
-      '이미 1페이지(광고기준의 [1페이지 순위]) 안이면 트랙 B 에서 뺍니다 — ' +
-      '순위가 있으면 손익분기를 넘겨 사도 잠식만 삽니다.\n목표순위에 닿으면 졸업입니다.',
+    '기준키워드': '이 상품이 팔리게 하려는 말 하나.\n' +
+      '적으면 그 말 하나만 사는 수동(MANUAL) 캠페인을 만듭니다.\n' +
+      '비우면 자동(AUTO) 캠페인이 되어 아마존이 고른 말에 손해배수 입찰이 나갑니다 —\n' +
+      '어느 말로 팔릴지 아직 모를 때 그렇게 시작하고, 검색어 자료가 쌓이면 채웁니다.',
     '누적손해(JPY)': '누적광고비 − 누적광고매출 × 마진율. 실측입니다.\n' +
       '자동에서 수동으로 갈아탔으면 옛 캠페인에 쓴 것까지 합쳐서 셉니다 —\n' +
       '캠페인이 바뀌어도 그 상품에 쓴 돈은 그 상품에 쓴 돈입니다.',
     '이전캠페인ID들': '자동에서 수동으로 갈아타며 버린 캠페인. [자동 → 수동 갈아타기]가 적습니다.\n' +
       '상태 점검이 이 캠페인들의 지출까지 합쳐 누적 손실을 셉니다.',
-    '판정': '준비됨 → 계획에 넣을 수 있음\n돌고 있음 → 계획대로 진행 중\n' +
-      '트랙 A 로 → 이미 1페이지라 육성 대상이 아닙니다\n' +
-      '졸업 → 순위 도달, 트랙 A 로 넘기세요\n중단 → 손해가 계획을 넘었습니다',
+    '판정': '만들기 전의 상태만 적습니다 (준비됨 · 값 입력 필요 · 돌고 있음).\n' +
+      '돌기 시작한 뒤의 판단은 [단계]와 [다음 행동] 이 합니다 — 상태 점검이 매일 다시 씁니다.',
     '승인': '체크한 줄만 [계획에 넣기]가 광고생성계획으로 보냅니다.'
   });
 }
@@ -370,23 +319,16 @@ function pushAdGrowToPlan() {
   if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADGROW + '" 이 비어 있습니다.');
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADGROW_HEADER.length).getValues();
 
-  // 계산 뒤에 순위를 적었을 수 있다. 돈이 나가기 직전에 한 번 더 본다
-  var page1b = Number(adBasis_()['1페이지 순위']) || ADGROW_PAGE1_DEFAULT;
-  var pick = [], skipRank = [];
+  var pick = [];
   for (var i = 0; i < v.length; i++) {
     if (!adRowApproved_(v[i][AG_APPROVE])) continue;
     if (!(Number(v[i][AG_BID]) > 0)) continue;              // 계산 안 된 줄
     if (String(v[i][AG_RESULT]).indexOf('성공') === 0) continue;  // 이미 만든 줄
-    if (adGrowRankBlock_(v[i][AG_RANK], v[i][AG_RANKGOAL], page1b)) {
-      skipRank.push(String(v[i][AG_SKU])); continue;
-    }
     pick.push({ row: i, v: v[i] });
   }
   if (!pick.length) {
     ui_().alert('넣을 줄이 없습니다.',
       '승인 ✓ 이면서 계산이 끝났고 아직 안 만든 줄이 없습니다.\n' +
-      (skipRank.length ? '\n이미 1페이지 안이라 뺀 줄 ' + skipRank.length + '개: ' +
-                         skipRank.slice(0, 5).join(', ') + '\n' : '') +
       '[트랙 B 계산]을 먼저 하고 승인 칸을 체크하세요.', ui_().ButtonSet.OK);
     return;
   }
@@ -461,8 +403,7 @@ function pushAdGrowToPlan() {
 
   showSheet_(SHEET_ADPLAN_GROW);
   ui_().alert('계획에 넣었습니다',
-    '새로 ' + added + '개' + (updated ? ' · 값 갱신 ' + updated + '개' : '') +
-    (skipRank.length ? ' · 이미 1페이지라 뺀 줄 ' + skipRank.length + '개' : '') + '\n' +
+    '새로 ' + added + '개' + (updated ? ' · 값 갱신 ' + updated + '개' : '') + '\n' +
     '하루 예산 합계 ¥' + daily.toLocaleString() + '\n\n' +
     (autoOk ? '정책이 자동운영인 ' + autoOk + '줄은 계획 승인을 자동으로 채웠습니다.\n' : '') +
     '다음:\n' +

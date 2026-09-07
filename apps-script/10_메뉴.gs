@@ -82,7 +82,6 @@ function buildPriceMenu_() {
         .addItem('⏰ 지금 무엇이 자동으로 도나', 'showAdTriggers')
         .addItem('⏰ 자동으로 도는 것 멈추기', 'stopAdGrowTriggers')
         .addSeparator()
-        .addItem('순위 적을 줄 만들기 (기준키워드로 검색한 순위)', 'addAdGrowRankRows')
         .addItem('자동 → 수동 갈아타기 (기준키워드가 생겼을 때)', 'switchAdGrowToManual'))
       .addSubMenu(ui.createMenu('🔎 검색어 — 매주')
         .addItem('① 검색어 수집', 'fetchAdSearchTerms')
