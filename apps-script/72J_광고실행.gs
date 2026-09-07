@@ -66,6 +66,7 @@ function adsCreated_(res, key, idField) {
 /** 메뉴: 승인분 캠페인 생성 실행 */
 function executeAdPlan() {
   if (!adBusyGuard_('캠페인 만들기')) return;
+  adPlanOnlySet_('');                     // 사람이 눌렀다 — 두 표 다 본다
   var props = PropertiesService.getScriptProperties();
   var tabs = adPlanTables_();
   if (!tabs.length) throw new Error('계획 표가 비어 있습니다 ("' +
@@ -148,7 +149,8 @@ function adPlanExecStep_(interactive) {
         aborted = '잇달아 ' + streak + '줄 실패 (마지막: ' + String(row[AP_NAME - 1]) + ')';
       }
     }
-  });
+  }, adPlanOnlyGet_());
+
 
   logBuf.flush();
   var msg = '캠페인 생성 — 성공 ' + okN + (failN ? ' · 실패 ' + failN : '') +
@@ -647,6 +649,7 @@ function adEnableCount_() {
 
 function adEnableStart_(mode) {
   if (!adBusyGuard_('캠페인 ' + ADENABLE_MODES[mode])) return;
+  adPlanOnlySet_('');                     // 사람이 눌렀다 — 두 표 다 본다
   var c = adEnableCount_();
 
   if (!c.made) {
@@ -735,7 +738,7 @@ function adEnableStep_(interactive) {
 
   // 계획 표마다 따로 훑는다 (트랙 A·M 은 광고생성계획, 트랙 B 는 광고육성계획).
   // 결과 칸은 표 단위로 통째로 한 번에 쓴다 — 줄마다 setValue 하면 여든 번을 부른다
-  var tabs = adPlanTables_();
+  var tabs = adPlanTables_(adPlanOnlyGet_());
   for (var T = 0; T < tabs.length; T++) {
   var sh = tabs[T].sh, v = tabs[T].v;
   var col = [], idCol = [];

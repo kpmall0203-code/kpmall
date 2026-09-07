@@ -77,6 +77,7 @@ function buildPriceMenu_() {
         .addSeparator()
         .addItem('매일 · 지출 원장 수집 (캠페인 일별)', 'fetchAdSpendDaily')
         .addItem('매일 · 한 바퀴 (계산 → 상태 점검 → 작업 계획 → 실행)', 'runAdGrowCycle')
+        .addItem('매일 · 자동 진행 (키워드 고르기 → 갈아타기 → 만들기 → 켜기)', 'advanceAdGrow')
         .addItem('매일 · 작업 검증 (구조 수집 뒤 — 실제로 그렇게 됐나)', 'verifyAdJobs')
         .addItem('⏰ 매일 자동으로 돌리기 — 켜기 (새벽 3~6시)', 'setupAdGrowTriggers')
         .addItem('⏰ 지금 무엇이 자동으로 도나', 'showAdTriggers')

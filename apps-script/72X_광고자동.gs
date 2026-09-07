@@ -29,7 +29,9 @@ var AD_AUTOMATIONS = [
     why: '지금 입찰이 얼마인가 — 무엇을 바꿀지 · 바뀌었는지의 바탕' },
   { name: '광고 · 트랙 B 한 바퀴', handler: 'scheduledAdGrowCycle', hour: 5,
     why: '계산 → 상태 점검 → 작업 계획 → 자동운영인 것만 보내기' },
-  { name: '광고 · 작업 검증', handler: 'scheduledAdVerify', hour: 6,
+  { name: '광고 · 트랙 B 자동 진행', handler: 'scheduledAdAdvance', hour: 6,
+    why: '기준키워드 고르기 → 갈아타기 → 만들기 → 겨냥 → 켜기' },
+  { name: '광고 · 작업 검증', handler: 'scheduledAdVerify', hour: 7,
     why: '보낸 것이 실제로 그렇게 됐나' }
 ];
 
@@ -118,6 +120,12 @@ function scheduledAdGrowCycle() {
                      function () { return runAdGrowCycle({ quiet: true }); });
 }
 
+function scheduledAdAdvance() {
+  // 다음 단계로 미는 걸음. 승낙은 계획 표의 [승인] 칸에 이미 있다 (정책이 채운다).
+  return adSchedRun_('scheduledAdAdvance', '트랙 B 자동 진행',
+                     function () { return advanceAdGrow({ quiet: true }); });
+}
+
 function scheduledAdVerify() {
   return adSchedRun_('scheduledAdVerify', '작업 검증', verifyAdJobs);
 }
@@ -151,9 +159,9 @@ function setupAdGrowTriggers() {
              : '⚠ 광고 관제는 아직 꺼져 있습니다 — [캠페인 점검]에서 켜면\n' +
                '   매일 아침 이상한 캠페인을 잡아 줍니다.\n\n') +
     '이제 사람이 매일 누를 것은 없습니다.\n\n' +
-    '다만 이것은 여전히 사람이 정해야 다음 단계로 갑니다:\n' +
-    '  · [기준키워드] — 어떤 말로 팔리게 할 것인가\n' +
-    '  · [자동 → 수동 갈아타기] 와 그 뒤의 ③ 생성 · ⑤ 켜기\n\n' +
+    '기준키워드 고르기 · 갈아타기 · 만들기 · 켜기까지 자동으로 갑니다.\n' +
+    '사람이 할 일은 ① 상품 등록과 광고운영정책의 한도·승인뿐입니다.\n\n' +
+    '단, 정책이 [' + POLICY_MODE_AUTO + '] 이 아니거나 한도가 비면 아무것도 안 밉니다.\n' +
     '무엇을 정해야 하는지는 [요청함]과 표의 [다음 행동] 에 쌓입니다.',
     ui_().ButtonSet.OK);
 }

@@ -314,7 +314,8 @@ function adGrowNotes_(sh) {
 // ── 계획 표로 밀어넣기 ──────────────────────────────────
 
 /** 메뉴: 승인한 육성 줄을 광고생성계획에 트랙 B 줄로 넣는다 */
-function pushAdGrowToPlan() {
+function pushAdGrowToPlan(opts) {
+  var quiet = !!(opts && opts.quiet);
   var sh = getSheetOrThrow_(SHEET_ADGROW);
   if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADGROW + '" 이 비어 있습니다.');
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADGROW_HEADER.length).getValues();
@@ -327,10 +328,11 @@ function pushAdGrowToPlan() {
     pick.push({ row: i, v: v[i] });
   }
   if (!pick.length) {
+    if (quiet) return { added: 0, updated: 0, autoOk: 0 };
     ui_().alert('넣을 줄이 없습니다.',
       '승인 ✓ 이면서 계산이 끝났고 아직 안 만든 줄이 없습니다.\n' +
       '[트랙 B 계산]을 먼저 하고 승인 칸을 체크하세요.', ui_().ButtonSet.OK);
-    return;
+    return null;
   }
 
   var psh = ensureSheet_(SHEET_ADPLAN_GROW, ADPLAN_HEADER);
@@ -401,6 +403,7 @@ function pushAdGrowToPlan() {
   writeTable_(psh, ADPLAN_HEADER, pv);
   if (pv.length) psh.getRange(2, AP_APPROVE, pv.length, 1).insertCheckboxes();
 
+  if (quiet) return { added: added, updated: updated, autoOk: autoOk };
   showSheet_(SHEET_ADPLAN_GROW);
   ui_().alert('계획에 넣었습니다',
     '새로 ' + added + '개' + (updated ? ' · 값 갱신 ' + updated + '개' : '') + '\n' +
@@ -416,6 +419,7 @@ function pushAdGrowToPlan() {
     '광고기준의 [주간 광고비 한도]는 트랙 A 만 봅니다.\n' +
     '한쪽이 넘쳐도 다른 쪽은 안 멈춥니다 (애써 키우던 상품이 남의 사고로 죽지 않게).',
     ui_().ButtonSet.OK);
+  return { added: added, updated: updated, autoOk: autoOk };
 }
 
 // ── 자동 겨냥 좁히기 ────────────────────────────────────
@@ -647,7 +651,8 @@ function setupAdGrowTargets() {
  * 그 SKU 에 쓴 돈은 캠페인이 바뀌어도 그 SKU 에 쓴 돈이다 —
  * 여기서 0 으로 되돌리면 이미 ¥9,000 을 잃고도 "1주차, 더 봅시다" 가 된다.
  */
-function switchAdGrowToManual() {
+function switchAdGrowToManual(opts) {
+  var quiet = !!(opts && opts.quiet);
   var sh = getSheetOrThrow_(SHEET_ADGROW);
   if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADGROW + '" 이 비어 있습니다.');
   fitCols_(sh, ADGROW_HEADER.length);
@@ -675,6 +680,7 @@ function switchAdGrowToManual() {
   }
 
   if (!pick.length) {
+    if (quiet) return { n: 0 };
     showSheet_(SHEET_ADGROW);
     ui_().alert('갈아탈 줄이 없습니다.',
       (already ? '이미 수동인 줄 ' + already + '개\n' : '') +
@@ -685,7 +691,7 @@ function switchAdGrowToManual() {
     return;
   }
 
-  var ok = ui_().alert('자동 → 수동 갈아타기',
+  var ok = quiet ? ui_().Button.OK : ui_().alert('자동 → 수동 갈아타기',
     pick.map(function (x) {
       return '· ' + x.oldName + '\n    → ' + x.newName + ' · 기준키워드 "' + x.kw + '"';
     }).join('\n') + '\n\n' +
@@ -696,9 +702,10 @@ function switchAdGrowToManual() {
     ui_().ButtonSet.OK_CANCEL);
   if (ok !== ui_().Button.OK) return;
 
+  var swPolAll = adPolicyAll_();
   for (var k = 0; k < pick.length; k++) {
     var x = pick[k];
-    // ① 새 수동 줄 — 옛 줄의 값을 그대로 물려받되 ID·결과·승인은 비운다
+    // ① 새 수동 줄 — 옛 줄의 값을 그대로 물려받되 ID·결과는 비운다
     var row = pv[x.at].slice();
     row[0] = String(row[0] || '') + 'KW';
     row[AP_ACTION - 1] = '생성';
@@ -706,7 +713,15 @@ function switchAdGrowToManual() {
     row[4] = '수동';
     row[14] = String(row[14] || '') + ' · 자동에서 갈아탐 (기준키워드 "' + x.kw + '")';
     row[AP_GID - 1] = ''; row[AP_CID - 1] = ''; row[AP_RESULT - 1] = '';
-    row[AP_ADIDS - 1] = ''; row[AP_APPROVE - 1] = false;
+    row[AP_ADIDS - 1] = '';
+    /**
+     * 새 수동 줄의 승인은 정책이 정한다 — 계획 넣기와 같은 규칙이다.
+     * 자동운영이면 채우고(자동 걸음이 이어서 만들고 켠다), 아니면 비운다.
+     * 갈아타기는 새 돈이 아니라 같은 상품의 예산이 옮겨 가는 것이고,
+     * 한도는 옛 캠페인 지출까지 합쳐 세므로 울타리가 그대로 걸린다.
+     */
+    var swPol = adPolicyFor_(swPolAll, 'B', String(v[x.row][AG_SKU] || '').trim());
+    row[AP_APPROVE - 1] = !!(swPol && swPol.canAuto);
     pv.push(row);
 
     // ② 옛 줄 — 승인을 풀고 표시를 남긴다. 관제가 이 표시를 보고 멈춘다
@@ -738,6 +753,7 @@ function switchAdGrowToManual() {
   adGrowKwIdWrite_(sh, clearKw, v.length);
 
   log_('ads', 'INFO', '트랙 B 자동→수동 갈아타기 ' + pick.length + '줄');
+  if (quiet) return { n: pick.length, names: pick.map(function (x) { return x.newName; }) };
   showSheet_(SHEET_ADPLAN_GROW);
   ui_().alert('갈아탈 준비가 됐습니다',
     pick.length + '줄 · 새 수동 캠페인 줄을 ' + SHEET_ADPLAN_GROW + ' 에 넣었습니다.\n\n' +

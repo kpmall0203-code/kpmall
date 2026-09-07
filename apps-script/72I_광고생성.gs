@@ -89,9 +89,26 @@ function adPlanSheetNames_() { return [SHEET_ADPLAN, SHEET_ADPLAN_GROW]; }
  * 있는 계획 표를 값째로 읽어 온다. 실행·관제가 이것으로 돈다.
  * @return {Array} [{name, sh, v}] — v 는 머리글 뺀 줄들
  */
-function adPlanTables_() {
+/**
+ * 지금 도는 생성·켜기 걸음이 어느 표에만 손대는가.
+ *
+ * 자동 걸음(72Y)은 트랙 B 표만 건드려야 한다 — 사람이 트랙 A 계획을 승인해 두고
+ * 아직 만들지 않았을 수 있는데, 자동이 그것까지 만들면 사람이 안 시킨 돈이 나간다.
+ * 이어실행 트리거가 나중에 이어받으므로 속성에 적어 둔다. 사람이 메뉴로 시작하면
+ * 그때 비운다 (= 두 표 다).
+ */
+var PROP_ADPLAN_ONLY = 'ADPLAN_ONLY';
+function adPlanOnlySet_(name) {
+  PropertiesService.getScriptProperties().setProperty(PROP_ADPLAN_ONLY, name || '');
+}
+function adPlanOnlyGet_() {
+  return PropertiesService.getScriptProperties().getProperty(PROP_ADPLAN_ONLY) || '';
+}
+
+function adPlanTables_(only) {
   var out = [], names = adPlanSheetNames_();
   for (var i = 0; i < names.length; i++) {
+    if (only && names[i] !== only) continue;
     var sh = ss_().getSheetByName(names[i]);
     if (!sh || sh.getLastRow() < 2) continue;
     out.push({ name: names[i], sh: sh,
@@ -101,8 +118,8 @@ function adPlanTables_() {
 }
 
 /** 두 표를 한 줄씩 훑는다 — 표를 나눠 쓰는 것을 부르는 쪽이 몰라도 되게 */
-function adPlanEachRow_(fn) {
-  var t = adPlanTables_();
+function adPlanEachRow_(fn, only) {
+  var t = adPlanTables_(only);
   for (var i = 0; i < t.length; i++) {
     for (var r = 0; r < t[i].v.length; r++) fn(t[i].v[r], t[i].sh, r + 2, t[i].name);
   }
