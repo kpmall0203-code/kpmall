@@ -444,10 +444,183 @@ function pushAdGrowToPlan() {
     '다음:\n' +
     '  ① ' + SHEET_ADPLAN_GROW + ' 에서 이 줄들의 [승인] 을 체크\n' +
     '  ② [⑤ 승인분 캠페인 생성] — 멈춤 상태로 만들어집니다\n' +
-    '  ③ [④ 기준키워드 올리기] — 수동 캠페인에 그 말을 넣습니다 (기준키워드를 적은 줄만)\n' +
+    '  ③ 기준키워드를 적었으면 [⑤ 기준키워드 올리기],\n' +
+    '      비웠으면 [④ 자동 겨냥 좁히기] — 상품 겨냥을 꺼서 헛돈을 막습니다\n' +
     '  ④ [켜기 — 승인 ✓ 만] — 여기서부터 돈이 나갑니다\n\n' +
     '⚠ 켜기 전에 [광고기준 → 주간 광고비 한도]가 트랙 A + B 를 합쳐\n' +
     '   감당할 값인지 확인하세요. 넘으면 관제가 전부 멈춥니다.',
+    ui_().ButtonSet.OK);
+}
+
+// ── 자동 겨냥 좁히기 ────────────────────────────────────
+
+/**
+ * 자동 캠페인은 네 겨냥으로 돈다. 겨냥마다 상태와 입찰을 따로 준다.
+ *
+ *   유사검색어(QUERY_HIGH_REL_MATCHES)   내 리스팅의 말과 가까운 검색어
+ *   넓은검색어(QUERY_BROAD_REL_MATCHES)  느슨하게 관련된 검색어
+ *   대체상품(ASIN_SUBSTITUTE_RELATED)    비슷한 남의 상품 페이지
+ *   보완상품(ASIN_ACCESSORY_RELATED)     같이 쓰는 남의 상품 페이지
+ *
+ * 뒤의 둘은 검색 결과가 아니라 남의 상품 페이지에 붙는 광고다 —
+ * 검색어 순위와 아무 상관이 없다. 트랙 B 가 사려는 것이 '어떤 말의 순위' 인데
+ * 그 둘은 거기에 한 푼도 기여하지 않는다. 그래서 기본으로 끈다.
+ *
+ * 이것이 부정 키워드보다 나은 이유: 부정은 반응형이라 한 번은 사 봐야 막을 수 있다.
+ * 이 계정 4주치를 재보면 클릭 4.3번마다 처음 보는 검색어가 하나씩 나오고,
+ * 클릭 1~3회짜리 꼬리가 광고비의 27.7% 다 — 막는 속도가 나오는 속도를 못 따라간다.
+ * 겨냥을 끄는 것은 한 번의 호출로 그 갈래를 통째로 닫는 일이라 따라잡기가 필요 없다.
+ */
+var ADGROW_AUTO_CLAUSES = ['QUERY_HIGH_REL_MATCHES', 'QUERY_BROAD_REL_MATCHES',
+                           'ASIN_SUBSTITUTE_RELATED', 'ASIN_ACCESSORY_RELATED'];
+
+/** 광고기준의 [트랙 B 자동 겨냥] → 살릴 겨냥들 */
+function adGrowWantClauses_(mode) {
+  var m = String(mode || '').trim();
+  if (m === '전부') return ADGROW_AUTO_CLAUSES.slice();
+  if (m === '유사검색어만') return ['QUERY_HIGH_REL_MATCHES'];
+  return ['QUERY_HIGH_REL_MATCHES', 'QUERY_BROAD_REL_MATCHES'];   // 검색어만 (기본)
+}
+
+/** 겨냥 이름을 사람 말로 (72D 의 표와 같은 말을 쓴다) */
+function adGrowClauseName_(type) {
+  return String(AUTO_TARGET_KR[type] || type).replace('자동:', '');
+}
+
+/**
+ * 메뉴: 트랙 B 자동 캠페인의 겨냥을 좁힌다.
+ *
+ * 지금 무엇이 켜져 있는지는 아마존에게 물어본다 — 캠페인을 만들 때 아마존이
+ * 알아서 넣어 주는 것이라 우리 시트에는 없다. 트랙 B 는 몇 줄뿐이라
+ * 그룹마다 한 번 묻는 것이 시간에 걸리지 않는다 (수집·실행을 가르는 규칙의 허용 예외).
+ */
+function narrowAdGrowTargets() {
+  if (!adBusyGuard_('자동 겨냥 좁히기')) return;
+  var sh = getSheetOrThrow_(SHEET_ADGROW);
+  if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADGROW + '" 이 비어 있습니다.');
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADGROW_HEADER.length).getValues();
+
+  // 어느 줄이 자동 캠페인인가 — 계획 표의 [유형] 이 답이다 (시트만 읽는다)
+  var psh = ss_().getSheetByName(SHEET_ADPLAN_GROW);
+  var typeOf = {};
+  if (psh && psh.getLastRow() > 1) {
+    var pv = psh.getRange(2, 1, psh.getLastRow() - 1, ADPLAN_HEADER.length).getValues();
+    for (var p = 0; p < pv.length; p++) typeOf[String(pv[p][AP_NAME - 1]).trim()] = String(pv[p][4] || '');
+  }
+
+  var want = adGrowWantClauses_(adBasis_()['트랙 B 자동 겨냥']);
+  var wantSet = {};
+  for (var w = 0; w < want.length; w++) wantSet[want[w]] = true;
+
+  var pick = [], manual = 0, notMade = 0;
+  for (var i = 0; i < v.length; i++) {
+    var cid = String(v[i][AG_CID] || '').trim(), gid = String(v[i][AG_GID] || '').trim();
+    var name = String(v[i][AG_CAMP] || '').trim();
+    if (!cid || !gid) { notMade++; continue; }
+    if (String(typeOf[name] || '').indexOf('수동') === 0) { manual++; continue; }
+    pick.push({ row: i, cid: cid, gid: gid, name: name,
+                sku: String(v[i][AG_SKU] || ''), asin: String(v[i][AG_ASIN] || '') });
+  }
+  if (!pick.length) {
+    showSheet_(SHEET_ADGROW);
+    ui_().alert('좁힐 자동 캠페인이 없습니다.',
+      (manual ? '수동 캠페인 ' + manual + '개는 겨냥이 없습니다 (키워드로 돕니다)\n' : '') +
+      (notMade ? '아직 캠페인을 안 만든 줄 ' + notMade + '개\n' : ''),
+      ui_().ButtonSet.OK);
+    return;
+  }
+
+  var ok = ui_().alert('자동 겨냥 좁히기',
+    '살릴 겨냥: ' + want.map(adGrowClauseName_).join(' · ') + '\n' +
+    '끌 겨냥: ' + ADGROW_AUTO_CLAUSES.filter(function (t) { return !wantSet[t]; })
+                    .map(adGrowClauseName_).join(' · ') + '\n\n' +
+    pick.map(function (x) { return '· ' + x.name; }).join('\n') + '\n\n' +
+    '대체상품·보완상품은 남의 상품 페이지에 붙는 광고라 검색어 순위와 상관이 없습니다.\n' +
+    '바꾸려면 광고기준의 [트랙 B 자동 겨냥] 을 고치세요.\n\n계속할까요?',
+    ui_().ButtonSet.OK_CANCEL);
+  if (ok !== ui_().Button.OK) return;
+
+  var token = adsToken_(), onN = 0, offN = 0, newN = 0, failN = 0, logs = [];
+  for (var k = 0; k < pick.length; k++) {
+    var x = pick[k];
+    var have = {};
+    try {
+      var lr = adsApiRetry_(token, 'post', '/sp/targets/list',
+        { adGroupIdFilter: { include: [x.gid] }, maxResults: 100,
+          stateFilter: { include: ['ENABLED', 'PAUSED'] } },
+        ADSW_CT_TARGET, ADSW_CT_TARGET);
+      var arr = (lr && lr.targetingClauses) || [];
+      for (var a = 0; a < arr.length; a++) {
+        var ex = arr[a].expression || [];
+        var ty = ex.length ? String(ex[0].type || '') : '';
+        if (ty) have[ty] = { id: String(arr[a].targetId || ''), state: String(arr[a].state || '') };
+      }
+    } catch (e) {
+      failN++;
+      v[x.row][AG_RESULT] = String(v[x.row][AG_RESULT] || '') + ' · 겨냥 조회 실패: ' +
+                            adErrorText_(String(e)).substring(0, 80);
+      continue;
+    }
+
+    var put = [], post = [], did = [];
+    for (var c = 0; c < ADGROW_AUTO_CLAUSES.length; c++) {
+      var ty2 = ADGROW_AUTO_CLAUSES[c], cur = have[ty2];
+      var to = wantSet[ty2] ? 'ENABLED' : 'PAUSED';
+      if (!cur) {
+        // 살려야 하는데 아예 없으면 만든다. 꺼야 하는데 없으면 할 일이 없다
+        if (to === 'ENABLED') {
+          post.push({ campaignId: x.cid, adGroupId: x.gid, expressionType: 'AUTO',
+                      expression: [{ type: ty2 }], state: 'ENABLED' });
+          did.push(adGrowClauseName_(ty2) + ' 만듦');
+        }
+        continue;
+      }
+      if (cur.state === to) continue;                    // 이미 그 상태
+      put.push({ targetId: cur.id, state: to });
+      did.push(adGrowClauseName_(ty2) + (to === 'ENABLED' ? ' 켬' : ' 끔'));
+      if (to === 'ENABLED') onN++; else offN++;
+    }
+
+    var bad = '';
+    try {
+      if (put.length) {
+        var pr = adsApiRetry_(token, 'put', '/sp/targets', { targetingClauses: put },
+                              ADSW_CT_TARGET, ADSW_CT_TARGET);
+        if (!adsCreated_(pr, 'targetingClauses', 'targetId').ok) bad = '상태 바꾸기';
+      }
+      if (!bad && post.length) {
+        var cr = adsApiRetry_(token, 'post', '/sp/targets', { targetingClauses: post },
+                              ADSW_CT_TARGET, ADSW_CT_TARGET);
+        var made = adsCreated_(cr, 'targetingClauses', 'targetId');
+        if (made.ok) newN += made.ids.length; else bad = '만들기 — ' + made.msg;
+      }
+    } catch (e2) { bad = String(e2).substring(0, 120); }
+
+    if (bad) {
+      failN++;
+      v[x.row][AG_RESULT] = String(v[x.row][AG_RESULT] || '') + ' · 겨냥 실패: ' +
+                            adErrorText_(bad).substring(0, 80);
+    } else if (did.length) {
+      v[x.row][AG_RESULT] = String(v[x.row][AG_RESULT] || '') + ' · 겨냥 ' +
+                            want.map(adGrowClauseName_).join('+');
+      logs.push(adLogRow_({ kind: '타깃', camp: x.name, group: x.name, item: '겨냥',
+        to: want.map(adGrowClauseName_).join('+'), sku: x.sku, asin: x.asin,
+        sum: '자동 겨냥 좁힘 · ' + x.name + ' · ' + did.join(', '),
+        why: '트랙 B 는 검색어 순위를 산다 — 상품 겨냥은 거기에 기여하지 않는다',
+        cid: x.cid, gid: x.gid }));
+    }
+  }
+  sh.getRange(2, 1, v.length, ADGROW_HEADER.length).setValues(v);
+  if (logs.length) adLogWrite_(logs);
+
+  var msg = '자동 겨냥 좁히기 — 끔 ' + offN + ' · 켬 ' + onN +
+            (newN ? ' · 새로 만듦 ' + newN : '') + (failN ? ' · 실패 ' + failN : '');
+  log_('ads', failN ? 'WARN' : 'INFO', msg);
+  showSheet_(SHEET_ADGROW);
+  ui_().alert(failN ? '일부 실패' : '좁혔습니다', msg + '\n\n' +
+    (failN ? '실패한 줄은 [결과] 칸에 사유가 있습니다.\n\n' : '') +
+    '이제 이 캠페인의 광고비는 ' + want.map(adGrowClauseName_).join(' · ') + ' 에만 나갑니다.\n' +
+    '검색어 판정(매주 ②)이 트랙 B 잣대로 남은 낭비를 부정으로 걸러 줍니다.',
     ui_().ButtonSet.OK);
 }
 
@@ -520,7 +693,7 @@ function switchAdGrowToManual() {
     }).join('\n') + '\n\n' +
     '아마존은 만든 캠페인의 유형을 못 바꿉니다 — 새 캠페인을 만듭니다.\n' +
     '시작일과 누적 손해는 이어집니다 (자동으로 쓴 돈도 이 상품에 쓴 돈입니다).\n' +
-    '옛 캠페인은 새 캠페인이 다 갖춰진 뒤([④ 기준키워드 올리기])에 멈춥니다 —\n' +
+    '옛 캠페인은 새 캠페인이 다 갖춰진 뒤([⑤ 기준키워드 올리기])에 멈춥니다 —\n' +
     '지금 멈추면 그 사이 순위 쌓기가 끊깁니다.\n\n계속할까요?',
     ui_().ButtonSet.OK_CANCEL);
   if (ok !== ui_().Button.OK) return;
@@ -569,7 +742,7 @@ function switchAdGrowToManual() {
     '다음:\n' +
     '  ① ' + SHEET_ADPLAN_GROW + ' 에서 새 줄(이름 끝이 KW)의 [승인] 체크\n' +
     '  ② [⑤ 승인분 캠페인 생성]\n' +
-    '  ③ [④ 기준키워드 올리기] — 여기서 옛 자동 캠페인이 멈춥니다\n' +
+    '  ③ [⑤ 기준키워드 올리기] — 여기서 옛 자동 캠페인이 멈춥니다\n' +
     '  ④ [켜기 — 승인 ✓ 만]\n\n' +
     '옛 줄은 승인을 풀어 두었습니다. ③까지 못 가더라도 관제가 하루 안에 멈춥니다.',
     ui_().ButtonSet.OK);
