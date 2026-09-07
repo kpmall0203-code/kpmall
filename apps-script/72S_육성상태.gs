@@ -29,6 +29,7 @@ var ADGROW_EXT = [
   '누적지출(JPY)', '누적위험손실(JPY)', '누적여력(JPY)',
   '미집계준비액(JPY)', '경과일', '자료기준일',
   '최근순위', '순위관측일', '유효관측수', '순위변화', '순위신선도',
+  '멈춤필요',          // '예' 면 작업 계획이 캠페인 멈춤 작업을 만들고, 관제가 하루 안에 잡는다
   '다음 행동'
 ];
 
@@ -72,21 +73,22 @@ function adGrowStage_(o) {
              next: '정책에서 안 정한 것: ' + o.policy.miss.join(' · ') };
   }
   if (o.policy.mode === POLICY_MODE_HOLD) {
-    return { stage: BSTAGE_STOP, next: '정책이 일시정지입니다 — 새 변경을 하지 않습니다' };
+    // 일시정지는 '새 변경을 멈춘다' 지 광고를 끄는 것이 아니다 (기획서 4.3)
+    return { stage: BSTAGE_STOP, pause: false, next: '정책이 일시정지입니다 — 새 변경을 하지 않습니다' };
   }
   if (o.expired) {
-    return { stage: BSTAGE_STOP,
+    return { stage: BSTAGE_STOP, pause: true,
              next: '최대 기간 ' + o.policy.maxDays + '일을 넘겼습니다 (' + o.days + '일째). ' +
                    '정책을 다시 승인하지 않으면 늘리지 않습니다' };
   }
   if (o.total.over) {
-    return { stage: BSTAGE_STOP,
+    return { stage: BSTAGE_STOP, pause: true,
              next: '누적 한도 소진 — 지출 ' + fmtYen_(o.total.cost) + ' / ' +
                    fmtYen_(o.policy.totalSpend) + ' · 위험손실 ' + fmtYen_(o.total.risk) +
                    ' / ' + fmtYen_(o.policy.totalLoss) };
   }
   if (o.week.over) {
-    return { stage: BSTAGE_STOP,
+    return { stage: BSTAGE_STOP, pause: true,
              next: '이번 주 한도 소진 — 다음 주에 누적 한도 안에서 다시 돕니다' };
   }
   if (o.pending === null) {
@@ -131,10 +133,11 @@ function fmtYen_(n) {
  * 메뉴: 트랙 B 상태 점검.
  * 시트만 읽고 시트에만 쓴다 — API 를 부르지 않는다.
  */
-function reviewAdGrowState() {
+function reviewAdGrowState(opts) {
+  var quiet = !!(opts && opts.quiet);
   var made = makeOneSheet_([{ name: SHEET_INBOX, header: INBOX_HEADER },
                             { name: SHEET_ADRANK, header: ADRANK_HEADER }]);
-  if (madeSheetStop_(made, '상태 점검')) return;
+  if (madeSheetStop_(made, '상태 점검')) return null;
   var sh = getSheetOrThrow_(SHEET_ADGROW);
   if (sh.getLastRow() < 2) throw new Error('"' + SHEET_ADGROW + '" 이 비어 있습니다.');
   var map = ensureCols_(sh, ADGROW_EXT);
@@ -223,17 +226,7 @@ function reviewAdGrowState() {
     var mult = Number(v[i][AG_MULT]) || ADGROW_MULT_DEFAULT;
     var G = marginOk ? price * margin : 0;
     var breakEven = G * b.cvr;
-    var target = breakEven * mult;
     var curBid = Number(v[i][AG_BID]) || 0;
-    setCell_(v[i], map, '주문당공헌이익(JPY)', G ? Math.round(G) : '');
-    setCell_(v[i], map, '손익분기클릭비용(JPY)', breakEven ? Math.round(breakEven * 100) / 100 : '');
-    setCell_(v[i], map, '목표클릭비용(JPY)', target ? Math.round(target * 100) / 100 : '');
-    setCell_(v[i], map, '현재설정입찰(JPY)', curBid || '');
-    setCell_(v[i], map, '입찰차이', (target > 0 && curBid > 0)
-      ? (Math.abs(curBid - target) < 0.5 ? '같음'
-         : (curBid > target ? '설정이 ¥' + (Math.round((curBid - target) * 10) / 10) + ' 높다'
-                            : '설정이 ¥' + (Math.round((target - curBid) * 10) / 10) + ' 낮다'))
-      : '');
     // 수동 캠페인인가 — 계획 표의 [유형] 이 답이다
     var manual = adGrowIsManual_(String(v[i][AG_CAMP] || '').trim());
 
@@ -246,7 +239,31 @@ function reviewAdGrowState() {
     });
 
     setCell_(v[i], map, '단계', st.stage);
+    setCell_(v[i], map, '멈춤필요', st.pause ? '예' : '');
     setCell_(v[i], map, '다음 행동', st.next);
+
+    /**
+     * 목표 클릭비용은 단계를 안 뒤에 낸다.
+     * 유지확인이면 손해배수를 걷고 손익분기(트랙 A 수익 기준)로 낮춘다 —
+     * 목표에 닿았으면 더 잃을 이유가 없고, 바로 끄지도 않는다 (기획서 9.7).
+     */
+    var useMult = (st.stage === BSTAGE_HOLD) ? 1 : mult;
+    var target = breakEven * useMult;
+    setCell_(v[i], map, '주문당공헌이익(JPY)', G ? Math.round(G) : '');
+    setCell_(v[i], map, '손익분기클릭비용(JPY)', breakEven ? Math.round(breakEven * 100) / 100 : '');
+    setCell_(v[i], map, '목표클릭비용(JPY)', target ? Math.round(target * 100) / 100 : '');
+    setCell_(v[i], map, '현재설정입찰(JPY)', curBid || '');
+    setCell_(v[i], map, '입찰차이', (target > 0 && curBid > 0)
+      ? (Math.abs(curBid - target) < 0.5 ? '같음'
+         : (curBid > target ? '설정이 ¥' + (Math.round((curBid - target) * 10) / 10) + ' 높다'
+                            : '설정이 ¥' + (Math.round((target - curBid) * 10) / 10) + ' 낮다'))
+      : '');
+
+    // 옛 누적 칸도 원장에서 채운다 — 옛 주간 판정이 없어져 이것 말고는 채울 곳이 없다
+    v[i][AG_WEEKS] = days ? Math.max(1, Math.ceil(days / 7)) : '';
+    v[i][AG_COST] = Math.round(tt.cost);
+    v[i][AG_SALES] = Math.round(tt.sales);
+    v[i][AG_LOSSSUM] = Math.round(totalLedger.loss);
     setCell_(v[i], map, '주간지출(JPY)', Math.round(wk.cost));
     setCell_(v[i], map, '주간위험손실(JPY)', Math.round(weekLedger.risk));
     setCell_(v[i], map, '주간여력(JPY)', weekLedger.room < 0 ? '한도 미정' : Math.round(weekLedger.room));
@@ -275,9 +292,10 @@ function reviewAdGrowState() {
   adGrowStateNotes_(sh);
   var nReq = adInboxAdd_(req);
 
-  showSheet_(SHEET_ADGROW);
   var line = Object.keys(stat).map(function (k) { return k + ' ' + stat[k]; }).join(' · ');
   log_('ads', 'INFO', '트랙 B 상태 — ' + line);
+  if (quiet) return { line: line, nReq: nReq, nOver: nOver };
+  showSheet_(SHEET_ADGROW);
   ui_().alert('트랙 B 상태 점검',
     (led.has ? '지출 자료 기준일 ' + led.last : '⛔ 지출 원장이 비어 있습니다 — [지출 원장 수집]을 먼저 하세요') +
     '\n이번 주 시작 ' + wkFrom + '\n\n' +
@@ -333,6 +351,8 @@ function adGrowStateNotes_(sh) {
       '"범위밖" 은 검색깊이까지 봤는데 없었다는 뜻이다 — 999 로 세지 않는다.',
     '순위신선도': '"오래됨" 은 관측이 ' + ADRANK_FRESH_DAYS + '일보다 지났다는 뜻.\n' +
       '그때는 졸업을 판정하지 않는다.',
+    '멈춤필요': '"예" 면 한도·기간 때문에 멈춰야 한다. [작업 계획]이 캠페인 멈춤 작업을 만들고,\n' +
+      '관제가 하루 안에 한 번 더 본다. 일시정지 정책은 여기 안 걸린다 — 새 변경만 멈춘다.',
     '단계': BSTAGE_INPUT + ' → ' + BSTAGE_FIND + ' → ' + BSTAGE_PREP + ' → ' +
             BSTAGE_GROW + ' → ' + BSTAGE_HOLD + ' → ' + BSTAGE_HANDOVER + '\n' +
             BSTAGE_STOP + ' 은 한도·기간·정책 때문에 멈춘 것이다.',

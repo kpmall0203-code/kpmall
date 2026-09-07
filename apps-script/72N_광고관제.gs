@@ -121,13 +121,15 @@ function adGrowWeeklyByCamp_() {
   var out = {};
   var sh = ss_().getSheetByName(SHEET_ADGROW);
   if (!sh || sh.getLastRow() < 2) return out;
-  var v = sh.getRange(2, 1, sh.getLastRow() - 1, ADGROW_HEADER.length).getValues();
+  var map = hdrMap_(sh);
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, Math.max(sh.getLastColumn(), 1)).getValues();
   for (var i = 0; i < v.length; i++) {
     var nm = String(v[i][AG_CAMP] || '').trim();
     var w = Number(v[i][AG_WEEKLY]) || 0;
     if (nm && w > 0) out[nm] = { weekly: w, sku: String(v[i][AG_SKU] || ''),
                                  loss: Number(v[i][AG_LOSS]) || 0,
-                                 verdict: String(v[i][AG_VERDICT] || '') };
+                                 mustStop: String(cellOf_(v[i], map, '멈춤필요', '')) === '예',
+                                 stage: String(cellOf_(v[i], map, '단계', '')) };
   }
   return out;
 }
@@ -371,10 +373,10 @@ function adWatchRun_(interactive) {
     var own = (c.track === ADPLAN_TRACK_B && grow[c.name]) ? grow[c.name].weekly : 0;
     var d = adWatchVerdict_(c, L, p, margin, since[c.cid] || '', rep.from, rep.to, own);
     /**
-     * 육성 표가 이미 '졸업' 이나 '중단' 이라고 판정했는데 아직 켜져 있으면 멈춘다.
+     * 상태 점검(72S)이 [멈춤필요]='예' 라 적었는데 아직 켜져 있으면 멈춘다.
      *
-     * 주간 판정(72O)은 사람이 눌러야 돌고, 그때 멈추기까지 한다. 그런데 그 뒤에
-     * 누가 다시 켰거나, 판정만 하고 멈춤이 실패했을 수 있다. 관제는 매일 도는
+     * 멈춤은 원래 작업 큐(72V)의 보호 멈춤 작업이 한다. 그런데 그 뒤에
+     * 누가 다시 켰거나, 작업이 결과불명으로 끝났을 수 있다. 관제는 매일 도는
      * 마지막 그물이다 — 손해를 그만 보기로 한 캠페인이 켜져 있으면 안 된다.
      */
     // 수동으로 갈아타며 버린 자동 캠페인이 아직 켜져 있으면 멈춘다 (마지막 그물).
@@ -383,9 +385,9 @@ function adWatchRun_(interactive) {
       d = { v: '⛔ 갈아탄 옛 캠페인', fix: 'PAUSE',
             why: '수동 캠페인으로 갈아탔는데 아직 켜져 있습니다 — 같은 말에 우리 둘이 입찰합니다' };
     }
-    var gStop = (c.track === ADPLAN_TRACK_B && grow[c.name]) ? grow[c.name].verdict : '';
-    if ((gStop === '졸업' || gStop === '중단') && on(L)) {
-      d = { v: '⛔ 육성 ' + gStop, why: '육성 판정 ' + gStop + ' — 더 돌 이유가 없습니다',
+    var gStop = !!(c.track === ADPLAN_TRACK_B && grow[c.name] && grow[c.name].mustStop);
+    if (gStop && on(L)) {
+      d = { v: '⛔ 육성 멈춤필요', why: '상태 점검이 한도·기간 초과로 멈추라고 했는데 아직 켜져 있습니다',
             fix: 'PAUSE' };
     }
     stat[d.v] = (stat[d.v] || 0) + 1;
@@ -478,7 +480,7 @@ function adWatchRun_(interactive) {
 
 /**
  * 캠페인을 멈추고, 계획 표의 결과 표시와 대장을 맞춘다. @return 멈춘 이름들
- * @param {string=} by 대장에 남길 주체. 관제 말고 다른 걸음이 부를 수 있다 (트랙 B 주간 판정)
+ * @param {string=} by 대장에 남길 주체. 관제 말고 다른 걸음이 부를 수 있다 (트랙 B 갈아타기)
  */
 function adWatchPause_(token, list, why, by) {
   var who = by || '관제(자동)';

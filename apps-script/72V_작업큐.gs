@@ -174,9 +174,9 @@ function adJobUpsert_(jobs, curPolicyVer) {
  * 아마존을 건드리지 않는다. 무엇을 왜 바꿀 것인지만 줄로 남긴다.
  * 정책이 [자동운영] 이고 한도가 확정된 줄만 '대기' 가 되고, 나머지는 '모의' 다.
  */
-function planAdGrowJobs() {
+function planAdGrowJobs(opts) {
   var made = makeOneSheet_([{ name: SHEET_JOB, header: JOB_HEADER }]);
-  if (madeSheetStop_(made, '트랙 B 작업 계획')) return;
+  if (madeSheetStop_(made, '트랙 B 작업 계획')) return null;
 
   var gsh = getSheetOrThrow_(SHEET_ADGROW);
   if (gsh.getLastRow() < 2) throw new Error('"' + SHEET_ADGROW + '" 이 비어 있습니다.');
@@ -193,15 +193,38 @@ function planAdGrowJobs() {
   var jrows = jsh.getLastRow() > 1
     ? jsh.getRange(2, 1, jsh.getLastRow() - 1, Math.max(jsh.getLastColumn(), 1)).getValues() : [];
 
-  var jobs = [], now = Date.now(), skipped = { 단계: 0, 간격: 0, 차이: 0, 값없음: 0 };
+  // 지금 켜져 있는 캠페인 — 계획 표의 결과 표시로 안다 (API 아님)
+  var ours = adWatchOurs_(), onById = {};
+  for (var o = 0; o < ours.length; o++) {
+    if (String(ours[o].result).indexOf(ADENABLE_MARK.ENABLED) >= 0) onById[ours[o].cid] = ours[o];
+  }
+
+  var jobs = [], now = Date.now(), skipped = { 단계: 0, 간격: 0, 차이: 0, 값없음: 0 }, nPause = 0;
   for (var i = 0; i < gv.length; i++) {
     var sku = String(gv[i][AG_SKU] || '').trim();
     if (!sku) continue;
     var stage = String(cellOf_(gv[i], gmap, '단계', ''));
-    // 멈출 이유가 있는 단계에서는 증액을 계획하지 않는다
+    var pp = adPolicyFor_(pol, 'B', sku);
+    var cid = String(gv[i][AG_CID] || '').trim();
+
+    /**
+     * 멈춰야 하는 줄 — 한도·기간을 넘겼다. 캠페인 멈춤 작업을 만든다.
+     * 보호 동작이라 정책 모드와 상관없이 '대기' 로 둔다 (기획서 11.1: 안전 감액·중단은 자동).
+     * 이미 멈춰 있으면 만들지 않는다.
+     */
+    if (String(cellOf_(gv[i], gmap, '멈춤필요', '')) === '예' && cid && onById[cid]) {
+      jobs.push({
+        policyId: pp ? pp.id : '', policyVer: pp ? pp.ver : 0, track: 'B', sku: sku,
+        targetKind: '캠페인', targetId: cid, targetName: String(gv[i][AG_CAMP] || ''),
+        action: '상태변경', from: 'ENABLED', to: 'PAUSED',
+        why: '보호 멈춤 — ' + String(cellOf_(gv[i], gmap, '다음 행동', '')).substring(0, 120),
+        canAuto: true
+      });
+      nPause++;
+    }
+    // 멈출 이유가 있는 단계에서는 입찰을 계획하지 않는다
     if (stage === BSTAGE_STOP || stage === BSTAGE_INPUT || !stage) { skipped['단계']++; continue; }
 
-    var pp = adPolicyFor_(pol, 'B', sku);
     var gid = String(gv[i][AG_GID] || '').trim();
     var cur = Number(cellOf_(gv[i], gmap, '현재설정입찰(JPY)', 0)) || Number(gv[i][AG_BID]) || 0;
     var target = Number(cellOf_(gv[i], gmap, '목표클릭비용(JPY)', 0)) || 0;
@@ -230,8 +253,10 @@ function planAdGrowJobs() {
 
   var nWait = 0, nDry = 0;
   for (var q = 0; q < jobs.length; q++) { if (jobs[q].canAuto) nWait++; else nDry++; }
+  if (opts && opts.quiet) return { added: res.added, cancelled: res.cancelled, wait: nWait, dry: nDry, pause: nPause };
   ui_().alert('트랙 B 작업 계획',
     '새 작업 ' + res.added + '건' +
+    (nPause ? ' · 그중 보호 멈춤 ' + nPause + '건' : '') +
     (res.cancelled ? ' · 정책이 바뀌어 취소한 것 ' + res.cancelled + '건' : '') + '\n' +
     '   ' + JOB_WAIT + ' ' + nWait + '건 (정책이 자동운영 · 한도 확정)\n' +
     '   ' + JOB_DRY + ' ' + nDry + '건 (계산만 하고 보내지 않습니다)\n\n' +

@@ -49,8 +49,13 @@ function adJobBlocked_(row, map, pol, curValue) {
   var p = adPolicyFor_(pol, track, sku);
   if (!p) return '정책이 없어졌습니다 (' + track + ' · ' + sku + ')';
   if (p.id !== pid) return '정책ID 가 ' + pid + ' → ' + p.id + ' 로 바뀌었습니다';
-  if (!p.ready) return '정책이 미확정으로 돌아갔습니다: ' + p.miss.join(' · ');
-  if (!p.canAuto) return '정책이 ' + p.mode + ' 입니다 — 보내지 않습니다';
+  var protective = String(cellOf_(row, map, '동작', '')) === '상태변경' &&
+                   String(cellOf_(row, map, '목표값', '')) === 'PAUSED';
+  // 멈추는 것은 돈을 쓰는 일이 아니라 그만 쓰는 일이다 — 정책 모드·한도를 따지지 않는다
+  if (!protective) {
+    if (!p.ready) return '정책이 미확정으로 돌아갔습니다: ' + p.miss.join(' · ');
+    if (!p.canAuto) return '정책이 ' + p.mode + ' 입니다 — 보내지 않습니다';
+  }
   var ver = Number(cellOf_(row, map, '정책버전', 0)) || 0;
   if (p.ver !== ver) return '정책 버전이 ' + ver + ' → ' + p.ver + ' 로 바뀌었습니다';
   var want = cellOf_(row, map, '기대이전값', '');
@@ -73,7 +78,44 @@ function adGroupBidNow_(gid) {
   return null;
 }
 
-/** 메뉴: 대기 중인 작업을 아마존에 보낸다 */
+/**
+ * 메뉴: 트랙 B 한 바퀴 — 계산 · 상태 점검 · 작업 계획 · 실행.
+ *
+ * 앞의 셋은 시트만 읽는 계산이라 순서대로 무조건 같이 돈다. 실행은 정책이
+ * [자동운영] 인 것과 보호 멈춤만 보낸다 — 나머지는 '모의' 로 남아 아무 데도 안 간다.
+ * 지출 원장 수집과 검증은 API 를 읽는 걸음이라 따로 둔다.
+ */
+function runAdGrowCycle() {
+  if (!adBusyGuard_('트랙 B 한 바퀴')) return;
+  adGrowCalcAll_(true);
+  reviewAdGrowState({ quiet: true });
+  var plan = planAdGrowJobs({ quiet: true });
+  if (!plan) return;                      // 표를 방금 만들었다 — 다시 누르라고 이미 알렸다
+  var q = adJobRead_();
+  var nWait = 0;
+  if (q) for (var i = 0; i < q.rows.length; i++) {
+    var st = String(cellOf_(q.rows[i], q.map, '상태', ''));
+    if (st === JOB_WAIT || st === JOB_RETRY) nWait++;
+  }
+  if (!nWait) {
+    showSheet_(SHEET_ADGROW);
+    ui_().alert('트랙 B 한 바퀴',
+      '계산 · 상태 점검 · 작업 계획을 했습니다.\n' +
+      '새 작업 ' + plan.added + '건 (모의 ' + plan.dry + ' · 보호 멈춤 ' + plan.pause + ')\n\n' +
+      '아마존에 보낼 것은 없습니다 — 정책이 [' + POLICY_MODE_AUTO + '] 이 아니면 계산만 합니다.\n' +
+      '광고육성 표의 [단계]·[다음 행동]·[목표클릭비용] 을 보세요.', ui_().ButtonSet.OK);
+    return;
+  }
+  var ok = ui_().alert('트랙 B 한 바퀴',
+    '계산 · 상태 점검 · 작업 계획을 했습니다.\n' +
+    '새 작업 ' + plan.added + '건' + (plan.pause ? ' · 보호 멈춤 ' + plan.pause : '') + '\n\n' +
+    JOB_WAIT + ' ' + nWait + '건을 아마존에 보냅니다. 계속할까요?', ui_().ButtonSet.OK_CANCEL);
+  if (ok !== ui_().Button.OK) return;
+  toast_('작업 실행 중…');
+  adJobRunStep_(true);
+}
+
+/** 메뉴: 대기 중인 작업을 아마존에 보낸다 (한 바퀴 안에 들어 있다. 따로 누를 때) */
 function runAdJobs() {
   if (!adBusyGuard_('작업 실행')) return;
   var q = adJobRead_();
