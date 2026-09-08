@@ -304,3 +304,97 @@ function showAdTriggers() {
     '⬜ 는 꺼져 있는 것입니다. [매일 자동으로 돌리기 — 켜기] 로 한꺼번에 켭니다.',
     ui_().ButtonSet.OK);
 }
+
+
+// ── 광고 자료 갱신 — 단추 하나로 넷을 차례로 (기획서: 수집은 데이터 갱신에서) ───
+//
+// 구조 → 상품광고 목록 → 지출 원장 → SKU별 광고비 → 후보 다시 세우기.
+// 넷 중 셋은 6분을 넘겨 제 스스로 이어 달린다. 그래서 이 사슬은 '지금 어느 걸음인가' 만
+// 들고 2분마다 돌아와, 앞 걸음이 끝났으면 다음 걸음을 민다. 사람이 누를 것은 처음 한 번이다.
+
+var ADDATA_QUEUE = 'ADDATA_QUEUE';
+var ADDATA_CONTINUE = 'continueAdData';
+var ADDATA_STEPS = ['structure', 'units', 'spend', 'ads', 'cand'];
+var ADDATA_LABEL = { structure: '광고 구조', units: '상품광고 목록', spend: '지출 원장',
+                     ads: 'SKU별 광고비', cand: '후보 다시 세우기' };
+
+/** 메뉴(데이터 갱신): 광고 자료 갱신 */
+function refreshAdData() {
+  var props = PropertiesService.getScriptProperties();
+  if (props.getProperty(ADDATA_QUEUE)) {
+    var cur = JSON.parse(props.getProperty(ADDATA_QUEUE));
+    var go = ui_().alert('광고 자료 갱신',
+      '지난번 갱신이 아직 도는 중입니다 (' + (ADDATA_LABEL[cur[0]] || cur[0]) + ' 걸음).\n\n' +
+      '처음부터 다시 할까요? (아니오 = 그대로 이어감)', ui_().ButtonSet.YES_NO);
+    if (go !== ui_().Button.YES) { adDataStep_(true); return; }
+  }
+  props.setProperty(ADDATA_QUEUE, JSON.stringify(ADDATA_STEPS.slice()));
+  toast_('광고 자료 갱신 시작 — 구조 → 상품광고 → 원장 → SKU별 광고비 → 후보');
+  var msg = adDataStep_(true);
+  ui_().alert('광고 자료 갱신', msg + '\n\n' +
+    '나머지는 2분마다 저절로 이어집니다. 끝나면 [① 후보 찾기·확인] 표가 새 자료로 서 있습니다.\n' +
+    '어디까지 갔는지는 [지금 무엇이 도는가] 에 나옵니다.', ui_().ButtonSet.OK);
+}
+
+function continueAdData() {
+  withLockOrRetry_('광고 자료 갱신', ADDATA_CONTINUE, function () {
+    try { adDataStep_(false); } catch (e) { log_('ads', 'ERROR', '광고 자료 갱신: ' + String(e).substring(0, 300)); adDataContinue_(true); }
+  });
+}
+
+function adDataContinue_(more) {
+  var ts = ScriptApp.getProjectTriggers();
+  for (var i = 0; i < ts.length; i++) {
+    if (ts[i].getHandlerFunction() === ADDATA_CONTINUE) ScriptApp.deleteTrigger(ts[i]);
+  }
+  if (more) ScriptApp.newTrigger(ADDATA_CONTINUE).timeBased().after(2 * 60 * 1000).create();
+}
+
+/**
+ * 사슬의 한 걸음. 머리의 걸음을 밀고, 끝났으면 머리를 뗀다.
+ * @return {string} 사람에게 보여줄 한 줄
+ */
+function adDataStep_(interactive) {
+  var props = PropertiesService.getScriptProperties();
+  var q = JSON.parse(props.getProperty(ADDATA_QUEUE) || '[]');
+  if (!q.length) { adDataContinue_(false); return '갱신 끝'; }
+  var step = q[0], msg = '', finished = false;
+  uiSilent_(true);
+  try {
+    if (step === 'structure') {
+      fetchAdStructure(); finished = true; msg = '광고 구조 받음';
+    } else if (step === 'units') {
+      if (!props.getProperty(PROP_ADUNIT_NEXT)) props.deleteProperty(PROP_ADUNIT_ROW);
+      msg = adUnitStep_(false);
+      adUnitContinue_(false);                       // 제 트리거는 거둔다 — 이 사슬이 이어 부른다
+      finished = !props.getProperty(PROP_ADUNIT_NEXT);
+    } else if (step === 'spend') {
+      var r = fetchAdSpendDaily();
+      finished = (r !== ADSPEND_PENDING); msg = finished ? '지출 원장 받음' : '지출 원장 리포트 준비 중';
+    } else if (step === 'ads') {
+      if (!props.getProperty(PROP_ADS_QUEUE)) {
+        var to = ymd_(new Date());
+        props.setProperty(PROP_ADS_QUEUE,
+                          JSON.stringify(adsWindows_(addDays_(to, -(ADS_AUTO_DAYS - 1)), to)));
+      }
+      msg = String(adsReportStep_(false) || '');
+      adsScheduleContinue_(false);                  // 제 트리거는 거둔다 — 이 사슬이 이어 부른다
+      finished = !props.getProperty(PROP_ADS_QUEUE);
+      if (!finished) msg = 'SKU별 광고비 받는 중 (' + msg + ')';
+    } else if (step === 'cand') {
+      buildAdExpandCandidates({ quiet: true });
+      try { buildAdStopCandidates(); } catch (e0) {}
+      finished = true; msg = '후보 다시 세움';
+    } else { finished = true; }
+  } catch (e) {
+    log_('ads', 'ERROR', '광고 자료 갱신 · ' + ADDATA_LABEL[step] + ' 실패: ' + String(e).substring(0, 300));
+    msg = ADDATA_LABEL[step] + ' 실패 — ' + String(e).substring(0, 120);
+    finished = true;                                // 한 걸음이 죽어도 다음 걸음은 간다
+  } finally { uiSilent_(false); }
+  if (finished) q.shift();
+  if (q.length) { props.setProperty(ADDATA_QUEUE, JSON.stringify(q)); adDataContinue_(true); }
+  else { props.deleteProperty(ADDATA_QUEUE); adDataContinue_(false); }
+  log_('ads', 'INFO', '광고 자료 갱신 · ' + ADDATA_LABEL[step] + ' — ' + msg +
+       (q.length ? ' → 다음: ' + ADDATA_LABEL[q[0]] : ' · 전부 끝'));
+  return ADDATA_LABEL[step] + ': ' + msg + (q.length ? '\n다음: ' + ADDATA_LABEL[q[0]] : '\n전부 끝났습니다.');
+}

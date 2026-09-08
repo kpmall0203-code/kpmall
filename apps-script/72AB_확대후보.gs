@@ -33,8 +33,14 @@
  * 이 값들은 지출 원장(72R)이 쓰는 것과 같은 상수다 — 한 문서 안에서
  * 성숙의 뜻이 둘이면 안 된다.
  *
+ * ── 이 표가 앞이다 ──────────────────────────────────────
+ * 사람이 보는 표는 이것 하나다. 마진율을 적고, [판정]·[바꿀 것] 을 보고, [승인] 을 켠다.
+ * 멈춤(72AD)·증액 시험(72AE)·감액의 셈이 전부 여기 한 줄에 모인다.
+ * 그 뒤의 표들(멈춤후보·확대시험·확대결과)은 프로그램이 제 기록으로 쓰는 것이다.
+ *
  * ── 여기서는 아무것도 바꾸지 않는다 ─────────────────────
  * 계산하고 표에 적을 뿐, 입찰·예산을 건드리지 않는다 (기획서 7.2).
+ * 바꾸는 것은 [② 시작] 하나다.
  */
 
 var SHEET_EXPAND = '광고확대후보';
@@ -44,10 +50,27 @@ var EXPAND_HEADER = [
   '객단가(JPY)', '성숙클릭', '성숙주문', '광고비(JPY)', '광고매출(JPY)',
   '실제클릭비용(JPY)', '실제주문율(%)', '판단주문율(%)',
   '주문당공헌이익(JPY)', '손익분기클릭비용(JPY)', '목표클릭비용(JPY)', '여유배수',
-  '필요마진율(%)', '분류', '사유', '자료기간', '프로그램값(%)'
+  '필요마진율(%)', '분류', '사유', '자료기간',
+  '판정', '바꿀 것', '승인', '결과', '프로그램값(%)', '실행자료'
 ];
 var EX_SKU = 0, EX_ASIN = 1, EX_NAME = 2, EX_PRICE = 3, EX_MARGIN = 4, EX_MSRC = 5;
-var EX_PROG = 23;                   // 프로그램이 지난번에 낸 값 (사람이 고쳤는지 가리는 잣대)
+var EX_ACT = 23, EX_CHANGE = 24, EX_APPROVE = 25, EX_RESULT = 26;
+var EX_PROG = 27;                   // 프로그램이 지난번에 낸 값 (사람이 고쳤는지 가리는 잣대)
+var EX_EXEC = 28;                   // 시작할 때 쓰는 자료 (사람이 읽을 것은 아니다)
+var EXPAND_APPROVE_COL = 26;        // 1부터
+
+/**
+ * 판정 = 이 상품에 지금 할 일. 분류(경제성)와 다르다 — 분류가 '확대검토' 라도
+ * 손잡이가 없으면 판정은 '분리 필요' 이고, 시험이 돌고 있으면 '시험중' 이다.
+ * 사람은 이 칸과 [바꿀 것] 만 보고 [승인] 을 켠다. 그것이 앞에서 할 일의 전부다.
+ */
+var EXA_TEST = '증액 시험';
+var EXA_DOWN = '감액';
+var EXA_CTRL = '대조군';
+var EXA_RUNNING = '시험중';
+var EXA_SPLIT = '분리 필요';
+var EXA_KEEP = '유지';
+var EXA_CEIL = '천장';              // 더 올릴 자리가 없다 — 여기가 이 상품의 최적점 근처다
 
 /** 분류 (기획서 3.1) */
 var EXC_GROW = '확대검토';
@@ -69,12 +92,13 @@ var EXPAND_WINDOW_DAYS = 30;        // 성숙한 날 중 몇 일을 셀까
  *
  * 사람이 적은 마진율은 그대로 두고, 나머지 칸만 다시 계산한다.
  */
-function buildAdExpandCandidates() {
+function buildAdExpandCandidates(opts) {
   var made = makeOneSheet_([{ name: SHEET_EXPAND, header: EXPAND_HEADER }]);
-  if (madeSheetStop_(made, '광고 확대 후보')) return;
+  if (made) { if (!(opts && opts.quiet)) madeSheetStop_(made, '① 후보 찾기·확인'); return null; }
 
   var ash = ss_().getSheetByName(SHEET_ADS);
   if (!ash || ash.getLastRow() < 2) {
+    if (opts && opts.quiet) return null;
     ui_().alert('광고 실적이 없습니다',
       '[📥 자료 받기 → 광고비 수집] 을 먼저 하세요.\n' +
       '"' + SHEET_ADS + '" 에 SKU × 날짜 실적이 있어야 후보를 셀 수 있습니다.',
@@ -85,13 +109,16 @@ function buildAdExpandCandidates() {
   // ① 사람이 적어 둔 마진율을 먼저 챙긴다 — 새로 고쳐도 그 값은 살린다.
   //    출처 칸이 아니라 '프로그램값' 과 견줘 가린다 (사람은 보통 숫자만 고친다).
   var sh = ss_().getSheetByName(SHEET_EXPAND);
-  var keep = {}, oldProg = {};
+  var keep = {}, oldProg = {}, keepAct = {};
   if (sh.getLastRow() > 1) {
     var wid = Math.max(sh.getLastColumn(), EXPAND_HEADER.length);
     var old = sh.getRange(2, 1, sh.getLastRow() - 1, wid).getValues();
     for (var o = 0; o < old.length; o++) {
       var k = String(old[o][EX_SKU] || '').trim();
       if (!k) continue;
+      // 승인은 '같은 판정' 일 때만 살린다 — 멈춤을 승인했는데 감액으로 바뀌면 다시 봐야 한다
+      keepAct[k] = { act: String(old[o][EX_ACT] || ''), ok: adRowApproved_(old[o][EX_APPROVE]),
+                     res: String(old[o][EX_RESULT] || '') };
       var mv = Number(old[o][EX_MARGIN]);
       if (!(mv > 0)) continue;
       var pv = Number(old[o][EX_PROG]);
@@ -105,8 +132,8 @@ function buildAdExpandCandidates() {
   var perf = adPerfBySku_(EXPAND_WINDOW_DAYS);
   var agg = perf.sku, span = perf.span, last = perf.last;
   if (!perf.days) {
-    ui_().alert('셀 수 있는 날이 없습니다', adMatureHelp_(perf), ui_().ButtonSet.OK);
-    return;
+    if (!(opts && opts.quiet)) ui_().alert('셀 수 있는 날이 없습니다', adMatureHelp_(perf), ui_().ButtonSet.OK);
+    return null;
   }
 
   // ③ 리스팅에서 이름·가격 (바깥 마진율 시트를 이름으로 맞대므로 일본어명이 필요하다)
@@ -124,7 +151,9 @@ function buildAdExpandCandidates() {
   // 표를 세울 때는 자료를 새로 읽는다 — 한 실행 안에서 확대·멈춤을 잇달아 세우면
   // 앞에서 들고 있던 낡은 마진(사람이 방금 적은 값이 빠진 것)을 쓰게 된다
   var ctx = adMarginCtx_(true);
-  var rows = [], cnt = {}, nUser = 0, nSheet = 0, nCost = 0, nDef = 0;
+  var pc = adExpandPlanCtx_();                 // 손잡이 · 예산 신호 · 돌고 있는 시험 · 정책
+  var grow = adStopGrowSkus_();
+  var rows = [], cnt = {}, act = {}, nUser = 0, nSheet = 0, nCost = 0, nDef = 0;
   for (var sku2 in agg) {
     var a2 = agg[sku2], inf = info[sku2] || { asin: a2.asin, jp: '', price: 0 };
     var aov = a2.od > 0 ? a2.sales / a2.od : 0;
@@ -170,22 +199,32 @@ function buildAdExpandCandidates() {
     } else { cls = EXC_HOLD; why = '목표와 지금 값이 비슷합니다 — 올릴 근거가 약합니다'; }
     cnt[cls] = (cnt[cls] || 0) + 1;
 
+    // 판정 — 이 상품에 지금 할 일
+    var ac = adExpandAction_({ sku: sku2, asin: inf.asin || a2.asin, a: a2, m: m, price: price,
+                               cls: cls, G: G, q: q, target: target, cpc: cpc,
+                               dailyCost: a2.cost / EXPAND_WINDOW_DAYS }, pc, grow);
+    act[ac.v] = (act[ac.v] || 0) + 1;
+    var ka = keepAct[sku2] || {};
+    var approved = (ka.ok && ka.act === ac.v && ac.exec) ? true : false;
+
     rows.push([sku2, inf.asin || a2.asin, String(inf.jp || '').substring(0, 60), Math.round(price),
       m.pct, m.src, m.why,
       Math.round(aov), Math.round(a2.ck), Math.round(a2.od), Math.round(a2.cost), Math.round(a2.sales),
       Math.round(cpc * 100) / 100, Math.round(real * 10000) / 100, Math.round(q * 10000) / 100,
       Math.round(G), Math.round(be * 100) / 100, Math.round(target * 100) / 100,
       cpc > 0 ? Math.round(room * 100) / 100 : '',
-      need ? Math.round(need * 10) / 10 : '', cls, why, span, pg.pct]);
+      need ? Math.round(need * 10) / 10 : '', cls, why, span,
+      ac.v, ac.change, approved, ka.res || '', pg.pct, ac.exec ? JSON.stringify(ac.exec) : '']);
   }
 
-  // 확대검토를 위로, 그 안에서는 여유배수가 큰 순으로
+  // 할 일이 있는 줄을 위로 (멈춤 → 증액 → 감액 → 시험중 → 대조군 → 분리 필요 → 나머지),
+  // 그 안에서는 여유배수가 큰 순으로.
   // 순위가 0 인 것을 || 로 거르면 1등이 꼴찌가 된다 (0 은 거짓이다). undefined 만 뒤로 보낸다
-  var order = {}; order[EXC_GROW] = 0; order[EXC_HOLD] = 1; order[EXC_GUARD] = 2;
-  order[EXC_THIN] = 3; order[EXC_WAIT] = 4;
+  var order = {}; order[ASV_STOP] = 0; order[ASV_STOP_EV] = 1; order[EXA_TEST] = 2; order[EXA_DOWN] = 3;
+  order[EXA_RUNNING] = 4; order[EXA_CTRL] = 5; order[EXA_SPLIT] = 6; order[EXA_CEIL] = 7; order[EXA_KEEP] = 8;
   var rank = function (v) { var r = order[v]; return r === undefined ? 9 : r; };
   rows.sort(function (x, y) {
-    var d = rank(x[20]) - rank(y[20]);
+    var d = rank(x[EX_ACT]) - rank(y[EX_ACT]);
     if (d) return d;
     return (Number(y[18]) || 0) - (Number(x[18]) || 0);
   });
@@ -193,10 +232,21 @@ function buildAdExpandCandidates() {
   writeTable_(sh, EXPAND_HEADER, rows);
   sh.getRange(1, 1, 1, EXPAND_HEADER.length).setValues([EXPAND_HEADER])
     .setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
+  if (rows.length) sh.getRange(2, EXPAND_APPROVE_COL, rows.length, 1).insertCheckboxes();
   adExpandNotes_(sh);
+  if (opts && opts.quiet) return { rows: rows.length, act: act, cnt: cnt };
   showSheet_(SHEET_EXPAND);
 
-  ui_().alert('광고 확대 후보',
+  var todo = Object.keys(act).filter(function (k) { return order[k] !== undefined && order[k] <= 3; })
+               .map(function (k) { return k + ' ' + act[k]; }).join(' · ');
+  ui_().alert('① 후보 찾기·확인',
+    '할 일 — ' + (todo || '없음') + '\n' +
+    (act[EXA_SPLIT] ? '분리 필요 ' + act[EXA_SPLIT] + ' (몰아넣기 그룹 — 값을 따로 못 부름)\n' : '') +
+    (act[EXA_RUNNING] ? '시험중 ' + act[EXA_RUNNING] + ' · ' : '') +
+    (act[EXA_CTRL] ? '대조군 ' + act[EXA_CTRL] + '\n' : '\n') +
+    adExpandGateText_(pc.pol) +
+    '[판정] 과 [바꿀 것] 을 보고 [승인] 을 켜세요. 그 다음 [② 시작] 이 전부입니다.\n\n' +
+    '상품 ' + rows.length + '개 · 센 기간 ' + span + '\n' +
     '상품 ' + rows.length + '개 · 센 기간 ' + span + '\n' +
     '(최근 ' + (SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS) + '일 ' + perf.young + '줄은 주문이 아직 다 안 붙어 뺐습니다' +
     (perf.old ? ' · 창 밖 ' + perf.old + '줄' : '') + ')\n' +
@@ -229,6 +279,14 @@ function adExpandNotes_(sh) {
       EXC_GUARD + ' = 지금이 목표보다 높음 — 줄일 자리\n' +
       EXC_THIN + ' = 클릭 ' + EXPAND_MIN_CLICKS + ' · 주문 ' + EXPAND_MIN_ORDERS + ' 미만\n' +
       EXC_WAIT + ' = 자료가 모자라 셀 수 없음',
+    '판정': '이 상품에 지금 할 일.\n' +
+      ASV_STOP + ' / ' + ASV_STOP_EV + ' = 안 팔리는데 돈 쓰는 것 → 그 상품의 광고만 멈춤\n' +
+      EXA_TEST + ' = 값을 10% 올려 14일 시험 (끝나면 되돌리고 대조군과 견줌)\n' +
+      EXA_DOWN + ' = 지금 값이 목표보다 높음 → 바로 내림 (시험 불필요)\n' +
+      EXA_CTRL + ' = 견주려고 일부러 안 바꾸는 상품 (회차마다 바뀜)\n' +
+      EXA_SPLIT + ' = 몰아넣기 그룹이라 값을 따로 못 부름 · ' + EXA_CEIL + ' = 더 올릴 자리 없음',
+    '바꿀 것': '무엇을 얼마에서 얼마로. [승인] 을 켜면 [② 시작] 때 이대로 나갑니다.',
+    '승인': '켜면 [② 시작] 때 이 줄의 [바꿀 것] 이 나갑니다. 다시 계산해도 판정이 같으면 켜 둔 것이 남습니다.',
     '프로그램값(%)': '프로그램이 스스로 낸 마진율 (원가·바깥 시트·기본값). 고치지 마세요 —\n' +
       '[마진율(%)] 이 이 값과 다르면 "사람이 고친 것" 으로 보고 그 값을 지키는 잣대입니다.',
     '자료기간': '실제로 센 날. 주문은 클릭한 날로부터 ' + SPEND_ATTRIB_DAYS + '일까지 붙고 보고가 ' +
@@ -355,4 +413,65 @@ function adPerfWindow_() {
     }
     return o;
   };
+}
+
+
+/**
+ * 이 상품에 지금 할 일 — 멈춤 · 증액 시험 · 감액 · 대조군 · 시험중 · 분리 필요 · 천장 · 유지.
+ *
+ * 멈춤은 72AD 의 셈, 증액은 72AE 의 셈을 그대로 부른다. 감액만 여기서 낸다 —
+ * 값을 내리는 것은 시험이 필요 없다 (기획서 4.3: 보호 감액은 예외).
+ *
+ * @return {{v:string, change:string, exec:Object|null, why:string}}
+ */
+function adExpandAction_(c, pc, grow) {
+  var u = pc.units[c.sku];
+  var sv = adStopVerdict_(c.a, c.m, c.price, u, !!grow[c.sku]);
+  if (adStopCanStop_(sv.v)) {
+    return { v: sv.v, change: '광고 ' + sv.ids.length + '개 멈춤', why: sv.why,
+             exec: { k: 'stop', ids: sv.ids, camp: u && u.ads.length ? u.ads[0].camp : '' } };
+  }
+  if (grow[c.sku]) return { v: EXA_KEEP, change: '', why: sv.why, exec: null };
+  if (pc.busy[c.sku]) return { v: EXA_RUNNING, change: '', why: '시험이 돌고 있습니다 (' + pc.busy[c.sku] + ')', exec: null };
+
+  if (c.cls === EXC_GROW) {
+    var o = adExpandPlanOne_({ sku: c.sku, asin: c.asin, G: c.G, q: c.q, dailyCost: c.dailyCost }, pc);
+    if (o.skip) return { v: EXA_KEEP, change: '', why: o.state, exec: null };
+    if (o.type === XTYPE_SPLIT) return { v: EXA_SPLIT, change: '', why: o.why, exec: null };
+    if (o.state === XS_CANCEL) return { v: EXA_CEIL, change: '', why: o.why, exec: null };
+    if (o.arm === XARM_CTRL) {
+      return { v: EXA_CTRL, change: '그대로 ¥' + o.from, why: o.why,
+               exec: { k: 'ctrl', c: { sku: c.sku, asin: c.asin, G: c.G, q: c.q, dailyCost: c.dailyCost } } };
+    }
+    return { v: EXA_TEST,
+             change: (o.type === XTYPE_BUDGET ? '일예산 ' : '입찰 ') + '¥' + o.from + ' → ¥' + o.to +
+                     ' (' + pc.pol.runDays + '일 시험)',
+             why: o.why,
+             exec: { k: 'test', c: { sku: c.sku, asin: c.asin, G: c.G, q: c.q, dailyCost: c.dailyCost } } };
+  }
+  if (c.cls === EXC_GUARD && c.cpc > 0) {
+    var res = adExpandResource_(c.sku, pc.units, pc.grp);
+    if (!res.own) {
+      return { v: EXA_KEEP, change: '',
+               why: '줄일 자리지만 몰아넣기 그룹이라 이 상품만 값을 내릴 수 없습니다 — 멈출 근거가 서면 멈춤으로 옵니다',
+               exec: null };
+    }
+    if (!(res.bid > 0)) return { v: EXA_KEEP, change: '', why: '지금 값을 모릅니다 (광고 자료 갱신)', exec: null };
+    // 목표를 향해 한 계단 — 한 번에 20% 까지만 (72V 의 인하 폭과 같다)
+    var to = Math.max(c.target, res.bid * (1 - JOB_DOWN_PCT));
+    to = Math.max(EXTEST_MIN_BID, Math.round(to * 100) / 100);
+    if (!(to < res.bid - 0.005)) return { v: EXA_KEEP, change: '', why: '이미 목표 언저리입니다', exec: null };
+    return { v: EXA_DOWN, change: '입찰 ¥' + res.bid + ' → ¥' + to,
+             why: '지금 ¥' + (Math.round(c.cpc * 100) / 100) + ' 는 목표 ¥' + (Math.round(c.target * 100) / 100) +
+                  ' 보다 높습니다. 내리는 것은 시험이 필요 없어 바로 합니다 (한 번에 ' +
+                  Math.round(JOB_DOWN_PCT * 100) + '% 까지)',
+             exec: { k: 'down', rid: res.gid || res.rid, rname: res.rname, from: res.bid, to: to } };
+  }
+  if (c.cls === EXC_HOLD) {
+    // 목표와 지금 값이 비슷하다 — 더 올려도 이익이 늘 자리가 없다. 여기가 이 상품의 천장이다
+    return { v: EXA_CEIL, change: '',
+             why: '지금 값이 목표 언저리입니다 (여유 10% 미만). 순이익이 더 안 느는 자리 — 그대로 둡니다',
+             exec: null };
+  }
+  return { v: EXA_KEEP, change: '', why: '', exec: null };
 }

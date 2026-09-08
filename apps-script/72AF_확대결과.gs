@@ -42,8 +42,7 @@ var XV_HOLD = '판정보류';
  */
 function buildAdExpandResults(opts) {
   var quiet = !!(opts && opts.quiet);
-  var made = makeOneSheet_([{ name: SHEET_EXRESULT, header: EXRESULT_HEADER }]);
-  if (made) { if (!quiet) madeSheetStop_(made, '확대 결과'); return '표를 만들었습니다'; }
+  makeOneSheet_([{ name: SHEET_EXRESULT, header: EXRESULT_HEADER }]);   // 없으면 만들고 그대로 이어간다
 
   var tsh = ss_().getSheetByName(SHEET_EXTEST);
   if (!tsh || tsh.getLastRow() < 2) {

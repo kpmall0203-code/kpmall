@@ -93,28 +93,23 @@ function buildPriceMenu_() {
           .addItem('⏰ 지금 무엇이 자동으로 도나', 'showAdTriggers')
           .addItem('⏰ 자동으로 도는 것 멈추기', 'stopAdGrowTriggers')))
       /**
-       * 확대는 '결정' 이 아니라 '시험' 이다.
-       * 기준 14일 → 올린 값 14일 → 되돌림 → 성숙 16일 → 대조군과 견줘 판정.
-       * 되돌리기와 판정은 저절로 돈다 — 사람이 누르는 것은 ①②③ 뿐이다.
+       * 기존 광고는 단추가 둘이다: ① 후보 찾기·확인 → ② 시작.
+       * 멈춤·감액·증액 시험·대조군·되돌림·판정·채택·다음 계단이 전부 그 뒤에 숨는다.
+       * 수집은 [🔄 데이터 갱신 → 광고 자료 갱신] 이 한다 (기획서: 수집은 데이터 갱신에서).
        */
-      .addSubMenu(ui.createMenu('📈 확대 — 더 써도 되는 곳')
-        .addItem('① 확대 후보 (마진율 채우기)', 'buildAdExpandCandidates')
-        .addItem('② 시험 계획 (얼마에서 얼마로 · 누가 대조군)', 'planAdExpandTests')
-        .addItem('③ 승인분 시험 시작 (아마존에 나감)', 'startAdExpandTests')
+      .addSubMenu(ui.createMenu('🔁 기존 광고 — 멈춤 · 감액 · 증액')
+        .addItem('① 후보 찾기·확인 (마진율 적기 → 판정 보고 승인)', 'buildAdExpandCandidates')
+        .addItem('② 시작 — 승인분 보내고 매일 저절로 돌게', 'startAdActions')
         .addSeparator()
-        .addItem('결과 보기 (대조군과 견준 추가이익)', 'buildAdExpandResults')
-        .addItem('지금 주기 한 번 (되돌림 · 평가)', 'adExpandCycle'))
-      /**
-       * 멈추기가 확대보다 먼저다.
-       *
-       * 확대는 몰아넣기 그룹 때문에 못 하는 자리가 많지만(입찰 하나가 수천 SKU 에
-       * 함께 걸린다), 멈추기는 상품광고를 낱개로 끄면 되니 지금 구조로도 된다.
-       * 그리고 새는 돈은 늘리는 돈보다 먼저 잡는 것이 맞다.
-       */
-      .addSubMenu(ui.createMenu('🛑 멈추기 — 돈만 새는 광고')
-        .addItem('① 상품광고 목록 수집 (한 번 · 이어 달림)', 'fetchAdProductAds')
-        .addItem('② 멈춤 후보 만들기 (안 팔리는데 돈 쓰는 것)', 'buildAdStopCandidates')
-        .addItem('③ 승인분 멈추기 (아마존에 나감)', 'applyAdStopApproved'))
+        .addItem('지금 어떻게 돌고 있나 (운영 현황)', 'showAdDashboard')
+        .addSubMenu(ui.createMenu('손으로 한 걸음씩 (평소엔 볼 일 없음)')
+          .addItem('시험 계획 표만 세우기', 'planAdExpandTests')
+          .addItem('승인분 시험만 시작', 'startAdExpandTests')
+          .addItem('시험 주기 한 번 (되돌림 · 판정 · 채택)', 'adExpandCycle')
+          .addItem('결과 표 다시 세우기', 'buildAdExpandResults')
+          .addSeparator()
+          .addItem('멈춤 후보 표 (자세히)', 'buildAdStopCandidates')
+          .addItem('멈춤 후보 표의 승인분만 멈추기', 'applyAdStopApproved')))
       .addSubMenu(ui.createMenu('🔎 검색어 — 매주')
         .addItem('① 검색어 수집', 'fetchAdSearchTerms')
         .addItem('② 검색어 판정 다시 계산', 'rollupAdTerms')
@@ -135,11 +130,6 @@ function buildPriceMenu_() {
         .addItem('⑤ 승인분 캠페인 생성', 'executeAdPlan')
         .addSeparator()
         .addItem('승인분 입찰 반영', 'applyApprovedBids'))
-      .addSubMenu(ui.createMenu('📥 자료 받기')
-        .addItem('광고 구조 수집 (캠페인 · 광고그룹 · 키워드)', 'fetchAdStructure')
-        .addItem('지출 원장 수집 (캠페인 일별)', 'fetchAdSpendDaily')
-        .addItem('키워드 실적 수집 (주 단위)', 'fetchAdKeywords')
-        .addItem('광고비 수집 (SKU 골라서 · TACOS 용)', 'fetchAdsSpend'))
       .addSubMenu(ui.createMenu('더 보기')
         .addItem('요청함 — 사람이 정해야 하는 것', 'showAdInbox')
         .addItem('캠페인 점검 · 정리 후보', 'reviewAdCampaigns')
@@ -172,6 +162,14 @@ function buildPriceMenu_() {
     .addSubMenu(ui.createMenu('🔄 데이터 갱신')
       .addItem('환율·청구서·원가', 'refreshData')
       .addItem('아마존 동기화 (리스팅·등록일)', 'syncAmazon')
+      .addItem('광고 자료 갱신 (구조 → 상품광고 → 원장 → SKU별 광고비 → 후보)', 'refreshAdData')
+      .addSeparator()
+      .addSubMenu(ui.createMenu('광고 자료 낱개로')
+        .addItem('광고 구조 수집 (캠페인 · 광고그룹 · 키워드)', 'fetchAdStructure')
+        .addItem('상품광고 목록 수집 (SKU 하나하나의 광고ID)', 'fetchAdProductAds')
+        .addItem('지출 원장 수집 (캠페인 일별)', 'fetchAdSpendDaily')
+        .addItem('SKU별 광고비 수집 (기간 · SKU 골라서)', 'fetchAdsSpend')
+        .addItem('키워드 실적 수집 (주 단위)', 'fetchAdKeywords'))
       .addSeparator()
       .addItem('판매실적 수집 (기간 합계)', 'fetchSalesReport')
       .addItem('일별 SKU 판매 수집', 'fetchSalesDaily')

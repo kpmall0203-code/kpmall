@@ -103,65 +103,20 @@ function buildAdStopCandidates() {
     var aov = a.od > 0 ? a.sales / a.od : 0;
     var price = inf.price || aov;
     var m = adMarginFor_(ctx, sku, price, inf.jp, null);
-    var cpc = a.ck > 0 ? a.cost / a.ck : 0;
-    var need = (price > 0 && m.pct > 0) ? cpc / (price * m.pct / 100) : 0;      // 손익분기 주문율
-    var ev = (a.od + 1) / (a.ck + 2);                                           // 기대 주문율
-    var hi = a.ck > 0 ? (a.od + 2 * Math.sqrt(a.od + 1) + 1) / a.ck : 1;        // 주문율 상한
-    var loss = a.cost - a.sales * m.pct / 100;                                   // 광고비 − 공헌이익
-
-    var v, why;
-    if (grow[sku]) {
-      v = ASV_GROW;
-      why = '트랙 B 가 키우는 중입니다 — 일부러 손해를 보며 사는 자리라 여기서 멈추지 않습니다';
-    } else if (!u || !u.on) {
-      v = ASV_NOHANDLE;
-      why = u ? '이 SKU 의 광고가 이미 다 멈춰 있습니다'
-              : '상품광고 목록에 이 SKU 가 없습니다 — [① 상품광고 목록 수집] 을 다시 하세요';
-    } else if (a.ck < ADSTOP_MIN_CLICKS) {
-      v = ASV_WATCH;
-      why = '클릭 ' + Math.round(a.ck) + '회로는 안 팔린다고 말할 수 없습니다 (최소 ' +
-            ADSTOP_MIN_CLICKS + '회). 주문율 상한이 ' + (Math.round(hi * 1000) / 10) + '% 나 됩니다';
-    } else if (!need) {
-      v = ASV_WATCH;
-      why = '판매가나 마진율을 몰라 손익분기 주문율을 셀 수 없습니다';
-    } else if (hi < need) {
-      v = ASV_STOP;
-      nStop++;
-      why = '클릭 ' + Math.round(a.ck) + '회에 주문 ' + Math.round(a.od) + '건. ' +
-            '잘 봐줘도 주문율이 ' + pct1_(hi) + ' 를 넘기 어려운데, ' +
-            '본전이 되려면 ' + pct1_(need) + ' 는 팔려야 합니다. ' +
-            '이 창에서 ' + fmtYen_(loss) + ' 손해' + adStopDefNote_(m);
-    } else if (ev < need) {
-      v = ASV_STOP_EV;
-      nEv++;
-      why = '클릭 ' + Math.round(a.ck) + '회에 주문 ' + Math.round(a.od) + '건이면 ' +
-            '주문율은 ' + pct1_(ev) + ' 쯤으로 봅니다. 본전은 ' + pct1_(need) + ' 입니다 — ' +
-            '잘라 말할 정도는 아니지만(상한 ' + pct1_(hi) + ') 계속 사면 밑질 쪽이 큽니다. ' +
-            '이 창에서 ' + fmtYen_(loss) + ' 손해' + adStopDefNote_(m);
-    } else if (a.od > 0 && loss > 0) {
-      v = ASV_WATCH;
-      why = '팔리기는 하는데 밑집니다 (' + fmtYen_(loss) + '). 다만 기대 주문율 ' +
-            pct1_(ev) + ' 가 본전 ' + pct1_(need) + ' 를 넘어서, 멈출 자리가 아니라 ' +
-            '값을 낮출 자리입니다';
-    } else {
-      v = ASV_KEEP;
-      why = '본전을 넘겨 팔고 있습니다 (주문율 ' + pct1_(a.od / a.ck) +
-            ' · 본전 ' + pct1_(need) + ')';
-    }
-    cnt[v] = (cnt[v] || 0) + 1;
-    if (v === ASV_STOP || v === ASV_STOP_EV) { sumLoss += loss; sumCost += a.cost; }
-
-    var ids = u ? u.ads.filter(function (x) { return x.state === 'ENABLED'; })
-                       .map(function (x) { return x.id; }) : [];
+    var sv = adStopVerdict_(a, m, price, u, !!grow[sku]);
+    cnt[sv.v] = (cnt[sv.v] || 0) + 1;
+    if (sv.v === ASV_STOP) nStop++;
+    if (sv.v === ASV_STOP_EV) nEv++;
+    if (adStopCanStop_(sv.v)) { sumLoss += sv.loss; sumCost += a.cost; }
     var k = keep[sku] || {};
     rows.push([sku, String(inf.jp || '').substring(0, 60), Math.round(price),
       m.pct, m.src,
       Math.round(a.ck), Math.round(a.od), Math.round(a.cost), Math.round(a.sales),
-      Math.round(cpc * 100) / 100, Math.round(need * 1000) / 10, Math.round(ev * 1000) / 10,
-      Math.round(hi * 1000) / 10,
-      Math.round(loss), v, why,
-      u ? u.on : 0, u && u.ads.length ? u.ads[0].camp : '', ids.join(','),
-      (adStopCanStop_(v) && k.ok) ? true : false, k.res || '', perf.span]);
+      Math.round(sv.cpc * 100) / 100, Math.round(sv.need * 1000) / 10, Math.round(sv.ev * 1000) / 10,
+      Math.round(sv.hi * 1000) / 10,
+      Math.round(sv.loss), sv.v, sv.why,
+      u ? u.on : 0, u && u.ads.length ? u.ads[0].camp : '', sv.ids.join(','),
+      (adStopCanStop_(sv.v) && k.ok) ? true : false, k.res || '', perf.span]);
   }
 
   // 0 은 거짓이라 || 로 거르면 1순위가 꼴찌로 간다 — undefined 만 뒤로 보낸다
@@ -335,4 +290,65 @@ function adStopCanStop_(v) { return v === ASV_STOP || v === ASV_STOP_EV; }
 function adStopDefNote_(m) {
   return m.src === MSRC_DEFAULT
     ? ' (마진율이 기본 ' + m.pct + '% 라 실제 마진을 [광고확대후보] 에 적으면 달라질 수 있습니다)' : '';
+}
+
+
+/**
+ * 멈출 근거가 있는가 — 순수 셈. 시트를 읽지 않는다.
+ *
+ * 확대후보 표(72AB)와 멈춤후보 표가 같은 셈을 쓰려고 떼어 두었다. 두 표가
+ * 다른 셈을 쓰면 한 표는 늘리라 하고 다른 표는 멈추라 한다.
+ *
+ * @param {Object} a      성숙 창 실적 {ck, od, cost, sales}
+ * @param {Object} m      adMarginFor_ 의 결과 {pct, src}
+ * @param {number} price  판매가(JPY)
+ * @param {Object} u      adUnitMap_ 의 항목 (없으면 손잡이 없음)
+ * @param {boolean} isGrow 트랙 B 가 키우는 중인가
+ * @return {{v:string, why:string, need:number, ev:number, hi:number, loss:number, cpc:number, ids:Array}}
+ */
+function adStopVerdict_(a, m, price, u, isGrow) {
+  var cpc = a.ck > 0 ? a.cost / a.ck : 0;
+  var need = (price > 0 && m.pct > 0) ? cpc / (price * m.pct / 100) : 0;      // 손익분기 주문율
+  var ev = (a.od + 1) / (a.ck + 2);                                           // 기대 주문율
+  var hi = a.ck > 0 ? (a.od + 2 * Math.sqrt(a.od + 1) + 1) / a.ck : 1;        // 주문율 상한
+  var loss = a.cost - a.sales * m.pct / 100;                                   // 광고비 − 공헌이익
+  var ids = u ? u.ads.filter(function (x) { return x.state === 'ENABLED'; })
+                     .map(function (x) { return x.id; }) : [];
+  var v, why;
+  if (isGrow) {
+    v = ASV_GROW;
+    why = '트랙 B 가 키우는 중입니다 — 일부러 손해를 보며 사는 자리라 여기서 멈추지 않습니다';
+  } else if (!u || !u.on) {
+    v = ASV_NOHANDLE;
+    why = u ? '이 SKU 의 광고가 이미 다 멈춰 있습니다'
+            : '상품광고 목록에 이 SKU 가 없습니다 — [광고 자료 갱신] 을 다시 하세요';
+  } else if (a.ck < ADSTOP_MIN_CLICKS) {
+    v = ASV_WATCH;
+    why = '클릭 ' + Math.round(a.ck) + '회로는 안 팔린다고 말할 수 없습니다 (최소 ' +
+          ADSTOP_MIN_CLICKS + '회). 주문율 상한이 ' + pct1_(hi) + ' 나 됩니다';
+  } else if (!need) {
+    v = ASV_WATCH;
+    why = '판매가나 마진율을 몰라 손익분기 주문율을 셀 수 없습니다';
+  } else if (hi < need) {
+    v = ASV_STOP;
+    why = '클릭 ' + Math.round(a.ck) + '회에 주문 ' + Math.round(a.od) + '건. ' +
+          '잘 봐줘도 주문율이 ' + pct1_(hi) + ' 를 넘기 어려운데, ' +
+          '본전이 되려면 ' + pct1_(need) + ' 는 팔려야 합니다. ' +
+          '이 창에서 ' + fmtYen_(loss) + ' 손해' + adStopDefNote_(m);
+  } else if (ev < need) {
+    v = ASV_STOP_EV;
+    why = '클릭 ' + Math.round(a.ck) + '회에 주문 ' + Math.round(a.od) + '건이면 ' +
+          '주문율은 ' + pct1_(ev) + ' 쯤으로 봅니다. 본전은 ' + pct1_(need) + ' 입니다 — ' +
+          '잘라 말할 정도는 아니지만(상한 ' + pct1_(hi) + ') 계속 사면 밑질 쪽이 큽니다. ' +
+          '이 창에서 ' + fmtYen_(loss) + ' 손해' + adStopDefNote_(m);
+  } else if (a.od > 0 && loss > 0) {
+    v = ASV_WATCH;
+    why = '팔리기는 하는데 밑집니다 (' + fmtYen_(loss) + '). 다만 기대 주문율 ' +
+          pct1_(ev) + ' 가 본전 ' + pct1_(need) + ' 를 넘어서, 멈출 자리가 아니라 ' +
+          '값을 낮출 자리입니다';
+  } else {
+    v = ASV_KEEP;
+    why = '본전을 넘겨 팔고 있습니다 (주문율 ' + pct1_(a.od / a.ck) + ' · 본전 ' + pct1_(need) + ')';
+  }
+  return { v: v, why: why, need: need, ev: ev, hi: hi, loss: loss, cpc: cpc, ids: ids };
 }
