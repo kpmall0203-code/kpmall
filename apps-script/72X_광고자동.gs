@@ -21,8 +21,23 @@
  * 돈이 새로 나가기 시작하는 자리는 사람이 누른다.
  */
 
-/** 매일 거는 걸음. 이름은 사람이 읽는 것, handler 는 트리거가 부르는 것 */
+/**
+ * 걸음 목록. 이름은 사람이 읽는 것, handler 는 트리거가 부르는 것.
+ *
+ * 주 1회짜리가 넷 있다 (월요일 이른 시각).
+ *   00시 SKU별 광고비 — 확대·멈춤 후보가 읽는 유일한 자료. 45일치를 받는다:
+ *        판정은 성숙한 날(최근 16일 제외)의 30일을 쓰므로 16+30=46일이 필요하다
+ *   01시 상품광고 목록 — 새 상품이 하루 1,000개씩 붙으니 목록도 낡는다
+ *   02시 검색어
+ *   09시 확대·멈춤 후보 다시 세우기 — 위 자료가 다 들어온 뒤라야 뜻이 있다
+ * 후보 표는 계산해서 적을 뿐이라 저절로 돌아도 돈이 나가지 않는다.
+ * 멈추는 것·만드는 것은 여전히 사람이 승인한 줄만 나간다.
+ */
 var AD_AUTOMATIONS = [
+  { name: '광고 · SKU별 광고비 수집', handler: 'scheduledAdsSpend', hour: 0, weekly: true,
+    why: '확대·멈춤 후보의 바탕 자료 (45일치 — 성숙 30일을 세려면 그만큼 필요하다)' },
+  { name: '광고 · 상품광고 목록 수집', handler: 'scheduledAdUnits', hour: 1, weekly: true,
+    why: 'SKU 하나하나의 광고ID — 이것이 있어야 낱개로 멈출 수 있다' },
   { name: '광고 · 검색어 수집·판정', handler: 'scheduledAdTerms', hour: 2, weekly: true,
     why: '자동 캠페인이 무슨 말로 팔았나 — 기준키워드는 여기서 고른다' },
   { name: '광고 · 지출 원장 수집', handler: 'scheduledAdSpend', hour: 3,
@@ -34,8 +49,12 @@ var AD_AUTOMATIONS = [
   { name: '광고 · 트랙 B 자동 진행', handler: 'scheduledAdAdvance', hour: 6,
     why: '기준키워드 고르기 → 갈아타기 → 만들기 → 겨냥 → 켜기' },
   { name: '광고 · 작업 검증', handler: 'scheduledAdVerify', hour: 7,
-    why: '보낸 것이 실제로 그렇게 됐나' }
+    why: '보낸 것이 실제로 그렇게 됐나' },
+  { name: '광고 · 확대·멈춤 후보 다시 세우기', handler: 'scheduledAdCandidates', hour: 9, weekly: true,
+    why: '어디에 더 쓸지 · 어디서 새는지. 적기만 하고 아무것도 바꾸지 않는다' }
 ];
+
+var ADS_AUTO_DAYS = 46;      // SKU별 광고비를 몇 일치 받을까 (성숙 16일 + 판정 30일)
 
 var ADSCHED_RETRY_PROP = 'ADSCHED_TRY_';
 var ADSCHED_RETRY_MAX = 4;             // 리포트가 늦을 때 몇 번까지 다시 올 것인가
@@ -155,6 +174,47 @@ function scheduledAdAdvance() {
 
 function scheduledAdVerify() {
   return adSchedRun_('scheduledAdVerify', '작업 검증', verifyAdJobs);
+}
+
+/**
+ * SKU별 광고비 — 주 1회.
+ *
+ * 사람이 누를 때는 '기간' 과 '어떤 SKU' 를 묻는다. 트리거에는 물을 사람이 없으니
+ * 기간은 ADS_AUTO_DAYS 일, 대상은 지난번에 고른 것을 그대로 쓴다 (속성에 남아 있다).
+ * 리포트가 늦으면 adsReportStep_ 이 스스로 1분 뒤 이어받기를 건다.
+ */
+function scheduledAdsSpend() {
+  return adSchedRun_('scheduledAdsSpend', 'SKU별 광고비 수집', function () {
+    var props = PropertiesService.getScriptProperties();
+    if (props.getProperty(PROP_ADS_QUEUE)) return adsReportStep_(false);   // 지난번 이어받기
+    var to = ymd_(new Date());
+    props.setProperty(PROP_ADS_QUEUE,
+                      JSON.stringify(adsWindows_(addDays_(to, -(ADS_AUTO_DAYS - 1)), to)));
+    return adsReportStep_(false);
+  });
+}
+
+/** 상품광고 목록 — 주 1회. 이어받는 중이면 그 자리부터 */
+function scheduledAdUnits() {
+  return adSchedRun_('scheduledAdUnits', '상품광고 목록 수집', function () {
+    var props = PropertiesService.getScriptProperties();
+    if (!props.getProperty(PROP_ADUNIT_NEXT)) props.deleteProperty(PROP_ADUNIT_ROW);
+    return adUnitStep_(false);
+  });
+}
+
+/**
+ * 확대·멈춤 후보 — 주 1회.
+ *
+ * 표를 세우는 일만 한다. 아마존에 나가는 것은 없다 —
+ * 멈추는 것은 사람이 [승인] 을 켠 줄만, 사람이 누를 때만 나간다.
+ */
+function scheduledAdCandidates() {
+  return adSchedRun_('scheduledAdCandidates', '확대·멈춤 후보', function () {
+    buildAdExpandCandidates();
+    buildAdStopCandidates();
+    return '완료';
+  });
 }
 
 // ── 켜고 끄기 ───────────────────────────────────────────
