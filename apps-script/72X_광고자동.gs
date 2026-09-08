@@ -50,6 +50,8 @@ var AD_AUTOMATIONS = [
     why: '기준키워드 고르기 → 갈아타기 → 만들기 → 겨냥 → 켜기' },
   { name: '광고 · 작업 검증', handler: 'scheduledAdVerify', hour: 7,
     why: '보낸 것이 실제로 그렇게 됐나' },
+  { name: '광고 · 확대 시험 주기', handler: 'scheduledAdExpandCycle', hour: 8,
+    why: '운영 기간이 끝난 시험을 되돌리고, 성숙한 시험을 판정한다 (값을 내리는 쪽이라 저절로 한다)' },
   { name: '광고 · 확대·멈춤 후보 다시 세우기', handler: 'scheduledAdCandidates', hour: 9, weekly: true,
     why: '어디에 더 쓸지 · 어디서 새는지. 적기만 하고 아무것도 바꾸지 않는다' }
 ];
@@ -192,6 +194,17 @@ function scheduledAdsSpend() {
                       JSON.stringify(adsWindows_(addDays_(to, -(ADS_AUTO_DAYS - 1)), to)));
     return adsReportStep_(false);
   });
+}
+
+/**
+ * 확대 시험 주기 — 매일.
+ *
+ * 되돌리기·보호중단은 값을 내리는 쪽이라 사람을 기다리지 않는다.
+ * 올리는 것은 여기서 하지 않는다 — 그것은 사람이 [③ 승인분 시험 시작] 을 눌러야 한다.
+ */
+function scheduledAdExpandCycle() {
+  return adSchedRun_('scheduledAdExpandCycle', '확대 시험 주기',
+                     function () { return adExpandCycle({ quiet: true }); });
 }
 
 /** 상품광고 목록 — 주 1회. 이어받는 중이면 그 자리부터 */

@@ -226,6 +226,18 @@ function adJobSend_(token, action, targetKind, targetId, to) {
       ADSW_CT_KEYWORD, ADSW_CT_KEYWORD);
     return adsCreated_(rk, 'keywords', 'keywordId');
   }
+  if (action === '예산변경' && targetKind === '캠페인') {
+    /**
+     * 캠페인 일예산. 확대 시험이 '값은 맞는데 예산이 먼저 떨어진다' 고 볼 때 쓴다.
+     * ⚠ 예산은 그 캠페인의 모든 상품에 함께 걸린다 — 계획을 세우는 쪽(72AE)이
+     * 전용 그룹인지 먼저 가린다. 여기서는 시키는 대로 보낼 뿐이다.
+     */
+    var rb = adsApiRetry_(token, 'put', '/sp/campaigns',
+      { campaigns: [{ campaignId: String(targetId),
+                      budget: { budget: Number(to), budgetType: 'DAILY' } }] },
+      ADSW_CT_CAMPAIGN, ADSW_CT_CAMPAIGN);
+    return adsCreated_(rb, 'campaigns', 'campaignId');
+  }
   if (action === '상태변경' && targetKind === '캠페인') {
     var r2 = adsApiRetry_(token, 'put', '/sp/campaigns',
       { campaigns: [{ campaignId: String(targetId), state: String(to) }] },

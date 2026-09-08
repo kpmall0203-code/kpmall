@@ -55,7 +55,7 @@ function tabModes_() {
              SHEET_ADPLAN_GROW, SHEET_SPENDDAY, SHEET_ADWATCH, SHEET_ADTERM, SHEET_ADLOG] },
 
     { key: 'adsA', name: '🏗 광고 · 트랙 A — 있는 광고 손질 (주·월)',
-      tabs: [SHEET_ADBASIS, SHEET_EXPAND, SHEET_ADSTOP, SHEET_REALLOC, SHEET_ADPLAN,
+      tabs: [SHEET_ADBASIS, SHEET_EXPAND, SHEET_EXTEST, SHEET_EXRESULT, SHEET_ADSTOP, SHEET_REALLOC, SHEET_ADPLAN,
              SHEET_ADTERM, SHEET_ADPROD, SHEET_ADWATCH, SHEET_ADLOG, SHEET_SALES] },
 
     { key: 'adsData', name: '📥 광고 · 자료 (수집물 — 프로그램이 읽는 것)',
@@ -322,6 +322,12 @@ function tabGuideRows_() {
      '[마진율(%)] 을 사람이 고쳐 적으면 다시 계산해도 그 값은 지우지 않는다. ' +
      '[필요마진율] 은 지금 내는 값이 손익분기가 되는 마진율이라 마진율을 몰라도 보인다',
      TAB_WHO_BOTH, '광고를 늘릴지 정할 때 (주 1회)'],
+    [A, SHEET_EXTEST, '더 사 보는 시험 하나하나 — 무엇을 얼마에서 얼마로 바꿨고, 언제 되돌리고 언제 판정하나. ' +
+     '[배정] 이 대조군인 줄은 일부러 바꾸지 않는다 (견주는 데 쓴다)',
+     TAB_WHO_BOTH, '시험을 시작·확인할 때'],
+    [A, SHEET_EXRESULT, '끝난 시험의 판정. 내 변화에서 대조군 변화를 빼 "정말 더 벌었나" 를 구간과 함께 낸다. ' +
+     '광고매출이 늘어도 이익이 안 늘면 성공이 아니다',
+     TAB_WHO_PROG, '시험이 성숙한 뒤'],
     [A, SHEET_ADSTOP, '안 팔리는데 돈만 쓰는 광고. 클릭이 쌓였는데도 본전 주문율에 못 미치는 SKU 를 골라 ' +
      '[승인] 을 켠 줄만 그 상품의 광고를 낱개로 멈춘다 (캠페인·광고그룹은 건드리지 않는다)',
      TAB_WHO_BOTH, '확대보다 먼저 — 주 1회'],

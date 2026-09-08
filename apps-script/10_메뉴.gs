@@ -92,7 +92,18 @@ function buildPriceMenu_() {
           .addSeparator()
           .addItem('⏰ 지금 무엇이 자동으로 도나', 'showAdTriggers')
           .addItem('⏰ 자동으로 도는 것 멈추기', 'stopAdGrowTriggers')))
-      .addItem('📈 확대 후보 — 어느 광고에 더 써도 되나 (마진율 채우기)', 'buildAdExpandCandidates')
+      /**
+       * 확대는 '결정' 이 아니라 '시험' 이다.
+       * 기준 14일 → 올린 값 14일 → 되돌림 → 성숙 16일 → 대조군과 견줘 판정.
+       * 되돌리기와 판정은 저절로 돈다 — 사람이 누르는 것은 ①②③ 뿐이다.
+       */
+      .addSubMenu(ui.createMenu('📈 확대 — 더 써도 되는 곳')
+        .addItem('① 확대 후보 (마진율 채우기)', 'buildAdExpandCandidates')
+        .addItem('② 시험 계획 (얼마에서 얼마로 · 누가 대조군)', 'planAdExpandTests')
+        .addItem('③ 승인분 시험 시작 (아마존에 나감)', 'startAdExpandTests')
+        .addSeparator()
+        .addItem('결과 보기 (대조군과 견준 추가이익)', 'buildAdExpandResults')
+        .addItem('지금 주기 한 번 (되돌림 · 평가)', 'adExpandCycle'))
       /**
        * 멈추기가 확대보다 먼저다.
        *

@@ -323,3 +323,36 @@ function adUserMarginMap_() {
   }
   return out;
 }
+
+
+/**
+ * 아무 기간이나 물어볼 수 있게 광고실적을 한 번만 읽어 둔다.
+ *
+ * 시험 전후를 견주려면 '이 SKU 의 이 날짜부터 저 날짜까지' 를 여러 번 물어야 한다.
+ * 그때마다 표를 다시 읽으면 2만 5천 줄을 시험 수만큼 훑게 된다.
+ *
+ * @return {function(string,string,string):{ck,od,cost,sales,days}} (sku, from, to)
+ */
+function adPerfWindow_() {
+  var idx = {};
+  var ash = ss_().getSheetByName(SHEET_ADS);
+  if (ash && ash.getLastRow() > 1) {
+    var v = ash.getRange(2, 1, ash.getLastRow() - 1, ADS_HEADER.length).getValues();
+    for (var i = 0; i < v.length; i++) {
+      var sku = String(v[i][1] || '').trim();
+      if (!sku) continue;
+      var d = v[i][0] instanceof Date ? ymd_(v[i][0]) : String(v[i][0] || '').substring(0, 10);
+      if (!d) continue;
+      (idx[sku] || (idx[sku] = [])).push({ d: d, ck: Number(v[i][7]) || 0, od: Number(v[i][8]) || 0,
+                                           cost: Number(v[i][4]) || 0, sales: Number(v[i][5]) || 0 });
+    }
+  }
+  return function (sku, from, to) {
+    var a = idx[sku] || [], o = { ck: 0, od: 0, cost: 0, sales: 0, days: 0 };
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].d < from || a[i].d > to) continue;
+      o.ck += a[i].ck; o.od += a[i].od; o.cost += a[i].cost; o.sales += a[i].sales; o.days++;
+    }
+    return o;
+  };
+}
