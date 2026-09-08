@@ -14,11 +14,22 @@
  * 못 미친다' 는 것을 셈으로 말한다.
  *
  *   필요 주문율 = 클릭비용 ÷ (판매가 × 마진율)      ← 이만큼은 팔려야 본전
+ *   기대 주문율 = (주문 + 1) ÷ (클릭 + 2)           ← 지금까지 본 것으로 보면 이쯤일 것이다
  *   주문율 상한 = (주문 + 2√(주문+1) + 1) ÷ 클릭     ← 운이 좋았다 쳐도 이보다 높기 어렵다
  *
- * 상한이 필요치보다 낮으면 멈출 근거가 된다. 주문 0 · 클릭 50 이면 상한은 6% 다 —
- * 필요 주문율이 8% 인 상품이라면 "이 값으로는 못 판다" 고 말할 수 있다.
- * 클릭 10 이면 상한이 30% 라 아무 말도 못 한다. 그래서 표본이 얇으면 '더 봄' 이다.
+ * 그래서 멈출 근거를 두 층으로 나눈다.
+ *
+ *   확실   상한 < 본전 — "이 값으로는 못 판다" 고 잘라 말할 수 있다
+ *   기대값 평균 < 본전 — 잘라 말하진 못해도, 계속 사면 밑질 쪽이 더 크다
+ *
+ * 왜 둘로 나누나. 상한만 쓰면 거의 아무것도 못 멈춘다 — 실제 자료로 재 보니
+ * 316개 중 4개(¥6,078)뿐이었다. 마진 17% · CPC ¥5 짜리 상품은 주문 0으로
+ * 클릭이 100회는 넘어야 상한이 본전 밑으로 내려가기 때문이다. 반면 기대값까지
+ * 넣으면 32개 · ¥48,105 가 걸린다. 그 둘은 성격이 다르니 판정도 따로 적고,
+ * 승인도 따로 하시라고 나눠 둔다.
+ *
+ * 멈추는 것은 되돌릴 수 있다 (아마존 화면에서 다시 켜면 된다). '한 번 멈추면 끝'
+ * 이 아니므로, 확실한 것만 기다리다 매달 몇 만 엔을 흘리는 것보다 낫다.
  *
  * ── 사람이 승인해야 나간다 ──────────────────────────────
  * 돈에 손대는 일은 승인 없이 하지 않는다. 표를 만들고, 사람이 [승인] 을 켜고,
@@ -30,15 +41,16 @@ var SHEET_ADSTOP = '광고멈춤후보';
 var ADSTOP_HEADER = [
   'SKU', '상품명', '판매가(JPY)', '마진율(%)', '마진출처',
   '성숙클릭', '성숙주문', '광고비(JPY)', '광고매출(JPY)',
-  '실제클릭비용(JPY)', '필요주문율(%)', '주문율상한(%)', '손실(JPY)',
+  '실제클릭비용(JPY)', '필요주문율(%)', '기대주문율(%)', '주문율상한(%)', '손실(JPY)',
   '판정', '사유', '켜진 광고', '캠페인', '광고ID들', '승인', '결과', '자료기간'
 ];
-var AS_SKU = 0, AS_APPROVE = 18, AS_RESULT = 19, AS_IDS = 17, AS_VERDICT = 13;
-var ADSTOP_APPROVE_COL = 19;          // 1부터
-var ADSTOP_ID_COL = 18;
+var AS_SKU = 0, AS_APPROVE = 19, AS_RESULT = 20, AS_IDS = 18, AS_VERDICT = 14, AS_LOSS = 13;
+var ADSTOP_APPROVE_COL = 20;          // 1부터
+var ADSTOP_ID_COL = 19;
 
 /** 판정 */
-var ASV_STOP = '멈춤 근거 있음';
+var ASV_STOP = '멈춤 · 확실';
+var ASV_STOP_EV = '멈춤 · 기대값';
 var ASV_WATCH = '더 봄';
 var ASV_KEEP = '팔림';
 var ASV_NOHANDLE = '손잡이 없음';
@@ -81,7 +93,7 @@ function buildAdStopCandidates() {
   var grow = adStopGrowSkus_();
   var info = adStopListing_();
   var ctx = adMarginCtx_();
-  var rows = [], cnt = {}, sumLoss = 0, sumCost = 0, nStop = 0;
+  var rows = [], cnt = {}, sumLoss = 0, sumCost = 0, nStop = 0, nEv = 0;
 
   for (var sku in perf.sku) {
     var a = perf.sku[sku];
@@ -93,6 +105,7 @@ function buildAdStopCandidates() {
     var m = adMarginFor_(ctx, sku, price, inf.jp, null);
     var cpc = a.ck > 0 ? a.cost / a.ck : 0;
     var need = (price > 0 && m.pct > 0) ? cpc / (price * m.pct / 100) : 0;      // 손익분기 주문율
+    var ev = (a.od + 1) / (a.ck + 2);                                           // 기대 주문율
     var hi = a.ck > 0 ? (a.od + 2 * Math.sqrt(a.od + 1) + 1) / a.ck : 1;        // 주문율 상한
     var loss = a.cost - a.sales * m.pct / 100;                                   // 광고비 − 공헌이익
 
@@ -115,22 +128,28 @@ function buildAdStopCandidates() {
       v = ASV_STOP;
       nStop++;
       why = '클릭 ' + Math.round(a.ck) + '회에 주문 ' + Math.round(a.od) + '건. ' +
-            '잘 봐줘도 주문율이 ' + (Math.round(hi * 1000) / 10) + '% 를 넘기 어려운데, ' +
-            '본전이 되려면 ' + (Math.round(need * 1000) / 10) + '% 는 팔려야 합니다. ' +
-            '이 창에서 ' + fmtYen_(loss) + ' 손해' +
-            (m.src === MSRC_DEFAULT ? ' (마진율이 기본값이라 실제 마진을 적으면 달라질 수 있습니다)' : '');
+            '잘 봐줘도 주문율이 ' + pct1_(hi) + ' 를 넘기 어려운데, ' +
+            '본전이 되려면 ' + pct1_(need) + ' 는 팔려야 합니다. ' +
+            '이 창에서 ' + fmtYen_(loss) + ' 손해' + adStopDefNote_(m);
+    } else if (ev < need) {
+      v = ASV_STOP_EV;
+      nEv++;
+      why = '클릭 ' + Math.round(a.ck) + '회에 주문 ' + Math.round(a.od) + '건이면 ' +
+            '주문율은 ' + pct1_(ev) + ' 쯤으로 봅니다. 본전은 ' + pct1_(need) + ' 입니다 — ' +
+            '잘라 말할 정도는 아니지만(상한 ' + pct1_(hi) + ') 계속 사면 밑질 쪽이 큽니다. ' +
+            '이 창에서 ' + fmtYen_(loss) + ' 손해' + adStopDefNote_(m);
     } else if (a.od > 0 && loss > 0) {
       v = ASV_WATCH;
-      why = '팔리기는 하는데 밑집니다 (' + fmtYen_(loss) + '). 다만 주문율 상한 ' +
-            (Math.round(hi * 1000) / 10) + '% 가 본전 ' + (Math.round(need * 1000) / 10) +
-            '% 를 넘어서, 멈출 근거까지는 안 됩니다 — 값을 낮출 자리입니다';
+      why = '팔리기는 하는데 밑집니다 (' + fmtYen_(loss) + '). 다만 기대 주문율 ' +
+            pct1_(ev) + ' 가 본전 ' + pct1_(need) + ' 를 넘어서, 멈출 자리가 아니라 ' +
+            '값을 낮출 자리입니다';
     } else {
       v = ASV_KEEP;
-      why = '본전을 넘겨 팔고 있습니다 (주문율 ' + (Math.round(a.od / a.ck * 1000) / 10) +
-            '% · 본전 ' + (Math.round(need * 1000) / 10) + '%)';
+      why = '본전을 넘겨 팔고 있습니다 (주문율 ' + pct1_(a.od / a.ck) +
+            ' · 본전 ' + pct1_(need) + ')';
     }
     cnt[v] = (cnt[v] || 0) + 1;
-    if (v === ASV_STOP) { sumLoss += loss; sumCost += a.cost; }
+    if (v === ASV_STOP || v === ASV_STOP_EV) { sumLoss += loss; sumCost += a.cost; }
 
     var ids = u ? u.ads.filter(function (x) { return x.state === 'ENABLED'; })
                        .map(function (x) { return x.id; }) : [];
@@ -138,20 +157,21 @@ function buildAdStopCandidates() {
     rows.push([sku, String(inf.jp || '').substring(0, 60), Math.round(price),
       m.pct, m.src,
       Math.round(a.ck), Math.round(a.od), Math.round(a.cost), Math.round(a.sales),
-      Math.round(cpc * 100) / 100, Math.round(need * 1000) / 10, Math.round(hi * 1000) / 10,
+      Math.round(cpc * 100) / 100, Math.round(need * 1000) / 10, Math.round(ev * 1000) / 10,
+      Math.round(hi * 1000) / 10,
       Math.round(loss), v, why,
       u ? u.on : 0, u && u.ads.length ? u.ads[0].camp : '', ids.join(','),
-      (v === ASV_STOP && k.ok) ? true : false, k.res || '', perf.span]);
+      (adStopCanStop_(v) && k.ok) ? true : false, k.res || '', perf.span]);
   }
 
   // 0 은 거짓이라 || 로 거르면 1순위가 꼴찌로 간다 — undefined 만 뒤로 보낸다
-  var order = {}; order[ASV_STOP] = 0; order[ASV_WATCH] = 1; order[ASV_KEEP] = 2;
-  order[ASV_NOHANDLE] = 3; order[ASV_GROW] = 4;
+  var order = {}; order[ASV_STOP] = 0; order[ASV_STOP_EV] = 1; order[ASV_WATCH] = 2;
+  order[ASV_KEEP] = 3; order[ASV_NOHANDLE] = 4; order[ASV_GROW] = 5;
   var rank = function (v) { var r = order[v]; return r === undefined ? 9 : r; };
   rows.sort(function (x, y) {
     var d = rank(x[AS_VERDICT]) - rank(y[AS_VERDICT]);
     if (d) return d;
-    return (Number(y[12]) || 0) - (Number(x[12]) || 0);      // 손실 큰 순
+    return (Number(y[AS_LOSS]) || 0) - (Number(x[AS_LOSS]) || 0);      // 손실 큰 순
   });
 
   writeTable_(sh, ADSTOP_HEADER, rows);
@@ -167,11 +187,13 @@ function buildAdStopCandidates() {
   ui_().alert('멈춤 후보',
     '상품 ' + rows.length + '개 · 센 기간 ' + perf.span + '\n' +
     Object.keys(cnt).map(function (x) { return x + ' ' + cnt[x]; }).join(' · ') + '\n\n' +
-    (nStop
-      ? '멈출 근거가 있는 것 ' + nStop + '개 — 이 창에서 ' + fmtYen_(sumCost) + ' 를 쓰고 ' +
+    ((nStop + nEv)
+      ? '멈출 근거 — 확실 ' + nStop + '개 · 기대값 ' + nEv + '개.\n' +
+        '이 ' + (nStop + nEv) + '개가 센 기간에 ' + fmtYen_(sumCost) + ' 를 쓰고 ' +
         fmtYen_(sumLoss) + ' 를 잃었습니다.\n\n' +
-        '[승인] 을 켠 줄만 멈춥니다. 다 켜려면 표의 승인 칸을 끌어 내리세요.\n' +
-        '그 다음 [🛑 멈추기 → ③ 승인분 멈추기] 를 누르세요.'
+        '"확실" 은 잘라 말할 수 있는 것이고, "기대값" 은 계속 사면 밑질 쪽이 큰 것입니다.\n' +
+        '멈춰도 되돌릴 수 있으니(아마존 화면에서 다시 켜면 됩니다) 둘 다 켜도 됩니다.\n\n' +
+        '[승인] 을 켠 줄만 멈춥니다. 그 다음 [🛑 멈추기 → ③ 승인분 멈추기].'
       : '멈출 근거가 있는 것은 없습니다. 여기서는 아무것도 바꾸지 않았습니다.'),
     ui_().ButtonSet.OK);
 }
@@ -218,17 +240,17 @@ function applyAdStopApproved() {
   var pick = [], nAds = 0;
   for (var i = 0; i < v.length; i++) {
     if (!adRowApproved_(v[i][AS_APPROVE])) continue;
-    if (String(v[i][AS_VERDICT]) !== ASV_STOP) continue;
+    if (!adStopCanStop_(String(v[i][AS_VERDICT]))) continue;
     var ids = String(v[i][AS_IDS] || '').split(',').map(function (x) { return x.trim(); })
                 .filter(function (x) { return x; });
     if (!ids.length) continue;
-    pick.push({ row: i, sku: String(v[i][AS_SKU]), ids: ids, camp: String(v[i][16] || ''),
-                cost: Number(v[i][7]) || 0 });
+    pick.push({ row: i, sku: String(v[i][AS_SKU]), ids: ids, camp: String(v[i][17] || ''),
+                cost: Number(v[i][7]) || 0, v: String(v[i][AS_VERDICT]) });
     nAds += ids.length;
   }
   if (!pick.length) {
     ui_().alert('멈출 것이 없습니다',
-      '[승인] 이 켜져 있고 판정이 "' + ASV_STOP + '" 인 줄만 멈춥니다.\n' +
+      '[승인] 이 켜져 있고 판정이 "' + ASV_STOP + '" 이나 "' + ASV_STOP_EV + '" 인 줄만 멈춥니다.\n' +
       '표에서 승인 칸을 켜고 다시 누르세요.', ui_().ButtonSet.OK);
     return;
   }
@@ -267,7 +289,7 @@ function applyAdStopApproved() {
       v[it.row][AS_RESULT] = '멈춤 ' + it.ids.length + '개 · ' + ymd_(new Date());
       logBuf.push([adLogRow_({ kind: '상품', camp: it.camp, sku: it.sku, item: '상태',
         from: 'ENABLED', to: 'PAUSED',
-        why: '성숙 ' + EXPAND_WINDOW_DAYS + '일 동안 본전 주문율에 못 미침 (멈춤 후보 승인)',
+        why: '성숙 ' + EXPAND_WINDOW_DAYS + '일 동안 본전 주문율에 못 미침 (' + it.v + ' · 승인)',
         by: '승인' })]);
     }
   }
@@ -287,17 +309,30 @@ function applyAdStopApproved() {
 function adStopNotes_(sh) {
   headerNotes_(sh, 1, ADSTOP_HEADER, {
     '필요주문율(%)': '= 클릭비용 ÷ (판매가 × 마진율). 광고비를 뽑으려면 이만큼은 팔려야 합니다.',
+    '기대주문율(%)': '= (주문 + 1) ÷ (클릭 + 2). 지금까지 본 것으로 보면 이쯤일 것이라는 값입니다.',
     '주문율상한(%)': '= (주문 + 2√(주문+1) + 1) ÷ 클릭.\n' +
       '"운이 나빴을 뿐" 이라고 쳐도 이보다 높기는 어렵다는 선입니다.\n' +
       '주문 0 · 클릭 50 이면 6%, 클릭 10 이면 30% — 그래서 클릭이 적으면 아무 말도 못 합니다.',
-    '판정': ASV_STOP + ' = 상한이 본전에 못 미침 (승인하면 멈춥니다)\n' +
+    '판정': ASV_STOP + ' = 상한도 본전에 못 미침 — 잘라 말할 수 있다\n' +
+      ASV_STOP_EV + ' = 기대값이 본전에 못 미침 — 계속 사면 밑질 쪽이 크다\n' +
       ASV_WATCH + ' = 표본이 얇거나, 밑지지만 멈출 근거까지는 아님\n' +
       ASV_KEEP + ' = 본전을 넘겨 팔고 있음\n' +
       ASV_NOHANDLE + ' = 광고ID 를 몰라 손댈 수 없음 (목록 수집 필요)\n' +
       ASV_GROW + ' = 트랙 B 가 키우는 중 — 일부러 손해 보는 자리라 뺍니다',
     '켜진 광고': '이 SKU 의 상품광고 중 지금 켜져 있는 것의 수. 멈추면 이만큼이 꺼집니다.',
-    '승인': '켜면 [③ 승인분 멈추기] 때 이 줄이 나갑니다. 판정이 "' + ASV_STOP + '" 인 줄만 나갑니다.',
+    '승인': '켜면 [③ 승인분 멈추기] 때 이 줄이 나갑니다 (판정이 멈춤인 줄만).\n' +
+      '멈춰도 되돌릴 수 있습니다 — 아마존 화면에서 그 상품광고를 다시 켜면 됩니다.',
     '광고ID들': '실제로 멈출 광고들. 캠페인·광고그룹은 건드리지 않습니다.',
     '자료기간': '실제로 센 날 (성숙한 날만).'
   });
+}
+
+
+/** 이 판정이면 승인 시 나가는가 */
+function adStopCanStop_(v) { return v === ASV_STOP || v === ASV_STOP_EV; }
+
+/** 마진율이 기본값이면 그렇다고 덧붙인다 — 판정이 뒤집힐 수 있는 줄이다 */
+function adStopDefNote_(m) {
+  return m.src === MSRC_DEFAULT
+    ? ' (마진율이 기본 ' + m.pct + '% 라 실제 마진을 [광고확대후보] 에 적으면 달라질 수 있습니다)' : '';
 }
