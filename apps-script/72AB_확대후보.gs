@@ -87,36 +87,10 @@ function buildAdExpandCandidates() {
   }
 
   // ② 광고 실적을 SKU 로 모은다 — 성숙한 날만, 그중 최근 EXPAND_WINDOW_DAYS 일
-  var av = ash.getRange(2, 1, ash.getLastRow() - 1, ADS_HEADER.length).getValues();
-  var today = ymd_(new Date());
-  var to = addDays_(today, -(SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS));
-  var from = addDays_(to, -(EXPAND_WINDOW_DAYS - 1));
-  var agg = {}, last = '', seen = {}, nOld = 0, nYoung = 0;
-  for (var i = 0; i < av.length; i++) {
-    var sku = String(av[i][1] || '').trim();
-    if (!sku) continue;
-    var d = av[i][0] instanceof Date ? ymd_(av[i][0]) : String(av[i][0] || '').substring(0, 10);
-    if (d > last) last = d;
-    if (d > to) { nYoung++; continue; }        // 아직 주문이 다 안 붙은 날
-    if (d < from) { nOld++; continue; }        // 창 밖
-    seen[d] = true;
-    var a = agg[sku] || (agg[sku] = { asin: String(av[i][2] || ''), im: 0, ck: 0, od: 0, cost: 0, sales: 0 });
-    a.im += Number(av[i][6]) || 0;
-    a.ck += Number(av[i][7]) || 0;
-    a.od += Number(av[i][8]) || 0;
-    a.cost += Number(av[i][4]) || 0;
-    a.sales += Number(av[i][5]) || 0;
-  }
-  var days = Object.keys(seen).length;
-  var span = days ? (from + '~' + to + ' · ' + days + '일') : '';
-  if (!days) {
-    ui_().alert('셀 수 있는 날이 없습니다',
-      '광고실적에 성숙한 날짜가 없습니다 (마지막 자료 ' + (last || '없음') + ').\n\n' +
-      '주문은 클릭한 날로부터 14일까지 그 클릭에 붙고, 보고가 이틀 늦습니다.\n' +
-      '그래서 최근 ' + (SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS) + '일은 세지 않습니다 — ' +
-      '지금 세려면 ' + to + ' 이전 날짜가 있어야 합니다.\n\n' +
-      '[📥 자료 받기 → 광고비 수집] 에서 그 앞 기간을 한 번 더 받아 주세요.',
-      ui_().ButtonSet.OK);
+  var perf = adPerfBySku_(EXPAND_WINDOW_DAYS);
+  var agg = perf.sku, span = perf.span, last = perf.last;
+  if (!perf.days) {
+    ui_().alert('셀 수 있는 날이 없습니다', adMatureHelp_(perf), ui_().ButtonSet.OK);
     return;
   }
 
@@ -183,10 +157,12 @@ function buildAdExpandCandidates() {
   }
 
   // 확대검토를 위로, 그 안에서는 여유배수가 큰 순으로
+  // 순위가 0 인 것을 || 로 거르면 1등이 꼴찌가 된다 (0 은 거짓이다). undefined 만 뒤로 보낸다
   var order = {}; order[EXC_GROW] = 0; order[EXC_HOLD] = 1; order[EXC_GUARD] = 2;
   order[EXC_THIN] = 3; order[EXC_WAIT] = 4;
+  var rank = function (v) { var r = order[v]; return r === undefined ? 9 : r; };
   rows.sort(function (x, y) {
-    var d = (order[x[20]] || 9) - (order[y[20]] || 9);
+    var d = rank(x[20]) - rank(y[20]);
     if (d) return d;
     return (Number(y[18]) || 0) - (Number(x[18]) || 0);
   });
@@ -199,8 +175,8 @@ function buildAdExpandCandidates() {
 
   ui_().alert('광고 확대 후보',
     '상품 ' + rows.length + '개 · 센 기간 ' + span + '\n' +
-    '(최근 ' + (SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS) + '일 ' + nYoung + '줄은 주문이 아직 다 안 붙어 뺐습니다' +
-    (nOld ? ' · 창 밖 ' + nOld + '줄' : '') + ')\n' +
+    '(최근 ' + (SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS) + '일 ' + perf.young + '줄은 주문이 아직 다 안 붙어 뺐습니다' +
+    (perf.old ? ' · 창 밖 ' + perf.old + '줄' : '') + ')\n' +
     Object.keys(cnt).map(function (k) { return k + ' ' + cnt[k]; }).join(' · ') + '\n\n' +
     '마진율 출처 — 사용자 입력 ' + nUser + ' · 원가 계산 ' + nCost +
     ' · 마진율 시트 ' + nSheet + ' · 기본 ' + nDef + '\n\n' +
@@ -236,4 +212,61 @@ function adExpandNotes_(sh) {
       '그 앞의 성숙한 날 중 최근 ' + EXPAND_WINDOW_DAYS + '일을 씁니다. 기간이 짧으면 ' +
       '[광고비 수집] 으로 그 앞 기간을 더 받아 두세요.'
   });
+}
+
+
+// ── 성숙한 날만 세기 (확대·멈춤이 같은 창을 쓴다) ────────
+//
+// 아마존은 클릭한 날로부터 14일까지 주문을 그 클릭에 붙이고, 보고가 이틀 늦다.
+// 그래서 최근 16일은 '아직 안 팔린 것' 이 아니라 '아직 모르는 것' 이다.
+// 확대 후보와 멈춤 후보가 서로 다른 창을 쓰면, 한쪽은 늘리라 하고 다른 쪽은
+// 멈추라 하는 일이 생긴다 — 그래서 창을 만드는 곳을 하나로 둔다.
+
+/** 성숙한 날의 창. @return {{from:string, to:string}} */
+function adMatureWindow_(days) {
+  var to = addDays_(ymd_(new Date()), -(SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS));
+  return { from: addDays_(to, -((days || EXPAND_WINDOW_DAYS) - 1)), to: to };
+}
+
+/**
+ * 광고실적을 SKU 로 모은다 (성숙한 날만).
+ * @return {{sku:Object, days:number, span:string, last:string, young:number, old:number,
+ *           from:string, to:string}}
+ */
+function adPerfBySku_(days) {
+  var w = adMatureWindow_(days);
+  var out = { sku: {}, days: 0, span: '', last: '', young: 0, old: 0, from: w.from, to: w.to };
+  var ash = ss_().getSheetByName(SHEET_ADS);
+  if (!ash || ash.getLastRow() < 2) return out;
+  var av = ash.getRange(2, 1, ash.getLastRow() - 1, ADS_HEADER.length).getValues();
+  var seen = {};
+  for (var i = 0; i < av.length; i++) {
+    var sku = String(av[i][1] || '').trim();
+    if (!sku) continue;
+    var d = av[i][0] instanceof Date ? ymd_(av[i][0]) : String(av[i][0] || '').substring(0, 10);
+    if (d > out.last) out.last = d;
+    if (d > w.to) { out.young++; continue; }
+    if (d < w.from) { out.old++; continue; }
+    seen[d] = true;
+    var a = out.sku[sku] || (out.sku[sku] = { asin: String(av[i][2] || ''),
+      im: 0, ck: 0, od: 0, cost: 0, sales: 0 });
+    a.im += Number(av[i][6]) || 0;
+    a.ck += Number(av[i][7]) || 0;
+    a.od += Number(av[i][8]) || 0;
+    a.cost += Number(av[i][4]) || 0;
+    a.sales += Number(av[i][5]) || 0;
+  }
+  out.days = Object.keys(seen).length;
+  out.span = out.days ? (w.from + '~' + w.to + ' · ' + out.days + '일') : '';
+  return out;
+}
+
+/** 성숙한 날이 없을 때 무엇을 해야 하는지 */
+function adMatureHelp_(perf) {
+  return '광고실적에 성숙한 날짜가 없습니다 (마지막 자료 ' + (perf.last || '없음') + ').\n\n' +
+    '주문은 클릭한 날로부터 ' + SPEND_ATTRIB_DAYS + '일까지 그 클릭에 붙고, 보고가 ' +
+    SPEND_REPORT_LAG_DAYS + '일 늦습니다.\n' +
+    '그래서 최근 ' + (SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS) + '일은 세지 않습니다 — ' +
+    '지금 세려면 ' + perf.to + ' 이전 날짜가 있어야 합니다.\n\n' +
+    '[📥 자료 받기 → 광고비 수집] 에서 그 앞 기간을 한 번 더 받아 주세요.';
 }

@@ -93,6 +93,17 @@ function buildPriceMenu_() {
           .addItem('⏰ 지금 무엇이 자동으로 도나', 'showAdTriggers')
           .addItem('⏰ 자동으로 도는 것 멈추기', 'stopAdGrowTriggers')))
       .addItem('📈 확대 후보 — 어느 광고에 더 써도 되나 (마진율 채우기)', 'buildAdExpandCandidates')
+      /**
+       * 멈추기가 확대보다 먼저다.
+       *
+       * 확대는 몰아넣기 그룹 때문에 못 하는 자리가 많지만(입찰 하나가 수천 SKU 에
+       * 함께 걸린다), 멈추기는 상품광고를 낱개로 끄면 되니 지금 구조로도 된다.
+       * 그리고 새는 돈은 늘리는 돈보다 먼저 잡는 것이 맞다.
+       */
+      .addSubMenu(ui.createMenu('🛑 멈추기 — 돈만 새는 광고')
+        .addItem('① 상품광고 목록 수집 (한 번 · 이어 달림)', 'fetchAdProductAds')
+        .addItem('② 멈춤 후보 만들기 (안 팔리는데 돈 쓰는 것)', 'buildAdStopCandidates')
+        .addItem('③ 승인분 멈추기 (아마존에 나감)', 'applyAdStopApproved'))
       .addSubMenu(ui.createMenu('🔎 검색어 — 매주')
         .addItem('① 검색어 수집', 'fetchAdSearchTerms')
         .addItem('② 검색어 판정 다시 계산', 'rollupAdTerms')

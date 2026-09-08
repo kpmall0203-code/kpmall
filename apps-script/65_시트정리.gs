@@ -55,11 +55,11 @@ function tabModes_() {
              SHEET_ADPLAN_GROW, SHEET_SPENDDAY, SHEET_ADWATCH, SHEET_ADTERM, SHEET_ADLOG] },
 
     { key: 'adsA', name: '🏗 광고 · 트랙 A — 있는 광고 손질 (주·월)',
-      tabs: [SHEET_ADBASIS, SHEET_EXPAND, SHEET_REALLOC, SHEET_ADPLAN, SHEET_ADTERM,
-             SHEET_ADPROD, SHEET_ADWATCH, SHEET_ADLOG, SHEET_SALES] },
+      tabs: [SHEET_ADBASIS, SHEET_EXPAND, SHEET_ADSTOP, SHEET_REALLOC, SHEET_ADPLAN,
+             SHEET_ADTERM, SHEET_ADPROD, SHEET_ADWATCH, SHEET_ADLOG, SHEET_SALES] },
 
     { key: 'adsData', name: '📥 광고 · 자료 (수집물 — 프로그램이 읽는 것)',
-      tabs: [SHEET_ADSTRUCT, SHEET_ADGRP, SHEET_ADPROD, SHEET_ADKW, SHEET_ADTERM_RAW,
+      tabs: [SHEET_ADSTRUCT, SHEET_ADGRP, SHEET_ADPROD, SHEET_ADUNIT, SHEET_ADKW, SHEET_ADTERM_RAW,
              SHEET_ADCAMP, SHEET_SPENDDAY, SHEET_ADS, SHEET_ADSDAY, SHEET_ADSREPORT,
              SHEET_ADSUM, SHEET_ADLOG] },
 
@@ -322,6 +322,9 @@ function tabGuideRows_() {
      '[마진율(%)] 을 사람이 고쳐 적으면 다시 계산해도 그 값은 지우지 않는다. ' +
      '[필요마진율] 은 지금 내는 값이 손익분기가 되는 마진율이라 마진율을 몰라도 보인다',
      TAB_WHO_BOTH, '광고를 늘릴지 정할 때 (주 1회)'],
+    [A, SHEET_ADSTOP, '안 팔리는데 돈만 쓰는 광고. 클릭이 쌓였는데도 본전 주문율에 못 미치는 SKU 를 골라 ' +
+     '[승인] 을 켠 줄만 그 상품의 광고를 낱개로 멈춘다 (캠페인·광고그룹은 건드리지 않는다)',
+     TAB_WHO_BOTH, '확대보다 먼저 — 주 1회'],
     [A, SHEET_REALLOC, 'SKU 별 채산성 계산 결과 — 권장 클릭비용과 구간', TAB_WHO_PROG, '재배분을 돌린 뒤'],
     [A, SHEET_ADPLAN, '만들 트랙 A·승격 캠페인 줄. 승인 ✓ 인 줄만 만들어진다', TAB_WHO_BOTH, '캠페인을 만들 때'],
     [A, SHEET_ADPROD, '어느 광고그룹이 어느 SKU 를 광고하나 — 채산성과 입찰을 잇는 다리',
@@ -330,6 +333,9 @@ function tabGuideRows_() {
 
     [D, SHEET_ADSTRUCT, '캠페인·광고그룹·키워드·겨냥의 지금 상태. 입찰을 확인하고 검증하는 기준',
      TAB_WHO_PROG, '검증이 "자료 없음" 이라 할 때'],
+    [D, SHEET_ADUNIT, 'SKU 하나하나의 광고와 그 광고ID. 몰아넣기 그룹에 든 것까지 전부 있다 — ' +
+     '이것이 있어야 그룹 입찰을 건드리지 않고 그 상품의 광고만 멈출 수 있다',
+     TAB_WHO_PROG, '멈춤 후보가 "손잡이 없음" 이라 할 때'],
     [D, SHEET_ADGRP, '광고그룹별 기본입찰. 자동 캠페인의 입찰은 이 값이 곧 그 그룹의 입찰이다',
      TAB_WHO_PROG, '입찰 검증이 이상할 때'],
     [D, SHEET_ADKW, '키워드·타깃의 주간 실적 (노출·클릭·주문·상단 점유율)', TAB_WHO_PROG, '주 1회'],
