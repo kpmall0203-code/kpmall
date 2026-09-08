@@ -147,6 +147,7 @@ function buildPriceMenu_() {
       .addSeparator()
       .addItem('TACOS · 광고 효율', 'analyzeTacos')
       .addItem('카트박스 손실', 'analyzeBuyBox')
+      .addItem('품절인데 팔리던 SKU (재입고 후보)', 'analyzeOutOfStockSellers')
       .addSeparator()
       .addSubMenu(ui.createMenu('📦 배송비 · 원가')
         .addItem('배송비 과다 SKU (비율 높은 순)', 'shipHeavyReport')

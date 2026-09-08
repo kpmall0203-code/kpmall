@@ -38,7 +38,7 @@ function tabModes_() {
 
     { key: 'analyze', name: '매출·판매 분석',
       tabs: [SHEET_MARGIN, SHEET_TRACK, SHEET_ADSREPORT,
-             SHEET_BUYBOX, SHEET_SEASON, SHEET_DAILY] },
+             SHEET_BUYBOX, SHEET_OOS, SHEET_SEASON, SHEET_DAILY] },
 
     /**
      * 광고는 묶음이 셋이다. 하나로 두면 탭 스물세 개가 한꺼번에 펴져
