@@ -9,7 +9,13 @@
  * ── 마진율을 사람이 채울 수 있게 하는 것이 요점이다 ──────
  * 후보의 90%는 바깥 마진율 시트에도 없어 기본 17% 로 간다. 17% 가 틀린 상품이
  * 많다는 것을 사람이 안다 — 그래서 [마진율(%)] 칸을 비워 두지 않고 채워 주되,
- * 사람이 고쳐 적으면 그 값을 다시는 덮어쓰지 않는다. [마진출처] 가 어느 쪽인지 말한다.
+ * 사람이 고쳐 적으면 그 값을 다시는 덮어쓰지 않는다.
+ *
+ * 사람이 고쳤는지는 [마진출처] 로 가리지 않는다. 마진율만 고치고 출처 칸은
+ * 그대로 두는 것이 자연스럽고, 실제로 그렇게 하고 계신다. 그래서 [프로그램값(%)]
+ * 칸에 '내가 그때 쓴 값' 을 남겨 두고, 지금 칸의 값이 그것과 다르면 사람이 고친 것으로
+ * 본다. 그 줄은 [마진출처] 를 '사용자 입력' 으로 바꿔 두어 다음부터는 한눈에 보인다.
+ * (프로그램값 칸이 없던 옛 표는, 지금 다시 셈한 값과 달라도 사람 것으로 친다.)
  *
  * ── 필요마진율: 가정 없이 볼 수 있는 하나의 숫자 ─────────
  *   필요마진율 = 실제 CPC ÷ (객단가 × 실제 주문율)
@@ -38,9 +44,10 @@ var EXPAND_HEADER = [
   '객단가(JPY)', '성숙클릭', '성숙주문', '광고비(JPY)', '광고매출(JPY)',
   '실제클릭비용(JPY)', '실제주문율(%)', '판단주문율(%)',
   '주문당공헌이익(JPY)', '손익분기클릭비용(JPY)', '목표클릭비용(JPY)', '여유배수',
-  '필요마진율(%)', '분류', '사유', '자료기간'
+  '필요마진율(%)', '분류', '사유', '자료기간', '프로그램값(%)'
 ];
 var EX_SKU = 0, EX_ASIN = 1, EX_NAME = 2, EX_PRICE = 3, EX_MARGIN = 4, EX_MSRC = 5;
+var EX_PROG = 23;                   // 프로그램이 지난번에 낸 값 (사람이 고쳤는지 가리는 잣대)
 
 /** 분류 (기획서 3.1) */
 var EXC_GROW = '확대검토';
@@ -75,14 +82,22 @@ function buildAdExpandCandidates() {
     return;
   }
 
-  // ① 사람이 적어 둔 마진율을 먼저 챙긴다 — 새로 고쳐도 그 값은 살린다
+  // ① 사람이 적어 둔 마진율을 먼저 챙긴다 — 새로 고쳐도 그 값은 살린다.
+  //    출처 칸이 아니라 '프로그램값' 과 견줘 가린다 (사람은 보통 숫자만 고친다).
   var sh = ss_().getSheetByName(SHEET_EXPAND);
-  var keep = {};
+  var keep = {}, oldProg = {};
   if (sh.getLastRow() > 1) {
-    var old = sh.getRange(2, 1, sh.getLastRow() - 1, EXPAND_HEADER.length).getValues();
+    var wid = Math.max(sh.getLastColumn(), EXPAND_HEADER.length);
+    var old = sh.getRange(2, 1, sh.getLastRow() - 1, wid).getValues();
     for (var o = 0; o < old.length; o++) {
       var k = String(old[o][EX_SKU] || '').trim();
-      if (k && String(old[o][EX_MSRC]) === MSRC_USER) keep[k] = Number(old[o][EX_MARGIN]);
+      if (!k) continue;
+      var mv = Number(old[o][EX_MARGIN]);
+      if (!(mv > 0)) continue;
+      var pv = Number(old[o][EX_PROG]);
+      if (String(old[o][EX_MSRC]) === MSRC_USER) keep[k] = mv;
+      else if (pv > 0) { if (Math.abs(mv - pv) > 0.05) keep[k] = mv; }
+      else oldProg[k] = mv;            // 프로그램값 칸이 없던 옛 표 — 아래에서 다시 셈해 견준다
     }
   }
 
@@ -106,13 +121,21 @@ function buildAdExpandCandidates() {
     }
   }
 
-  var ctx = adMarginCtx_();
+  // 표를 세울 때는 자료를 새로 읽는다 — 한 실행 안에서 확대·멈춤을 잇달아 세우면
+  // 앞에서 들고 있던 낡은 마진(사람이 방금 적은 값이 빠진 것)을 쓰게 된다
+  var ctx = adMarginCtx_(true);
   var rows = [], cnt = {}, nUser = 0, nSheet = 0, nCost = 0, nDef = 0;
   for (var sku2 in agg) {
     var a2 = agg[sku2], inf = info[sku2] || { asin: a2.asin, jp: '', price: 0 };
     var aov = a2.od > 0 ? a2.sales / a2.od : 0;
     var price = inf.price || aov;
-    var m = adMarginFor_(ctx, sku2, price, inf.jp, keep[sku2]);
+    var pg = adMarginProgram_(ctx, sku2, price, inf.jp);      // 프로그램만으로 낸 값
+    var mine = keep[sku2];
+    // 옛 표(프로그램값 칸이 없던 것)는 지금 셈한 값과 달라야 사람이 고친 것으로 본다
+    if (!(Number(mine) > 0) && oldProg[sku2] > 0 && Math.abs(oldProg[sku2] - pg.pct) > 0.05) {
+      mine = oldProg[sku2];
+    }
+    var m = adMarginFor_(ctx, sku2, price, inf.jp, mine);
     if (m.src === MSRC_USER) nUser++;
     else if (m.src === MSRC_SHEET) nSheet++;
     else if (m.src === MSRC_COST || m.src === MSRC_LOSS) nCost++;
@@ -153,7 +176,7 @@ function buildAdExpandCandidates() {
       Math.round(cpc * 100) / 100, Math.round(real * 10000) / 100, Math.round(q * 10000) / 100,
       Math.round(G), Math.round(be * 100) / 100, Math.round(target * 100) / 100,
       cpc > 0 ? Math.round(room * 100) / 100 : '',
-      need ? Math.round(need * 10) / 10 : '', cls, why, span]);
+      need ? Math.round(need * 10) / 10 : '', cls, why, span, pg.pct]);
   }
 
   // 확대검토를 위로, 그 안에서는 여유배수가 큰 순으로
@@ -206,6 +229,8 @@ function adExpandNotes_(sh) {
       EXC_GUARD + ' = 지금이 목표보다 높음 — 줄일 자리\n' +
       EXC_THIN + ' = 클릭 ' + EXPAND_MIN_CLICKS + ' · 주문 ' + EXPAND_MIN_ORDERS + ' 미만\n' +
       EXC_WAIT + ' = 자료가 모자라 셀 수 없음',
+    '프로그램값(%)': '프로그램이 스스로 낸 마진율 (원가·바깥 시트·기본값). 고치지 마세요 —\n' +
+      '[마진율(%)] 이 이 값과 다르면 "사람이 고친 것" 으로 보고 그 값을 지키는 잣대입니다.',
     '자료기간': '실제로 센 날. 주문은 클릭한 날로부터 ' + SPEND_ATTRIB_DAYS + '일까지 붙고 보고가 ' +
       SPEND_REPORT_LAG_DAYS + '일 늦어서, 최근 ' + (SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS) +
       '일은 세지 않습니다 — 그 날들을 함께 세면 잘 팔리는 상품이 "안 팔린다" 로 보입니다.\n' +
@@ -269,4 +294,32 @@ function adMatureHelp_(perf) {
     '그래서 최근 ' + (SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS) + '일은 세지 않습니다 — ' +
     '지금 세려면 ' + perf.to + ' 이전 날짜가 있어야 합니다.\n\n' +
     '[📥 자료 받기 → 광고비 수집] 에서 그 앞 기간을 한 번 더 받아 주세요.';
+}
+
+
+/**
+ * 사람이 [광고확대후보] 표에 적어 둔 마진율. SKU → %.
+ *
+ * 마진을 묻는 곳은 전부 여기를 거친다 (72AA 가 문맥에 싣는다). 그래야
+ * 확대 후보에 적은 값이 멈춤 후보·트랙 B 추천에도 그대로 쓰인다.
+ *
+ * 사람 것인지 가리는 잣대는 두 가지다 — [마진출처] 가 '사용자 입력' 이거나,
+ * [마진율] 이 [프로그램값] 과 다르거나. 뒤엣것이 중요하다: 사람은 보통 숫자만 고치고
+ * 출처 칸은 그대로 두기 때문이다.
+ */
+function adUserMarginMap_() {
+  var out = {};
+  var sh = ss_().getSheetByName(SHEET_EXPAND);
+  if (!sh || sh.getLastRow() < 2) return out;
+  var wid = Math.max(sh.getLastColumn(), EXPAND_HEADER.length);
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, wid).getValues();
+  for (var i = 0; i < v.length; i++) {
+    var sku = String(v[i][EX_SKU] || '').trim();
+    var m = Number(v[i][EX_MARGIN]);
+    if (!sku || !(m > 0) || m >= 100) continue;
+    var prog = Number(v[i][EX_PROG]);
+    if (String(v[i][EX_MSRC]) === MSRC_USER) out[sku] = m;
+    else if (prog > 0 && Math.abs(m - prog) > 0.05) out[sku] = m;
+  }
+  return out;
 }

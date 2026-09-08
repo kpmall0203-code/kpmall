@@ -60,9 +60,16 @@ function adMarginCtxBuild_() {
   var ctx = {
     def: (Number(basis['기본 마진율']) > 0 ? Number(basis['기본 마진율']) * 100
                                           : MARGIN_DEFAULT_PCT),
-    costs: {}, rate: 0, skuCost: {}, manual: {}, ext: {},
-    nCost: 0, nExt: 0
+    costs: {}, rate: 0, skuCost: {}, manual: {}, ext: {}, user: {},
+    nCost: 0, nExt: 0, nUser: 0
   };
+  // 사람이 광고확대후보 표에 적어 둔 값 — 이것이 가장 세다.
+  // 여기에 실어야 멈춤 후보·트랙 B 추천도 같은 값을 본다 (표를 보는 곳마다 다른 마진을
+  // 쓰면, 한 표는 늘리라 하고 다른 표는 멈추라 한다).
+  try {
+    ctx.user = adUserMarginMap_() || {};
+    ctx.nUser = Object.keys(ctx.user).length;
+  } catch (e) { ctx.user = {}; }
   try {
     ctx.costs = costMap_() || {};
     ctx.rate = Number(fxHouseRate_()) || 0;
@@ -88,12 +95,24 @@ function adMarginCtxBuild_() {
  * @return {{pct:number, src:string, why:string}}
  */
 function adMarginFor_(ctx, sku, price, jpName, userPct) {
-  // ① 사람이 적은 값
+  // ① 사람이 적은 값 (부르는 쪽이 준 것이 없으면 광고확대후보 표에서 찾는다)
   var u = Number(userPct);
+  if (!(isFinite(u) && u > 0)) u = Number((ctx.user || {})[sku]);
   if (isFinite(u) && u > 0 && u < 100) {
-    return { pct: u, src: MSRC_USER, why: '표에 직접 적은 값입니다 — 프로그램이 덮어쓰지 않습니다' };
+    return { pct: u, src: MSRC_USER,
+             why: '사람이 [' + SHEET_EXPAND + '] 표에 직접 적은 값입니다 — 프로그램이 덮어쓰지 않습니다' };
   }
+  return adMarginProgram_(ctx, sku, price, jpName);
+}
 
+/**
+ * 사람이 적은 값을 빼고, 프로그램만으로 낼 수 있는 마진율.
+ *
+ * 확대후보 표는 이 값도 함께 적어 둔다. 그래야 다음에 다시 셀 때
+ * "이 칸이 그때 내가 쓴 값 그대로인가, 사람이 고쳤나" 를 알 수 있다 —
+ * 사람이 마진율만 고치고 [마진출처] 는 그대로 두는 것이 자연스럽기 때문이다.
+ */
+function adMarginProgram_(ctx, sku, price, jpName) {
   // ② 원가로 계산 (원가·배송비·환율·수수료)
   var cost = Number((ctx.costs || {})[sku]) || 0;
   if (cost > 0 && ctx.rate > 0 && price > 0) {

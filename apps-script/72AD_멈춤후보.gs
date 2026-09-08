@@ -92,7 +92,7 @@ function buildAdStopCandidates() {
 
   var grow = adStopGrowSkus_();
   var info = adStopListing_();
-  var ctx = adMarginCtx_();
+  var ctx = adMarginCtx_(true);       // 방금 확대후보에 적힌 값까지 새로 읽는다
   var rows = [], cnt = {}, sumLoss = 0, sumCost = 0, nStop = 0, nEv = 0;
 
   for (var sku in perf.sku) {
