@@ -92,6 +92,7 @@ function buildPriceMenu_() {
           .addSeparator()
           .addItem('⏰ 지금 무엇이 자동으로 도나', 'showAdTriggers')
           .addItem('⏰ 자동으로 도는 것 멈추기', 'stopAdGrowTriggers')))
+      .addItem('📈 확대 후보 — 어느 광고에 더 써도 되나 (마진율 채우기)', 'buildAdExpandCandidates')
       .addSubMenu(ui.createMenu('🔎 검색어 — 매주')
         .addItem('① 검색어 수집', 'fetchAdSearchTerms')
         .addItem('② 검색어 판정 다시 계산', 'rollupAdTerms')

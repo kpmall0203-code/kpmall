@@ -55,7 +55,7 @@ function tabModes_() {
              SHEET_ADPLAN_GROW, SHEET_SPENDDAY, SHEET_ADWATCH, SHEET_ADTERM, SHEET_ADLOG] },
 
     { key: 'adsA', name: '🏗 광고 · 트랙 A — 있는 광고 손질 (주·월)',
-      tabs: [SHEET_ADBASIS, SHEET_REALLOC, SHEET_ADPLAN, SHEET_ADTERM,
+      tabs: [SHEET_ADBASIS, SHEET_EXPAND, SHEET_REALLOC, SHEET_ADPLAN, SHEET_ADTERM,
              SHEET_ADPROD, SHEET_ADWATCH, SHEET_ADLOG, SHEET_SALES] },
 
     { key: 'adsData', name: '📥 광고 · 자료 (수집물 — 프로그램이 읽는 것)',
@@ -318,6 +318,10 @@ function tabGuideRows_() {
      TAB_WHO_BOTH, '주 1회'],
 
     [A, SHEET_ADBASIS, '트랙 A 계산의 기준값 (마진율·목표 ACOS·한도 등)', TAB_WHO_HUMAN, '기준을 바꿀 때'],
+    [A, SHEET_EXPAND, '지금 광고 중인 상품 중 어디에 더 써도 되나. 상품마다 마진율과 그 출처를 적어 두고, ' +
+     '[마진율(%)] 을 사람이 고쳐 적으면 다시 계산해도 그 값은 지우지 않는다. ' +
+     '[필요마진율] 은 지금 내는 값이 손익분기가 되는 마진율이라 마진율을 몰라도 보인다',
+     TAB_WHO_BOTH, '광고를 늘릴지 정할 때 (주 1회)'],
     [A, SHEET_REALLOC, 'SKU 별 채산성 계산 결과 — 권장 클릭비용과 구간', TAB_WHO_PROG, '재배분을 돌린 뒤'],
     [A, SHEET_ADPLAN, '만들 트랙 A·승격 캠페인 줄. 승인 ✓ 인 줄만 만들어진다', TAB_WHO_BOTH, '캠페인을 만들 때'],
     [A, SHEET_ADPROD, '어느 광고그룹이 어느 SKU 를 광고하나 — 채산성과 입찰을 잇는 다리',

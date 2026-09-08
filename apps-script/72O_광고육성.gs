@@ -149,12 +149,13 @@ function adGrowSuggestCvr_() {
  * 얼마를 넣으면 좋은지 셈해서 알려 준다 (사람이 고칠 수 있는 추천값).
  *
  * ── 마진율 ──────────────────────────────────────────────
- * 이 시스템은 이미 SKU 마다 원가(원)·배송비(엔)·사내환율·판매수수료율을 안다.
- * 그래서 추정이 아니라 계산이다:
+ * 마진은 72AA 한 곳에 묻는다 — 원가 계산 > 바깥 마진율 시트 > 기본 17% 순서다.
+ * 원가가 있으면 추정이 아니라 계산이다:
  *   건당 이익(원) = (판매가 × (1 − 수수료) − 배송비) × 환율 − 원가
  *   마진율 = 건당 이익 ÷ 환율 ÷ 판매가
- * 원가가 없는 SKU 는 계산이 안 된다 — 그때는 계정 기본 마진율을 권하되
- * '확인 필요' 라고 적는다. 지어낸 값을 승인된 값처럼 보이게 두지 않는다.
+ * 원가가 없으면 바깥 시트에서 일본어 상품명이 정확히 같은 줄을 찾고, 그것도 없으면
+ * 기본 17% 다. 어느 쪽이었는지는 [사유] 칸에 그대로 적는다 —
+ * 지어낸 값을 승인된 값처럼 보이게 두지 않는다.
  *
  * ── 전환율예측 ──────────────────────────────────────────
  * 새 상품은 이력이 없다. 계정에서 이미 팔리는 상품들의 오가닉 전환율 중앙값을 권한다.
@@ -177,35 +178,15 @@ function adGrowRecommend_(sku, priceJpy, marginPct, multiple) {
   var basis = adBasis_();
   var mult = Number(multiple) || ADGROW_MULT_DEFAULT;
 
-  // ① 마진율 — 원가가 있으면 계산, 없으면 계정 기본값
-  var m = null, mWhy = '';
+  // ① 마진율 — 한 곳(72AA)에 묻는다: 원가 계산 > 바깥 마진율 시트 > 기본 17%
+  //    (사람이 이미 적어 둔 값은 애초에 여기까지 오지 않는다 — 부르는 쪽이 빈칸일 때만 부른다)
+  var m, mWhy;
   try {
-    var costs = costMap_();
-    var rate = fxHouseRate_();
-    var cost = Number(costs[sku]) || 0;
-    if (cost > 0 && rate > 0 && price > 0) {
-      var ship = 0, shipWhy = '';
-      try {
-        var r = resolveShipping_(sku, skuCostMap_(), costInfoMap_());
-        ship = Number(r.fee) || 0; shipWhy = r.src;
-      } catch (e2) { ship = 0; shipWhy = '배송비 모름'; }
-      var profitKrw = unitProfitKrw_(price, ship, cost, rate, DEFAULT_FEE_RATE);
-      var pct = profitKrw / rate / price * 100;
-      if (pct > 0 && pct < 100) {
-        m = Math.round(pct * 10) / 10;
-        mWhy = '원가 ' + Math.round(cost).toLocaleString() + '원 · 배송비 ¥' + Math.round(ship) +
-               ' (' + shipWhy + ') · 수수료 ' + Math.round(DEFAULT_FEE_RATE * 100) + '% · 환율 ' +
-               rate.toFixed(2) + ' 로 계산';
-      } else if (pct <= 0) {
-        m = 0;
-        mWhy = '⛔ 이 값·원가로는 팔수록 손해입니다 (건당 ' +
-               Math.round(profitKrw).toLocaleString() + '원). 광고로 키울 상품이 아닙니다';
-      }
-    }
-  } catch (e) { m = null; }
-  if (m === null) {
+    var mc = adMarginFor_(adMarginCtx_(), sku, price, adJpNameMap_()[sku] || '', null);
+    m = mc.pct; mWhy = mc.src + ' — ' + mc.why;
+  } catch (e) {
     m = Math.round((Number(basis['기본 마진율']) || 0.17) * 1000) / 10;
-    mWhy = '원가를 몰라 계정 기본값을 넣었습니다 — 실제 마진율로 고치세요 (원가 탭에 이 SKU 를 넣으면 계산합니다)';
+    mWhy = '마진을 셀 자료를 못 읽어 계정 기본값을 넣었습니다 — 실제 마진율로 고치세요';
   }
   out.margin = { v: m, why: mWhy };
 
