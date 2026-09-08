@@ -17,6 +17,16 @@
  * 낮으면 지금도 밑지고 있다. 마진율을 몰라도 이 값은 계산된다 —
  * 그래서 사람이 "이 상품은 그만큼 안 남아" 라고 바로 판단할 수 있다.
  *
+ * ── 언제 것을 세는가: 성숙한 날만 ───────────────────────
+ * 아마존은 클릭한 날로부터 14일까지 주문을 그 클릭에 붙인다. 거기에 보고 지연
+ * 이틀을 더해 16일이 지나야 그 날의 주문이 다 붙는다. 그 전 날짜를 함께 세면
+ * 최근으로 올수록 주문이 없는 것처럼 보여, 잘 팔리는 상품을 '비용보호' 로 몰아
+ * 입찰을 깎게 된다. 그래서 최근 16일은 아예 빼고, 그 앞의 성숙한 날 중
+ * 최근 30일만 센다. 표의 [자료기간] 이 실제로 센 날을 말한다.
+ *
+ * 이 값들은 지출 원장(72R)이 쓰는 것과 같은 상수다 — 한 문서 안에서
+ * 성숙의 뜻이 둘이면 안 된다.
+ *
  * ── 여기서는 아무것도 바꾸지 않는다 ─────────────────────
  * 계산하고 표에 적을 뿐, 입찰·예산을 건드리지 않는다 (기획서 7.2).
  */
@@ -28,7 +38,7 @@ var EXPAND_HEADER = [
   '객단가(JPY)', '성숙클릭', '성숙주문', '광고비(JPY)', '광고매출(JPY)',
   '실제클릭비용(JPY)', '실제주문율(%)', '판단주문율(%)',
   '주문당공헌이익(JPY)', '손익분기클릭비용(JPY)', '목표클릭비용(JPY)', '여유배수',
-  '필요마진율(%)', '분류', '사유', '자료기준일'
+  '필요마진율(%)', '분류', '사유', '자료기간'
 ];
 var EX_SKU = 0, EX_ASIN = 1, EX_NAME = 2, EX_PRICE = 3, EX_MARGIN = 4, EX_MSRC = 5;
 
@@ -45,6 +55,7 @@ var EXPAND_MIN_ORDERS = 3;
 var EXPAND_PRIOR = 50;              // 판단주문율의 사전클릭
 var EXPAND_KEEP = 0.65;             // 이익보존계수 — 목표 CPC = 손익분기 × 이것
 var EXPAND_ROOM = 1.10;             // 목표가 지금보다 이만큼 높아야 '확대검토'
+var EXPAND_WINDOW_DAYS = 30;        // 성숙한 날 중 몇 일을 셀까
 
 /**
  * 메뉴: 후보 표를 만들거나 새로 고친다.
@@ -75,20 +86,38 @@ function buildAdExpandCandidates() {
     }
   }
 
-  // ② 광고 실적을 SKU 로 모은다
+  // ② 광고 실적을 SKU 로 모은다 — 성숙한 날만, 그중 최근 EXPAND_WINDOW_DAYS 일
   var av = ash.getRange(2, 1, ash.getLastRow() - 1, ADS_HEADER.length).getValues();
-  var agg = {}, last = '';
+  var today = ymd_(new Date());
+  var to = addDays_(today, -(SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS));
+  var from = addDays_(to, -(EXPAND_WINDOW_DAYS - 1));
+  var agg = {}, last = '', seen = {}, nOld = 0, nYoung = 0;
   for (var i = 0; i < av.length; i++) {
     var sku = String(av[i][1] || '').trim();
     if (!sku) continue;
     var d = av[i][0] instanceof Date ? ymd_(av[i][0]) : String(av[i][0] || '').substring(0, 10);
     if (d > last) last = d;
+    if (d > to) { nYoung++; continue; }        // 아직 주문이 다 안 붙은 날
+    if (d < from) { nOld++; continue; }        // 창 밖
+    seen[d] = true;
     var a = agg[sku] || (agg[sku] = { asin: String(av[i][2] || ''), im: 0, ck: 0, od: 0, cost: 0, sales: 0 });
     a.im += Number(av[i][6]) || 0;
     a.ck += Number(av[i][7]) || 0;
     a.od += Number(av[i][8]) || 0;
     a.cost += Number(av[i][4]) || 0;
     a.sales += Number(av[i][5]) || 0;
+  }
+  var days = Object.keys(seen).length;
+  var span = days ? (from + '~' + to + ' · ' + days + '일') : '';
+  if (!days) {
+    ui_().alert('셀 수 있는 날이 없습니다',
+      '광고실적에 성숙한 날짜가 없습니다 (마지막 자료 ' + (last || '없음') + ').\n\n' +
+      '주문은 클릭한 날로부터 14일까지 그 클릭에 붙고, 보고가 이틀 늦습니다.\n' +
+      '그래서 최근 ' + (SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS) + '일은 세지 않습니다 — ' +
+      '지금 세려면 ' + to + ' 이전 날짜가 있어야 합니다.\n\n' +
+      '[📥 자료 받기 → 광고비 수집] 에서 그 앞 기간을 한 번 더 받아 주세요.',
+      ui_().ButtonSet.OK);
+    return;
   }
 
   // ③ 리스팅에서 이름·가격 (바깥 마진율 시트를 이름으로 맞대므로 일본어명이 필요하다)
@@ -150,7 +179,7 @@ function buildAdExpandCandidates() {
       Math.round(cpc * 100) / 100, Math.round(real * 10000) / 100, Math.round(q * 10000) / 100,
       Math.round(G), Math.round(be * 100) / 100, Math.round(target * 100) / 100,
       cpc > 0 ? Math.round(room * 100) / 100 : '',
-      need ? Math.round(need * 10) / 10 : '', cls, why, last]);
+      need ? Math.round(need * 10) / 10 : '', cls, why, span]);
   }
 
   // 확대검토를 위로, 그 안에서는 여유배수가 큰 순으로
@@ -169,7 +198,9 @@ function buildAdExpandCandidates() {
   showSheet_(SHEET_EXPAND);
 
   ui_().alert('광고 확대 후보',
-    '상품 ' + rows.length + '개 · 자료 기준일 ' + last + '\n' +
+    '상품 ' + rows.length + '개 · 센 기간 ' + span + '\n' +
+    '(최근 ' + (SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS) + '일 ' + nYoung + '줄은 주문이 아직 다 안 붙어 뺐습니다' +
+    (nOld ? ' · 창 밖 ' + nOld + '줄' : '') + ')\n' +
     Object.keys(cnt).map(function (k) { return k + ' ' + cnt[k]; }).join(' · ') + '\n\n' +
     '마진율 출처 — 사용자 입력 ' + nUser + ' · 원가 계산 ' + nCost +
     ' · 마진율 시트 ' + nSheet + ' · 기본 ' + nDef + '\n\n' +
@@ -199,6 +230,10 @@ function adExpandNotes_(sh) {
       EXC_GUARD + ' = 지금이 목표보다 높음 — 줄일 자리\n' +
       EXC_THIN + ' = 클릭 ' + EXPAND_MIN_CLICKS + ' · 주문 ' + EXPAND_MIN_ORDERS + ' 미만\n' +
       EXC_WAIT + ' = 자료가 모자라 셀 수 없음',
-    '자료기준일': '광고실적에 들어 있는 마지막 날짜. 오래됐으면 [광고비 수집] 을 다시 하세요.'
+    '자료기간': '실제로 센 날. 주문은 클릭한 날로부터 ' + SPEND_ATTRIB_DAYS + '일까지 붙고 보고가 ' +
+      SPEND_REPORT_LAG_DAYS + '일 늦어서, 최근 ' + (SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS) +
+      '일은 세지 않습니다 — 그 날들을 함께 세면 잘 팔리는 상품이 "안 팔린다" 로 보입니다.\n' +
+      '그 앞의 성숙한 날 중 최근 ' + EXPAND_WINDOW_DAYS + '일을 씁니다. 기간이 짧으면 ' +
+      '[광고비 수집] 으로 그 앞 기간을 더 받아 두세요.'
   });
 }
