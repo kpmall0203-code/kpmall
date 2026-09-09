@@ -39,18 +39,35 @@ var PROP_ADUNIT_ROW = 'ADUNIT_ROW';    // 다음에 적을 줄 번호
  */
 function fetchAdProductAds() {
   if (!adBusyGuard_('상품광고 목록 수집')) return;
-  var made = makeOneSheet_([{ name: SHEET_ADUNIT, header: ADUNIT_HEADER }]);
-  if (madeSheetStop_(made, '상품광고 목록 수집')) return;
-
+  adUnitSheet_();                       // 없으면 만들고 그대로 이어간다
   var props = PropertiesService.getScriptProperties();
   var resuming = !!props.getProperty(PROP_ADUNIT_NEXT);
   if (!resuming) {
     props.deleteProperty(PROP_ADUNIT_ROW);
-    var sh0 = ss_().getSheetByName(SHEET_ADUNIT);
+    var sh0 = adUnitSheet_();
     if (sh0.getLastRow() > 1) sh0.getRange(2, 1, sh0.getLastRow() - 1, ADUNIT_HEADER.length).clearContent();
   }
   var msg = adUnitStep_(true);
   ui_().alert('상품광고 목록 수집', msg, ui_().ButtonSet.OK);
+}
+
+/**
+ * 표를 확보한다 — 없으면 만들고 머리글을 넣는다.
+ *
+ * 예전에는 부르는 쪽에서 makeOneSheet_ 로 만들고 "한 번 더 누르세요" 하고 멈췄다.
+ * 그런데 [광고 자료 갱신] 사슬은 사람이 없다 — 멈추면 그 걸음이 그냥 실패한다
+ * (실제로 "탭이 없습니다" 로 죽었다). 그래서 여기서 확보하고 바로 이어간다.
+ */
+function adUnitSheet_() {
+  var sh = ss_().getSheetByName(SHEET_ADUNIT);
+  if (sh) return sh;
+  sh = ss_().insertSheet(SHEET_ADUNIT);
+  sh.getRange(1, 1, 1, ADUNIT_HEADER.length).setValues([ADUNIT_HEADER])
+    .setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
+  sh.setFrozenRows(1);
+  SpreadsheetApp.flush();
+  log_('ads', 'INFO', '"' + SHEET_ADUNIT + '" 표를 만들었습니다');
+  return sh;
 }
 
 /** 이어 달리기용 (트리거가 부른다) */
@@ -68,7 +85,7 @@ function adUnitStep_(interactive) {
   var t0 = Date.now();
   var props = PropertiesService.getScriptProperties();
   var token = adsToken_();
-  var sh = getSheetOrThrow_(SHEET_ADUNIT);
+  var sh = adUnitSheet_();
   var names = adUnitNames_();
 
   var next = props.getProperty(PROP_ADUNIT_NEXT) || null;

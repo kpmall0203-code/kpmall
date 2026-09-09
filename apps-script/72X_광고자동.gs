@@ -313,6 +313,7 @@ function showAdTriggers() {
 // 들고 2분마다 돌아와, 앞 걸음이 끝났으면 다음 걸음을 민다. 사람이 누를 것은 처음 한 번이다.
 
 var ADDATA_QUEUE = 'ADDATA_QUEUE';
+var ADDATA_MAKE = 'ADDATA_MAKE';       // 표를 만드느라 같은 걸음을 몇 번 돌았나
 var ADDATA_CONTINUE = 'continueAdData';
 var ADDATA_STEPS = ['structure', 'units', 'spend', 'ads', 'cand'];
 var ADDATA_LABEL = { structure: '광고 구조', units: '상품광고 목록', spend: '지출 원장',
@@ -364,6 +365,7 @@ function adDataStep_(interactive) {
     if (step === 'structure') {
       fetchAdStructure(); finished = true; msg = '광고 구조 받음';
     } else if (step === 'units') {
+      adUnitSheet_();                                 // 표를 먼저 확보한다 (사람이 없으므로)
       if (!props.getProperty(PROP_ADUNIT_NEXT)) props.deleteProperty(PROP_ADUNIT_ROW);
       msg = adUnitStep_(false);
       adUnitContinue_(false);                       // 제 트리거는 거둔다 — 이 사슬이 이어 부른다
@@ -382,9 +384,21 @@ function adDataStep_(interactive) {
       finished = !props.getProperty(PROP_ADS_QUEUE);
       if (!finished) msg = 'SKU별 광고비 받는 중 (' + msg + ')';
     } else if (step === 'cand') {
-      buildAdExpandCandidates({ quiet: true });
-      try { buildAdStopCandidates(); } catch (e0) {}
-      finished = true; msg = '후보 다시 세움';
+      // 표 만들기는 한 실행에 하나씩만 한다 (문서가 무거워 둘을 만들면 타임아웃이 난다).
+      // 만들었으면 이 걸음을 끝내지 않고 2분 뒤 같은 걸음으로 다시 와서 채운다.
+      var mk = makeOneSheet_([{ name: SHEET_EXPAND, header: EXPAND_HEADER },
+                              { name: SHEET_ADSTOP, header: ADSTOP_HEADER }]);
+      if (mk) {
+        var tries = (Number(props.getProperty(ADDATA_MAKE)) || 0) + 1;
+        props.setProperty(ADDATA_MAKE, String(tries));
+        finished = tries >= 4;                        // 그래도 안 되면 넘어간다 (사슬을 붙잡지 않는다)
+        msg = '"' + mk + '" 표를 만들었습니다 — 2분 뒤 채웁니다';
+      } else {
+        props.deleteProperty(ADDATA_MAKE);
+        buildAdExpandCandidates({ quiet: true });
+        try { buildAdStopCandidates(); } catch (e0) {}
+        finished = true; msg = '후보 다시 세움';
+      }
     } else { finished = true; }
   } catch (e) {
     log_('ads', 'ERROR', '광고 자료 갱신 · ' + ADDATA_LABEL[step] + ' 실패: ' + String(e).substring(0, 300));
