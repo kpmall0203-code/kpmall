@@ -211,6 +211,14 @@ function buildAdExpandCandidates(opts) {
     act[ac.v] = (act[ac.v] || 0) + 1;
     var ka = keepAct[sku2] || {};
     var approved = (ka.ok && ka.act === ac.v && ac.exec) ? true : false;
+    // [사유] 는 판정의 이유를 적는다. 분류(경제성)와 판정은 다를 수 있다 —
+    // 클릭 139·주문 0 이면 분류는 '근거부족'(확대 표본이 얇다)이지만 판정은 '멈춤'이다.
+    // 예전에는 분류 이유를 적어 대장에 "멈춤 · 확실 — 표본이 작습니다" 같은 엉뚱한 문장이 남았다.
+    // 둘 다 남긴다 — 판정 이유("왜 멈추나")가 앞, 분류 이유("경제성이 어떤가")가 뒤.
+    // 뒤엣것에는 마진율이 기본값이라 뒤집힐 수 있다는 경고 같은 것이 들어 있다.
+    var reason = (ac.why && why && ac.why !== why) ? (ac.why + ' | ' + why) : (ac.why || why);
+    // 멈춘 줄은 정말 멈췄는지 대조해 [결과] 뒤에 붙인다 (상품광고목록의 지금 상태로)
+    var res = adStopCheck_(ka.res, pc.units[sku2], pc.unitAt);
 
     rows.push([sku2, inf.asin || a2.asin, String(inf.jp || '').substring(0, 60), Math.round(price),
       m.pct, m.src, m.why,
@@ -218,8 +226,8 @@ function buildAdExpandCandidates(opts) {
       Math.round(cpc * 100) / 100, Math.round(real * 10000) / 100, Math.round(q * 10000) / 100,
       Math.round(G), Math.round(be * 100) / 100, Math.round(target * 100) / 100,
       cpc > 0 ? Math.round(room * 100) / 100 : '',
-      need ? Math.round(need * 10) / 10 : '', cls, why, span,
-      ac.v, ac.change, approved, ka.res || '', pg.pct, ac.exec ? JSON.stringify(ac.exec) : '']);
+      need ? Math.round(need * 10) / 10 : '', cls, reason, span,
+      ac.v, ac.change, approved, res, pg.pct, ac.exec ? JSON.stringify(ac.exec) : '']);
   }
 
   // 할 일이 있는 줄을 위로 (멈춤 → 증액 → 감액 → 시험중 → 대조군 → 분리 필요 → 나머지),
@@ -490,4 +498,27 @@ function adExpandAction_(c, pc, grow) {
              exec: null };
   }
   return { v: EXA_KEEP, change: '', why: '', exec: null };
+}
+
+
+/**
+ * 멈췄다고 적힌 줄이 정말 멈췄는지 대조한다.
+ *
+ * 보낸 것과 실제로 그렇게 된 것은 다르다 — 아마존이 안 받았을 수도, 누가 다시 켰을 수도 있다.
+ * 상품광고목록의 지금 상태(마지막 수집 기준)로 견주어 [결과] 뒤에 한 마디 붙인다.
+ * 켜진 광고가 하나도 없으면 확인된 것이고, 남아 있으면 몇 개가 아직 켜져 있는지 적는다.
+ *
+ * @param {string} res   지난 [결과] 칸
+ * @param {Object} u     adUnitMap_ 의 그 SKU 항목
+ * @param {string} at    상품광고목록을 언제 받았나
+ * @return {string} 새 [결과] 칸
+ */
+function adStopCheck_(res, u, at) {
+  var base = String(res || '').split(' · 확인')[0].split(' · ⚠')[0];
+  if (!base || base.indexOf('멈춤') !== 0) return base;
+  if (!u) return base;                       // 목록에 없으면 말할 것이 없다
+  var when = at ? ' (' + at + ' 자료)' : '';
+  return u.on > 0
+    ? base + ' · ⚠ 아직 켜짐 ' + u.on + '개' + when
+    : base + ' · 확인 O' + when;
 }

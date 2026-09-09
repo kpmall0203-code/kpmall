@@ -143,7 +143,7 @@ function adExpandPlanCtx_() {
   var pol = adExpandPolicy_();
   var pc = { pol: pol, busy: {}, cool: {}, round: {}, keepOk: {}, live: [], nOpen: 0,
              units: adUnitMap_(), grp: adExpandGroupIndex_(), burn: adExpandBudgetSignal_(),
-             today: ymd_(new Date()) };
+             unitAt: adUnitCollectedAt_(), today: ymd_(new Date()) };
   var sh = ss_().getSheetByName(SHEET_EXTEST);
   if (!sh || sh.getLastRow() < 2) return pc;
   var width = Math.max(sh.getLastColumn(), EXTEST_HEADER.length);

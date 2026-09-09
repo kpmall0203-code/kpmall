@@ -212,3 +212,13 @@ function adUnitNotes_(sh) {
     '수집일시': '오래됐으면 새 SKU 가 빠져 있을 수 있습니다 — 다시 받으세요.'
   });
 }
+
+
+/** 상품광고목록을 마지막으로 받은 날 (없으면 빈 글자) */
+function adUnitCollectedAt_() {
+  var sh = ss_().getSheetByName(SHEET_ADUNIT);
+  if (!sh || sh.getLastRow() < 2) return '';
+  var v = sh.getRange(2, ADUNIT_HEADER.length, 1, 1).getValue();
+  if (v instanceof Date) return ymd_(v);
+  return String(v || '').substring(0, 10);
+}
