@@ -236,7 +236,7 @@ function reviewAdGrowState(opts) {
     var sku = String(v[i][AG_SKU] || '').trim();
     if (!sku) continue;
 
-    // 마진 — B 는 사람이 준다. 없으면 17% 로 메우지 않는다
+    // 마진 — B 는 사람이 준다. 없으면 기본값으로 메우지 않는다
     var marginPct = Number(v[i][AG_MARGIN]);
     var marginOk = isFinite(marginPct) && marginPct > 0 && marginPct < 100;
     var margin = marginOk ? marginPct / 100 : 0;

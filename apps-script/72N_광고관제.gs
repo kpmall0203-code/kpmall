@@ -355,7 +355,7 @@ function adWatchRun_(interactive) {
   if (rep === null) return { pending: true };
   var live = adWatchLiveState_(token, ours.map(function (c) { return c.cid; }));
   var basis = adBasis_();
-  var margin = Number(basis['기본 마진율']) || 0.17;
+  var margin = Number(basis['기본 마진율']) || MARGIN_DEFAULT_PCT / 100;
   var warnAt = Number(basis['한도 경고 비율']) || 0.8;
   var autoStop = String(basis['한도 넘으면 자동 멈춤']).toUpperCase() !== 'FALSE';
   var grow = adGrowWeeklyByCamp_();

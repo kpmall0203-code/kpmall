@@ -532,7 +532,7 @@ function adTermRollup_() {
   var eco = adTermEconomics_(), negs = adTermNegatives_(), have = adTermExistingKw_();
   var growGrp = adGrowGroups_();      // 트랙 B 는 다른 잣대로 잰다 (아래)
   var gbase = adTermGroupBasis_(Object.keys(gsum).map(function (k) { return gsum[k]; }),
-                                Number(basis['기본 마진율']) || 0.17);
+                                Number(basis['기본 마진율']) || MARGIN_DEFAULT_PCT / 100);
   var gname = {}, cname = {};
   var stSh = ss_().getSheetByName(SHEET_ADSTRUCT);
   if (stSh && stSh.getLastRow() > 1) {
