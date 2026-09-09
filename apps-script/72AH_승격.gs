@@ -15,13 +15,16 @@
  *   그 상품의 목표 CPC 가 어느 칸에 떨어지는지로 정한다 (트랙 A 묶음과 같은 사다리다)
  *
  * ── 처음 입찰을 얼마로 두나 ─────────────────────────────
- * 목표선으로 바로 올리면 지금 ¥7 짜리가 ¥17 이 된다. 2.5배는 한 번에 뛸 폭이 아니다.
+ * 목표선으로 바로 올리면 지금 ¥7 짜리가 ¥17 이 된다. 2.5배는 한 번에 뛸 폭이 아니고,
+ * 그렇게 올리면 좋아지든 나빠지든 그것이 '자리를 옮겨서' 인지 '값을 올려서' 인지 알 수 없다.
  * 그래서 세 가지 중 가장 낮은 값으로 시작한다:
  *   · 그 가격선 (구간의 시작값 — 칸의 위쪽이 아니라 아래쪽을 쓴다)
- *   · 지금 실제로 내던 값 × [한 번에 올릴 최대 배수] (광고기준, 기본 3배)
+ *   · 지금 실제로 내던 값 × [확대 · 승격 첫 배수] (광고기준, 기본 1.5배)
  *   · [확대 · 최대 유효입찰] (적어 두었으면)
- * 옮긴 뒤에는 평범한 증액 시험(10%씩·14일·대조군)이 이어받는다 —
- * 구조를 바꾼 것과 값을 올린 것을 한꺼번에 하고서 '값 덕분' 이라고 말하지 않기 위해서다.
+ *
+ * 승격은 값을 맞추는 일이 아니라 '값을 부를 수 있는 자리로 옮기는' 일이다. 목표선까지는
+ * 옮긴 뒤에 평범한 증액 시험(한 번에 10%씩 · 14일 · 대조군)이 한 계단씩 올린다 —
+ * 계단마다 이익이 정말 늘었는지를 보고 오르므로, 안 느는 곳에서 저절로 멈춘다.
  *
  * ── 옛 그룹에서는 멈춘다 ────────────────────────────────
  * 같은 상품이 두 곳에서 입찰하면 제 값을 제가 올린다. 캠페인 만들기(72J)가
@@ -67,7 +70,7 @@ function planAdPromoteBands(opts) {
   var map = hdrMap_(csh);
   var v = csh.getRange(2, 1, csh.getLastRow() - 1, Math.max(csh.getLastColumn(), 1)).getValues();
 
-  var maxMult = Number(basis['한 번에 올릴 최대 배수']) || 3;
+  var firstMult = Number(basis['확대 · 승격 첫 배수']) || 1.5;
   var room = Number(basis['일예산 여유 배수']) || 2;
   var minDaily = Number(basis['최소 일예산']) || 100;
   var maxBid = Number(basis['확대 · 최대 유효입찰(JPY)']) || 0;
@@ -101,7 +104,7 @@ function planAdPromoteBands(opts) {
     if (g2.skus.length < PROMO_MIN_SKUS) continue;
     var med = g2.cpc.slice().sort(function (x, y) { return x - y; })[Math.floor(g2.cpc.length / 2)];
     var bid = g2.band.lo;
-    if (med > 0) bid = Math.min(bid, med * maxMult);           // 한 번에 뛰는 폭을 막는다
+    if (med > 0) bid = Math.min(bid, med * firstMult);         // 한 번에 뛰는 폭을 막는다
     if (maxBid > 0) bid = Math.min(bid, maxBid);
     // 계획 표는 입찰을 정수로 적는다 — 반올림하면 가격선 위로 넘어간다 (¥6.75 → ¥7).
     // 상한 이하 방향으로 내린다 (기획서 4.3 과 같은 규칙).
@@ -117,7 +120,8 @@ function planAdPromoteBands(opts) {
       why: '몰아넣기 그룹에서 꺼낸다 — 목표 클릭비용이 ¥' + g2.band.lo + '~' + g2.band.hi +
            ' 인 ' + g2.skus.length + '개를 한 캠페인에. 처음 입찰 ¥' + bid +
            ' (가격선 ¥' + g2.band.lo + ' · 지금 중앙값 ¥' + (Math.round(med * 100) / 100) +
-           ' 의 ' + maxMult + '배 중 낮은 쪽). 옛 그룹에서는 멈춘다'
+           ' 의 ' + firstMult + '배 중 낮은 쪽). 목표선까지는 증액 시험이 한 계단씩 올린다. ' +
+           '옛 그룹에서는 멈춘다'
     }));
     out.bands[g2.band.lo] = g2.skus.length;
     out.skus += g2.skus.length;

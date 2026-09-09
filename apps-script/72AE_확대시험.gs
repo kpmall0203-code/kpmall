@@ -25,6 +25,13 @@
  * 이렇게 한 계단씩 오르다 멈추는 것이 "순이익이 더 안 느는 구간" 을 찾는 방법이다.
  * 한 번에 뛰지 않는 이유는, 크게 흔들면 무엇 때문에 변했는지 알 수 없기 때문이다.
  *
+ * 다만 '효과없음' 에는 서로 다른 두 가지가 섞여 있다. 값을 올려 노출을 더 샀는데도
+ * 이익이 안 는 것과, 값을 올렸는데 노출조차 안 늘어 아무 일도 안 일어난 것이다.
+ * 뒤엣것은 값이 비싼 것이 아니라 아직 경매에 못 들어간 것이라 멈출 이유가 없다 —
+ * 노출이 안 늘었으면 클릭도 없었으니 그동안 돈도 거의 안 나갔다. 그래서
+ *   노출이 5% 도 안 늘었으면 → 머물지 않고 목표 상한까지 계속 올린다
+ *   노출은 늘었는데 이익이 안 늘었으면 → 거기가 끝이다. 직전 값에 머문다
+ *
  * 대조군은 회차마다 바뀐다. 씨앗에 그 상품군의 회차를 더해 정하므로, 이번에 대조군이던
  * 상품은 다음 회차에 시험군이 될 수 있다 — 한 번 대조군이 영원히 대조군이 아니다.
  *
@@ -70,6 +77,10 @@ var XS_GUARD = '보호중단';
 var XS_CANCEL = '취소';
 var XS_ADOPT = '채택';           // 판정이 좋아 그 값을 그대로 쓰기로 함 — 다음 계단의 바닥이 된다
 var XS_STAY = '머묾';            // 판정이 좋지 않아 직전 값에 머문다 — 여기가 순이익 증가분 0 이다
+
+// 값을 올렸는데 노출이 이만큼도 안 늘었으면 '경매에 아예 못 들어갔다' 로 본다.
+// 그때는 순이익이 안 늘어난 것이 값이 비싸서가 아니다 — 목표까지 계속 올린다 (기획서 4.3 보완).
+var EXPAND_REACH_MIN = 0.05;
 
 /** 사유 코드 (기획서 7.3) */
 var XR_SPLIT = 'MIXED_GROUP_REQUIRES_SPLIT';
@@ -600,6 +611,34 @@ function adExpandCycle(opts) {
 }
 
 /**
+ * 값을 올려서 노출을 더 샀는가 — 기준기간과 운영기간의 '하루 노출수' 를 견준다.
+ *
+ * 순이익이 안 늘었을 때 두 가지를 갈라 주는 잣대다.
+ *   노출이 늘었는데 이익이 안 늘었다  → 값이 비싼 것이다. 직전 값에 머문다
+ *   노출조차 안 늘었다                → 아직 경매에 못 들어간 것이다. 목표까지 더 올린다
+ * 노출이 안 늘었다면 클릭도 없었을 테니 그동안 돈도 거의 안 나갔다 — 더 올려도 안전하다.
+ *
+ * @return {{known:boolean, blind:boolean, b:number, r:number}} b·r 은 하루 노출수(반올림)
+ */
+function adExpandReach_(perf, row) {
+  var out = { known: false, blind: false, b: 0, r: 0 };
+  if (!perf) return out;
+  var bf = String(row[XT_BFROM] || '').substring(0, 10), bt = String(row[XT_BTO] || '').substring(0, 10);
+  var rf = String(row[XT_RUNFROM] || '').substring(0, 10), rt = String(row[XT_RUNTO] || '').substring(0, 10);
+  if (!bf || !bt || !rf || !rt) return out;
+  var a = perf(String(row[XT_SKU]), bf, bt), c = perf(String(row[XT_SKU]), rf, rt);
+  if (!a || !c || !a.days || !c.days) return out;          // 자료가 없으면 판단하지 않는다
+  out.known = true;
+  out.b = Math.round(a.im / a.days);
+  out.r = Math.round(c.im / c.days);
+  var base = a.im / a.days;
+  var run = c.im / c.days;
+  // 원래 노출이 0 이었다면 '조금이라도 샀는가' 로 본다
+  out.blind = base > 0 ? (run <= base * (1 + EXPAND_REACH_MIN)) : (run <= 0);
+  return out;
+}
+
+/**
  * 판정이 좋은 시험은 그 값을 채택한다 — 다음 계단의 바닥이 된다.
  *
  * '확대유지' 는 대조군까지 견줘 근거를 갖춘 것이고, [상품별로 판단해 이어가기] 가 켜져
@@ -625,7 +664,9 @@ function adExpandAdopt_(pol) {
   var minGain = isFinite(Number(pol.minGain)) ? Number(pol.minGain) : 0;
   var width = Math.max(tsh.getLastColumn(), EXTEST_HEADER.length);
   var v = tsh.getRange(2, 1, tsh.getLastRow() - 1, width).getValues();
-  var token = null, logBuf = adLogBuffer_(20), n = 0, stay = 0, dirty = false;
+  var token = null, logBuf = adLogBuffer_(20), n = 0, stay = 0, blind = 0, dirty = false;
+  var reach = null;
+  try { reach = adPerfWindow_(); } catch (eR) { reach = null; }
   for (var i = 0; i < v.length; i++) {
     if (String(v[i][XT_STATE]) !== XS_DONE) continue;
     if (String(v[i][XT_ARM]) !== XARM_TEST) continue;
@@ -633,19 +674,33 @@ function adExpandAdopt_(pol) {
     if (!vd) continue;
     var good = vd.v === XV_KEEP ||
                (pol.perItem && vd.v === XV_MAYBE && (vd.mine - vd.ctrl) > minGain);
+    var climb = '';
     if (!good) {
-      // 여기가 이 상품의 '순이익 증가분 0' 이다 — 직전 값에 머문다 (냉각기간은 계획이 본다).
-      // 미확정(표본 부족)도 머문다 — 근거 없이 올린 값을 두지 않는다
-      if (vd.v === XV_NONE || vd.v === XV_BAD || vd.v === XV_MAYBE) {
-        v[i][XT_STATE] = XS_STAY;
-        v[i][XT_RESULT] = '판정 ' + vd.v + ' — 직전 값 ¥' + v[i][XT_FROM] + ' 에 머뭅니다';
-        stay++; dirty = true;
+      // 순이익이 안 늘었다. 두 경우를 갈라야 한다 —
+      //   값을 올려 노출은 더 샀는데 이익이 안 늘었다  → 여기가 순이익 증가분 0. 머문다
+      //   값을 올렸는데 노출조차 안 늘었다              → 아직 경매에 못 들어간 것. 목표까지 더 올린다
+      var rc = adExpandReach_(reach, v[i]);
+      if (rc.blind && (vd.v === XV_NONE || vd.v === XV_MAYBE) &&
+          Number(v[i][XT_TO]) < Number(v[i][XT_CAP]) - 0.005) {
+        climb = '노출이 안 늘었습니다 (하루 ' + rc.b + ' → ' + rc.r + '회) — ' +
+                '값이 비싸서가 아니라 아직 경매에 못 들어간 것으로 보고 목표 ¥' +
+                (Math.round(Number(v[i][XT_CAP]) * 100) / 100) + ' 까지 계속 올립니다';
+      } else {
+        // 여기가 이 상품의 '순이익 증가분 0' 이다 — 직전 값에 머문다 (냉각기간은 계획이 본다).
+        // 미확정(표본 부족)도 머문다 — 근거 없이 올린 값을 두지 않는다
+        if (vd.v === XV_NONE || vd.v === XV_BAD || vd.v === XV_MAYBE) {
+          v[i][XT_STATE] = XS_STAY;
+          v[i][XT_RESULT] = '판정 ' + vd.v + ' — 직전 값 ¥' + v[i][XT_FROM] + ' 에 머뭅니다' +
+                            (rc.known ? ' (노출 하루 ' + rc.b + ' → ' + rc.r + '회)' : '');
+          stay++; dirty = true;
+        }
+        continue;
       }
-      continue;
     }
     if (!adRowApproved_(v[i][XT_APPROVE])) {
       v[i][XT_STATE] = XS_STAY;
-      v[i][XT_RESULT] = '판정 ' + vd.v + ' — 좋았지만 승인이 없어 채택하지 않았습니다';
+      v[i][XT_RESULT] = '판정 ' + vd.v + ' — ' + (climb ? '더 올려 봐야 하지만' : '좋았지만') +
+                        ' 승인이 없어 채택하지 않았습니다';
       dirty = true; continue;
     }
     if (!token) token = adsToken_();
@@ -656,18 +711,21 @@ function adExpandAdopt_(pol) {
       if (!res.ok) throw new Error(res.msg || '실패');
       v[i][XT_STATE] = XS_ADOPT;
       v[i][XT_RESULT] = '채택 ' + ymd_(new Date()) + ' · ¥' + v[i][XT_FROM] + ' → ¥' + v[i][XT_TO] +
-                        ' (' + vd.v + ')';
-      n++; dirty = true;
+                        ' (' + vd.v + (climb ? ' · ' + climb : '') + ')';
+      n++; if (climb) blind++;
+      dirty = true;
       logBuf.push([adLogRow_({ kind: '확대시험', camp: String(v[i][XT_RNAME]), sku: String(v[i][XT_SKU]),
         item: act, from: v[i][XT_FROM], to: v[i][XT_TO],
-        why: '판정 ' + vd.v + ' — 시험값 채택. 다음 계획이 여기서 한 계단 더 본다', by: '자동' })]);
+        why: '판정 ' + vd.v + ' — ' + (climb || '시험값 채택. 다음 계획이 여기서 한 계단 더 본다'),
+        by: '자동' })]);
     } catch (e) {
       v[i][XT_RESULT] = '채택 실패 — ' + adErrorText_(String(e).substring(0, 120)); dirty = true;
     }
   }
   logBuf.flush();
   if (dirty) tsh.getRange(2, 1, v.length, width).setValues(v);
-  return '채택 ' + n + (stay ? ' · 머묾 ' + stay : '');
+  return '채택 ' + n + (blind ? ' (노출 못 사서 계속 올림 ' + blind + ')' : '') +
+         (stay ? ' · 머묾 ' + stay : '');
 }
 
 /** 지금까지 시험이 낸 손실 (광고비 − 광고귀속 공헌이익) */
