@@ -314,6 +314,7 @@ function showAdTriggers() {
 
 var ADDATA_QUEUE = 'ADDATA_QUEUE';
 var ADDATA_MAKE = 'ADDATA_MAKE';       // 표를 만드느라 같은 걸음을 몇 번 돌았나
+var ADDATA_FAIL = 'ADDATA_FAIL_';      // 걸음마다 몇 번 죽었나 (한 번은 다시 해 본다)
 var ADDATA_CONTINUE = 'continueAdData';
 var ADDATA_STEPS = ['structure', 'units', 'spend', 'ads', 'cand'];
 var ADDATA_LABEL = { structure: '광고 구조', units: '상품광고 목록', spend: '지출 원장',
@@ -341,6 +342,16 @@ function continueAdData() {
   withLockOrRetry_('광고 자료 갱신', ADDATA_CONTINUE, function () {
     try { adDataStep_(false); } catch (e) { log_('ads', 'ERROR', '광고 자료 갱신: ' + String(e).substring(0, 300)); adDataContinue_(true); }
   });
+}
+
+/** 큐에 몇 개 남았나. 다 쓴 큐는 "[]" 로 남기 때문에 있고 없고로 보면 안 된다 */
+function adQueueLeft_(key) {
+  try {
+    var v = PropertiesService.getScriptProperties().getProperty(key);
+    if (!v) return 0;
+    var a = JSON.parse(v);
+    return (a && a.length) ? a.length : 0;
+  } catch (e) { return 0; }
 }
 
 function adDataContinue_(more) {
@@ -374,14 +385,17 @@ function adDataStep_(interactive) {
       var r = fetchAdSpendDaily();
       finished = (r !== ADSPEND_PENDING); msg = finished ? '지출 원장 받음' : '지출 원장 리포트 준비 중';
     } else if (step === 'ads') {
-      if (!props.getProperty(PROP_ADS_QUEUE)) {
+      // ⚠ 큐를 다 비워도 속성에는 "[]" 가 남는다 (adsReportStep_ 이 지우지 않고 덮어쓴다).
+      //   그것을 '아직 있다' 로 읽으면 이 걸음이 영영 안 끝나고 2분마다 되풀이된다 — 실제로 그랬다.
+      //   그래서 있고 없고가 아니라 '몇 개 남았나' 로 본다.
+      if (adQueueLeft_(PROP_ADS_QUEUE) <= 0 && !props.getProperty(PROP_ADS_REPORT)) {
         var to = ymd_(new Date());
         props.setProperty(PROP_ADS_QUEUE,
                           JSON.stringify(adsWindows_(addDays_(to, -(ADS_AUTO_DAYS - 1)), to)));
       }
-      msg = String(adsReportStep_(false) || '');
+      msg = String(adsReportStep_(false) || '리포트 준비 중');
       adsScheduleContinue_(false);                  // 제 트리거는 거둔다 — 이 사슬이 이어 부른다
-      finished = !props.getProperty(PROP_ADS_QUEUE);
+      finished = adQueueLeft_(PROP_ADS_QUEUE) <= 0;
       if (!finished) msg = 'SKU별 광고비 받는 중 (' + msg + ')';
     } else if (step === 'cand') {
       // 표 만들기는 한 실행에 하나씩만 한다 (문서가 무거워 둘을 만들면 타임아웃이 난다).
@@ -401,10 +415,16 @@ function adDataStep_(interactive) {
       }
     } else { finished = true; }
   } catch (e) {
-    log_('ads', 'ERROR', '광고 자료 갱신 · ' + ADDATA_LABEL[step] + ' 실패: ' + String(e).substring(0, 300));
+    // 한 번은 다시 해 본다 (표가 없었다거나 아마존이 잠깐 막은 것일 수 있다).
+    // 두 번째도 죽으면 넘어간다 — 한 걸음 때문에 사슬 전체를 붙잡지 않는다.
+    var ft = (Number(props.getProperty(ADDATA_FAIL + step)) || 0) + 1;
+    props.setProperty(ADDATA_FAIL + step, String(ft));
+    finished = ft >= 2;
+    log_('ads', 'ERROR', '광고 자료 갱신 · ' + ADDATA_LABEL[step] + ' 실패(' + ft + '번째' +
+         (finished ? ' · 건너뜁니다' : ' · 2분 뒤 다시') + '): ' + String(e).substring(0, 300));
     msg = ADDATA_LABEL[step] + ' 실패 — ' + String(e).substring(0, 120);
-    finished = true;                                // 한 걸음이 죽어도 다음 걸음은 간다
   } finally { uiSilent_(false); }
+  if (finished) props.deleteProperty(ADDATA_FAIL + step);
   if (finished) q.shift();
   if (q.length) { props.setProperty(ADDATA_QUEUE, JSON.stringify(q)); adDataContinue_(true); }
   else { props.deleteProperty(ADDATA_QUEUE); adDataContinue_(false); }

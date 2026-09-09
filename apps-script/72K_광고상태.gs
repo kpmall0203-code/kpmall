@@ -121,11 +121,17 @@ function adBusyGuard_(what) {
     if (lock.tryLock(2000)) lock.releaseLock(); else busy = true;
   } catch (e) { return true; }        // 잠금을 못 쓰면 그냥 진행한다
   if (!busy) return true;
+  // 무엇 때문에 막혔는지 여기서 말한다. "다른 작업이 돌고 있습니다" 만 띄우고
+  // [지금 무엇이 도는가] 에는 안 나오면, 사람은 손쓸 데가 없다.
+  var names = [];
+  try { names = statusRunningNames_(); } catch (e2) { names = []; }
   ui_().alert(what + ' — 지금은 안 됩니다',
-    '다른 작업이 돌고 있습니다.\n\n' +
+    (names.length
+      ? '지금 도는 것:\n' + names.map(function (n) { return '   ▶ ' + n; }).join('\n') + '\n\n'
+      : '다른 작업이 시트를 잡고 있습니다 (표에는 안 남는 짧은 걸음일 수 있습니다).\n' +
+        '보통 1~2분이면 끝납니다 — 잠시 뒤 다시 눌러 보세요.\n\n') +
     '같은 시트를 둘이 함께 건드리면 "스프레드시트 서비스가 타임아웃되었습니다" 가 뜹니다.\n\n' +
-    '[가격관리 → 지금 무엇이 도는가 · 멈추기] 로 무엇이 도는지 보고,\n' +
-    '끝난 뒤에 다시 하세요. 급하면 거기서 멈출 수 있습니다.',
+    '[가격관리 → 지금 무엇이 도는가 · 멈추기] 에서 멈출 수 있습니다.',
     ui_().ButtonSet.OK);
   return false;
 }

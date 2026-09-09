@@ -634,13 +634,17 @@ function dupScheduleContinue_(more) {
  * 메뉴: 수집 상태 — 진행 중인 것과 가진 자료를 한 화면에서 본다.
  * 수집마다 따로 있던 '진행상황 / 중단'을 여기로 모았다.
  */
-function collectStatus() {
+/**
+ * 돌 수 있는 작업 목록. collectStatus 와 adBusyGuard_ 가 같은 목록을 본다 —
+ * 하나가 "돈다" 하고 다른 하나가 "없다" 하면 사람이 손쓸 데가 없어진다 (실제로 그랬다).
+ */
+function statusJobs_() {
   var props = PropertiesService.getScriptProperties();
   var q = function (k) { return JSON.parse(props.getProperty(k) || '[]').length; };
   var trigs = ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); });
   var hasTrig = function (fn) { return trigs.indexOf(fn) >= 0; };
 
-  var jobs = [
+  return [
     { label: '아마존 동기화',
       on: !!(props.getProperty(PROP_SYNC_REPORT) || props.getProperty(PROP_SYNC_DOC)),
       note: function () { return '진행 중'; },
@@ -706,6 +710,30 @@ function collectStatus() {
     { label: '검색어 반영', on: hasTrig(ADTERM_APPLY_CONTINUE),
       note: function () { return '1분 간격으로 이어 달리는 중'; },
       stop: function () { adTermApplyScheduleContinue_(false); } },
+    { label: '광고 자료 갱신',
+      on: q(ADDATA_QUEUE) > 0 || hasTrig(ADDATA_CONTINUE),
+      note: function () {
+        var qq = JSON.parse(props.getProperty(ADDATA_QUEUE) || '[]');
+        if (!qq.length) return '마무리 중';
+        return (ADDATA_LABEL[qq[0]] || qq[0]) + ' 받는 중' +
+               (qq.length > 1 ? ' · 남은 걸음 ' + (qq.length - 1) + '개' : ' · 마지막 걸음');
+      },
+      stop: function () {
+        props.deleteProperty(ADDATA_QUEUE);
+        props.deleteProperty(ADDATA_MAKE);
+        adDataContinue_(false);
+      } },
+    { label: '상품광고 목록 수집',
+      on: !!props.getProperty(PROP_ADUNIT_NEXT) || hasTrig(ADUNIT_CONTINUE),
+      note: function () {
+        var row = Number(props.getProperty(PROP_ADUNIT_ROW)) || 2;
+        return (row - 2).toLocaleString() + '개까지 받음';
+      },
+      stop: function () {
+        props.deleteProperty(PROP_ADUNIT_NEXT);
+        props.deleteProperty(PROP_ADUNIT_ROW);
+        adUnitContinue_(false);
+      } },
     { label: '중복 정리', on: q(PROP_DUP_QUEUE) > 0,
       note: function () {
         return JSON.parse(props.getProperty(PROP_DUP_QUEUE) || '[]').join(', ') + ' 남음';
@@ -715,6 +743,23 @@ function collectStatus() {
       note: function () { return applyQueueRemaining_() + '건 남음'; },
       stop: null }        // 반영은 중간에 끊으면 어디까지 나갔는지 헷갈린다
   ];
+}
+
+function statusRunningNames_() {
+  var jobs = [];
+  try { jobs = statusJobs_(); } catch (e) { return []; }
+  var out = [];
+  for (var i = 0; i < jobs.length; i++) {
+    if (!jobs[i].on) continue;
+    var note = '';
+    try { note = jobs[i].note ? jobs[i].note() : ''; } catch (e2) { note = ''; }
+    out.push(jobs[i].label + (note ? ' (' + note + ')' : ''));
+  }
+  return out;
+}
+
+function collectStatus() {
+  var jobs = statusJobs_();
 
   var running = [];
   for (var i = 0; i < jobs.length; i++) if (jobs[i].on) running.push(jobs[i]);
