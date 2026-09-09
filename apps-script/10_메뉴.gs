@@ -108,6 +108,7 @@ function buildPriceMenu_() {
           .addItem('시험 주기 한 번 (되돌림 · 판정 · 채택)', 'adExpandCycle')
           .addItem('결과 표 다시 세우기', 'buildAdExpandResults')
           .addSeparator()
+          .addItem('승격 계획만 세우기 (가격선 캠페인)', 'planAdPromoteBandsMenu')
           .addItem('멈춤 후보 표 (자세히)', 'buildAdStopCandidates')
           .addItem('멈춤 후보 표의 승인분만 멈추기', 'applyAdStopApproved')))
       .addSubMenu(ui.createMenu('🔎 검색어 — 매주')

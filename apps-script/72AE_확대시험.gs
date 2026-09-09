@@ -107,6 +107,9 @@ function adExpandPolicy_() {
     lossCap: money('시험 손실한도(JPY)'),
     maxBid: money('최대 유효입찰(JPY)'),
     cooldown: Math.round(num('실패 냉각기간(일)', 28)),
+    base: Number(b['묶음 CPC 기준점']) || 2,          // 가격선 사다리 (승격이 쓴다)
+    mult: Number(b['묶음 CPC 배수']) || 1.5,
+    promoCap: Number(b['확대 · 승격 일예산 상한(JPY)']) || 0,
     perItem: String(b['확대 · 상품별로 판단해 이어가기'] || '').toUpperCase() === 'TRUE'
   };
   p.need = [];

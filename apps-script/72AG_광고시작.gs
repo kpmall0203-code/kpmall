@@ -11,7 +11,8 @@
  *   1. 승인 ✓ 인 [멈춤] 줄 — 그 상품의 광고를 멈춘다 (캠페인·그룹은 그대로)
  *   2. 승인 ✓ 인 [감액] 줄 — 입찰을 목표 쪽으로 한 계단 내린다 (시험 불필요)
  *   3. 승인 ✓ 인 [증액 시험] 줄과 [대조군] 줄 — 확대시험 표에 줄을 세우고 시험군만 값을 올린다
- *   4. 매일·매주 도는 걸음을 건다 (되돌림 · 판정 · 채택 · 다음 계단 · 자료 갱신 · 후보 다시 세우기)
+ *   4. 승인 ✓ 인 [분리 필요] 줄 — 목표 클릭비용이 비슷한 것끼리 가격선 캠페인으로 꺼낸다 (승격)
+ *   5. 매일·매주 도는 걸음을 건다 (되돌림 · 판정 · 채택 · 다음 계단 · 자료 갱신 · 후보 다시 세우기)
  * 돈이 나가는 것은 1~3 뿐이고, 그것도 이 표의 [승인] 이 켜진 줄만이다.
  * 증액은 여기에 더해 광고기준의 한도 넷과 [확대 · 모드] 가 자동운영이라야 나간다.
  */
@@ -29,7 +30,7 @@ function startAdActions() {
   var pol = adExpandPolicy_();
 
   // ① 무엇을 보낼지 먼저 센다 — 사람이 마지막으로 한 번 본다
-  var plan = { stop: [], down: [], test: [], ctrl: [] };
+  var plan = { stop: [], down: [], test: [], ctrl: [], split: [] };
   for (var i = 0; i < v.length; i++) {
     if (!adRowApproved_(v[i][EX_APPROVE])) continue;
     var ex = adExec_(v[i][EX_EXEC]);
@@ -38,8 +39,9 @@ function startAdActions() {
     else if (ex.k === 'down') plan.down.push({ i: i, ex: ex });
     else if (ex.k === 'test') plan.test.push({ i: i, ex: ex });
     else if (ex.k === 'ctrl') plan.ctrl.push({ i: i, ex: ex });
+    else if (ex.k === 'split') plan.split.push({ i: i, ex: ex });
   }
-  var nAll = plan.stop.length + plan.down.length + plan.test.length;
+  var nAll = plan.stop.length + plan.down.length + plan.test.length + plan.split.length;
   if (!nAll && !plan.ctrl.length) {
     ui_().alert('② 시작', '[승인] 이 켜진 줄이 없습니다.\n' +
       '[판정] 과 [바꿀 것] 을 보고 [승인] 을 켠 뒤 다시 누르세요.', ui_().ButtonSet.OK);
@@ -53,6 +55,10 @@ function startAdActions() {
       (pol.canAuto ? ' (' + pol.runDays + '일 뒤 자동 되돌림)' : ' — ⚠ ' + adExpandGateText_(pol).trim().split('\n')[0]));
   }
   if (plan.ctrl.length) lines.push('· 대조군 등록 ' + plan.ctrl.length + '개 (바꾸지 않음)');
+  if (plan.split.length) {
+    lines.push('· 승격(가격선 캠페인으로 꺼내기) ' + plan.split.length + '개' +
+      (Number(adBasis_()['확대 · 승격 일예산 상한(JPY)']) > 0 ? '' : ' — ⚠ 하루 예산 상한이 비어 있어 안 만듭니다'));
+  }
   var ok = ui_().alert('② 시작',
     lines.join('\n') + '\n\n' +
     '보낸 뒤에는 되돌림 · 판정 · 채택 · 다음 계단 · 자료 갱신이 저절로 돕니다.\n' +
@@ -61,7 +67,8 @@ function startAdActions() {
   if (ok !== ui_().Button.YES) return;
 
   var token = adsToken_(), logBuf = adLogBuffer_(20), today = ymd_(new Date());
-  var done = { stop: 0, down: 0, test: 0, ctrl: 0 }, failed = 0;
+  var done = { stop: 0, down: 0, test: 0, ctrl: 0, split: 0 }, failed = 0;
+  var promo = null;
 
   // ② 멈춤
   for (var s0 = 0; s0 < plan.stop.length; s0++) {
@@ -103,16 +110,36 @@ function startAdActions() {
     }
     for (var c1 = 0; c1 < plan.ctrl.length; c1++) v[plan.ctrl[c1].i][EX_RESULT] = '대조군 등록 ' + today;
   }
+  // ⑤ 승격 — 목표 클릭비용이 비슷한 것끼리 가격선 캠페인으로. 만드는 것은 72J 가 한다
+  if (plan.split.length) {
+    var want2 = {};
+    for (var s3 = 0; s3 < plan.split.length; s3++) want2[String(v[plan.split[s3].i][EX_SKU])] = true;
+    promo = planAdPromoteBands({ skus: want2 });
+    for (var s4 = 0; s4 < plan.split.length; s4++) {
+      v[plan.split[s4].i][EX_RESULT] = promo.blocked
+        ? '승격 못 함 — ' + promo.blocked
+        : '승격 계획 ' + today + ' (' + SHEET_ADPLAN + ' 참고)';
+    }
+    done.split = promo.blocked ? 0 : promo.skus;
+  }
   sh.getRange(2, 1, v.length, width).setValues(v);
+  if (promo && promo.rows) {
+    try { adPlanExecStep_(false); } catch (e5) { log_('ads', 'WARN', '승격 만들기: ' + e5); }
+  }
 
-  // ⑤ 걸음을 건다 (이미 걸려 있으면 다시 건다 — 곱절이 되지 않는다)
+  // ⑥ 걸음을 건다 (이미 걸려 있으면 다시 건다 — 곱절이 되지 않는다)
   var nTrig = adInstallAutomations_();
 
   log_('ads', 'INFO', '② 시작 — 멈춤 ' + done.stop + ' · 감액 ' + done.down + ' · 시험 ' + done.test +
        ' · 대조군 ' + done.ctrl + (failed ? ' · 실패 ' + failed : ''));
   ui_().alert('② 시작',
     '멈춤 ' + done.stop + ' · 감액 ' + done.down + ' · 증액 시험 ' + done.test + ' · 대조군 ' + done.ctrl +
-    (failed ? ' · 실패 ' + failed : '') + '\n\n' +
+    (done.split ? ' · 승격 ' + done.split : '') + (failed ? ' · 실패 ' + failed : '') + '\n' +
+    (promo && promo.rows
+      ? '가격선 캠페인 ' + promo.rows + '개를 만드는 중입니다 (하루 예산 합계 ' + fmtYen_(promo.daily) + ').\n' +
+        '  ' + Object.keys(promo.bands).map(function (b) { return '¥' + b + ' 선 ' + promo.bands[b] + '개'; }).join(' · ') +
+        (promo.over ? '\n  예산 상한에 걸려 미룬 것 ' + promo.over + '개 — 다음에 다시 계획됩니다' : '') + '\n'
+      : '') + '\n' +
     '걸음 ' + nTrig + '개가 걸렸습니다 — 되돌림·판정·채택·다음 계단·자료 갱신·후보 다시 세우기.\n' +
     '이제 사람이 할 일은 가끔 [① 후보 찾기·확인] 을 열어 새 줄의 [승인] 을 켜는 것뿐입니다.\n\n' +
     '어디까지 갔는지는 [📊 광고 운영 현황] 과 ' + SHEET_EXTEST + ' 의 [상태] 에 있습니다.',

@@ -461,7 +461,13 @@ function adExpandAction_(c, pc, grow) {
   if (c.cls === EXC_GROW) {
     var o = adExpandPlanOne_({ sku: c.sku, asin: c.asin, G: c.G, q: c.q, dailyCost: c.dailyCost }, pc);
     if (o.skip) return { v: EXA_KEEP, change: '', why: o.state, exec: null };
-    if (o.type === XTYPE_SPLIT) return { v: EXA_SPLIT, change: '', why: o.why, exec: null };
+    if (o.type === XTYPE_SPLIT) {
+      // 승격으로 풀 수 있다 — 목표 CPC 가 비슷한 것끼리 가격선 캠페인으로 꺼낸다
+      var bd = adPromoBand_(c.target, pc.pol.base, pc.pol.mult);
+      return { v: EXA_SPLIT,
+               change: bd ? '가격선 ¥' + bd.lo + ' 캠페인으로 꺼냄' : '',
+               why: o.why, exec: bd ? { k: 'split', lo: bd.lo } : null };
+    }
     if (o.state === XS_CANCEL) return { v: EXA_CEIL, change: '', why: o.why, exec: null };
     if (o.arm === XARM_CTRL) {
       return { v: EXA_CTRL, change: '그대로 ¥' + o.from, why: o.why,
