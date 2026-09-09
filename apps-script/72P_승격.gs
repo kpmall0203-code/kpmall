@@ -60,9 +60,7 @@ function adPromoSkuByGroup_() {
   //    두 표를 다 본다 (트랙 A·M 은 광고생성계획, 트랙 B 는 광고육성계획)
   adPlanEachRow_(function (row) {
     var pg = String(row[AP_GID - 1] || '').trim();
-    var lst = String(row[AP_SKUS - 1] || '').split(',')
-                .map(function (x) { return x.trim(); })
-                .filter(function (x) { return x; });
+    var lst = adSkuListSplit_(row[AP_SKUS - 1]);
     if (pg && lst.length === 1) out[pg] = lst[0];
   });
 

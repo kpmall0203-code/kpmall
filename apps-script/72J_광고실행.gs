@@ -196,8 +196,7 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
   var daily = Number(row[AP_DAILY - 1]) || 0;
   var gid = String(row[AP_GID - 1] || '').trim();
   var cid = String(row[AP_CID - 1] || '').trim();
-  var skus = String(row[AP_SKUS - 1] || '').split(',').map(function (x) { return x.trim(); })
-              .filter(function (x) { return x; });
+  var skus = adSkuListSplit_(row[AP_SKUS - 1]);
   var log = [], now = new Date();
   var asinMap = adSkuAsin_();
   var skuTxt = adSkuText_(skus);

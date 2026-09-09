@@ -135,7 +135,7 @@ function adTermEconomics_() {
       if (String(pv[p][AP_RESULT - 1]).indexOf('성공') !== 0) continue;
       var gd2 = String(pv[p][AP_GID - 1] || '').trim();
       if (!gd2) continue;
-      var list = String(pv[p][AP_SKUS - 1] || '').split(',');
+      var list = adSkuListSplit_(pv[p][AP_SKUS - 1]);
       var box = (byGroup[gd2] || (byGroup[gd2] = []));
       for (var q = 0; q < list.length; q++) {
         var sk2 = list[q].trim();

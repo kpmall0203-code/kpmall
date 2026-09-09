@@ -251,11 +251,29 @@ function adPlanPrior_() {
 }
 
 /** 계획 한 줄 */
+/**
+ * 계획 표의 [SKU목록] 칸 — 여러 SKU 를 한 칸에 적고 다시 꺼내는 한 쌍.
+ * 쉼표로 이으면 안 된다: SKU 1,129개가 이름에 쉼표를 품고 있다 ("신라면 골드 125g, 16봉").
+ * 그것을 쉼표로 다시 나누면 "16봉" 같은 없는 SKU 로 상품광고를 만들려 든다.
+ * 그래서 ' | ' 로 잇는다 (SKU 에 '|' 는 하나도 없다). 옛 줄(쉼표)은 읽을 때 그대로 받아 준다.
+ */
+var AD_SKU_SEP = ' | ';
+function adSkuListJoin_(skus) {
+  return (skus || []).join(AD_SKU_SEP).substring(0, 45000);   // 칸 한도 5만 자 안쪽
+}
+function adSkuListSplit_(text) {
+  var s = String(text || '');
+  var parts = s.indexOf('|') >= 0 ? s.split('|') : s.split(',');
+  var out = [];
+  for (var i = 0; i < parts.length; i++) { var t = parts[i].trim(); if (t) out.push(t); }
+  return out;
+}
+
 function adPlanRow_(o) {
   return ['', o.action, o.kind, o.name, '자동', o.daily, Math.round(o.bid),
           o.skus.length, o.exist || 0, o.skus[0].sku, o.band, Math.round(o.beMin),
           Math.round(o.amt), o.action === '이미 있음' ? '' : '실행 시 확인', o.why,
-          o.skus.map(function (x) { return x.sku; }).join(', ').substring(0, 4000),
+          adSkuListJoin_(o.skus.map(function (x) { return x.sku; })),
           o.gid || (o.prior && o.prior.gid) || '',
           !!(o.prior && o.prior.approve),
           (o.prior && o.prior.result) || '',

@@ -90,6 +90,7 @@ var XR_BUDGET = 'BUDGET_CONSTRAINED';
 var XR_LOWEV = 'LOW_EVIDENCE';
 var XR_MARGIN = 'MARGIN_INVALID';
 
+var EXTEST_WEEK_DAYS = 7;        // 주간 지출한도의 '주간'
 var EXTEST_BUDGET_DAYS = 7;      // 예산 제약 신호를 며칠에서 볼까
 var EXTEST_BUDGET_HITS = 3;      // 그중 며칠이 90% 를 넘으면 '예산제약의심'
 var EXTEST_BUDGET_FULL = 0.9;
@@ -240,7 +241,11 @@ function adExpandPlanOne_(c, pc) {
     o.why = '대조군 (' + (round + 1) + '회차) — 일부러 바꾸지 않습니다. 이 줄이 있어야 "올려서 늘었다" 를 말할 수 있습니다';
   } else {
     o.state = XS_PLAN;
-    o.hold = Math.round(c.dailyCost * (1 + pol.step) * pol.runDays);   // 예약액
+    // 예약액 = 이 시험이 한 주에 '더' 쓸 것으로 보는 돈 — 지금 하루 쓰던 돈 × 인상폭 × 7일.
+    // 주간 지출한도와 견주는 값이라 7일로 센다. 지금 쓰던 돈 전부를 세면(14일치)
+    // 한 시험이 ¥17,000 을 예약해 버려, 한도를 아무리 넉넉히 적어도 시작이 안 된다.
+    // 값을 올리면 노출이 더 붙어 인상폭보다 더 쓸 수 있다 — 그 위험은 매일 도는 손실한도가 막는다.
+    o.hold = Math.max(1, Math.round(c.dailyCost * pol.step * EXTEST_WEEK_DAYS));
   }
   return o;
 }
@@ -761,7 +766,9 @@ function adExpandTestNotes_(sh) {
       '반올림해서 지금 값보다 커지지 않으면 아예 줄을 만들지 않습니다.',
     '성숙예정일': '되돌린 날 + ' + (SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS) + '일.\n' +
       '마지막 클릭의 주문이 다 붙어야 결과를 셀 수 있습니다.',
-    '예약액(JPY)': '이 시험이 운영 기간에 더 쓸 것으로 보는 돈. 주간 지출한도에 함께 셉니다.',
+    '예약액(JPY)': '이 시험이 한 주에 더 쓸 것으로 보는 돈 (지금 하루 광고비 × 인상폭 × 7일).\n' +
+      '[확대 · 시험 주간 지출한도] 는 돌고 있는 시험들의 이 값 합계와 견줍니다.\n' +
+      '실제로는 노출이 더 붙어 이보다 더 쓸 수 있습니다 — 그것은 매일 도는 손실한도가 막습니다.',
     '상태': XS_PLAN + ' → ' + XS_RUN + ' → ' + XS_MATURE + ' → ' + XS_DONE + ' → ' + XS_ADOPT + ' 또는 ' + XS_STAY + '\n' +
       XS_ADOPT + ' = 판정이 좋아 그 값을 다시 올려 둠 (다음 계획이 거기서 한 계단 더)\n' +
       XS_STAY + ' = 판정이 좋지 않아 직전 값에 머묾 — 여기가 이 상품의 순이익 증가분 0 이다 (냉각 뒤 다시 봄)\n' +
