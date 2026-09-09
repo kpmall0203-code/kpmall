@@ -11,10 +11,21 @@
  * 그것까지 옮기면 이미 도는 트랙 A 의 입찰이 한꺼번에 바뀐다 — 따로 볼 일이다.
  *
  * ── 순서 (앞의 것이 이긴다) ─────────────────────────────
- *   ① 사람이 표에 적은 값     "내가 아는 값" 보다 정확한 것은 없다
- *   ② 원가로 계산            원가(원)·배송비(엔)·사내환율·수수료로 낸 실측
- *   ③ 바깥 마진율 시트        '상품 목록' 의 일본어 상품명이 정확히 같을 때만
- *   ④ 기본 17%              위 셋이 다 없을 때. 사람이 그렇게 하라고 정했다
+ *   ① 기준값 시트            바깥 시트의 '광고 기준값' 탭 — SKU, 없으면 ASIN 으로 맞댄다
+ *   ② 후보 표에 적은 값       광고확대후보 표에서 직접 고친 값 (곧 ① 로 밀어 올린다)
+ *   ③ 원가로 계산            원가(원)·배송비(엔)·사내환율·수수료로 낸 실측
+ *   ④ 바깥 마진율 시트        '상품 목록' 의 일본어 상품명이 정확히 같을 때만
+ *   ⑤ 기본 17%              위가 다 없을 때. 사람이 그렇게 하라고 정했다
+ *
+ * ── 왜 기준값 시트가 맨 위인가 ──────────────────────────
+ * 마진율과 판매가는 사람이 아는 값이고, 그 값은 한 곳에서 관리돼야 한다.
+ * 표(광고확대후보)는 프로그램이 다시 세울 때마다 줄이 바뀌고 사라지기도 한다 —
+ * 사람이 손으로 넣은 값이 그런 표에만 있으면 언젠가 잃는다. 그래서 바깥 시트의
+ * 탭 하나에 SKU·ASIN 을 열쇠로 모아 두고, 표는 그것을 비춰 보이기만 한다.
+ * 표에서 고친 값은 다음에 표를 세울 때 기준값 시트로 밀어 올린다 (72AB).
+ *
+ * SKU 가 맞으면 SKU 로, 없으면 ASIN 으로 맞댄다. ASIN 으로 적으면 그 ASIN 의
+ * SKU 전부에 같은 값이 걸린다 — 같은 물건을 이름만 달리 올린 경우에 편하다.
  *
  * ── 바깥 시트를 이름으로 붙이는 것의 한계 ────────────────
  * 그 시트에는 SKU 도 ASIN 도 없고 일본어 상품명뿐이다. 공백·괄호만 지우고
@@ -31,6 +42,8 @@
 
 var MARGIN_DEFAULT_PCT = 17;          // 아무 근거가 없을 때 (사람이 정한 값)
 
+var MSRC_REF = '기준값 시트';        // 바깥 시트의 '광고 기준값' 탭 (SKU/ASIN)
+var MSRC_REF_ASIN = '기준값 시트(ASIN)';
 var MSRC_USER = '사용자 입력';
 var MSRC_COST = '원가 계산';
 var MSRC_SHEET = '마진율 시트';
@@ -61,9 +74,14 @@ function adMarginCtxBuild_() {
     def: (Number(basis['기본 마진율']) > 0 ? Number(basis['기본 마진율']) * 100
                                           : MARGIN_DEFAULT_PCT),
     costs: {}, rate: 0, skuCost: {}, manual: {}, ext: {}, user: {},
+    ref: { bySku: {}, byAsin: {}, n: 0 },
     nCost: 0, nExt: 0, nUser: 0
   };
-  // 사람이 광고확대후보 표에 적어 둔 값 — 이것이 가장 세다.
+  // 바깥 '광고 기준값' 탭 — 사람이 관리하는 원장. 가장 세다
+  try {
+    ctx.ref = adRefValues_(basis) || { bySku: {}, byAsin: {}, n: 0 };
+  } catch (e) { ctx.ref = { bySku: {}, byAsin: {}, n: 0 }; }
+  // 사람이 광고확대후보 표에 적어 둔 값 — 기준값 시트 다음으로 세다.
   // 여기에 실어야 멈춤 후보·트랙 B 추천도 같은 값을 본다 (표를 보는 곳마다 다른 마진을
   // 쓰면, 한 표는 늘리라 하고 다른 표는 멈추라 한다).
   try {
@@ -94,15 +112,42 @@ function adMarginCtxBuild_() {
  * @param {*} userPct      표에 사람이 적은 마진율(%). 있으면 이것이 이긴다
  * @return {{pct:number, src:string, why:string}}
  */
-function adMarginFor_(ctx, sku, price, jpName, userPct) {
-  // ① 사람이 적은 값 (부르는 쪽이 준 것이 없으면 광고확대후보 표에서 찾는다)
+function adMarginFor_(ctx, sku, price, jpName, userPct, asin) {
+  // ① 기준값 시트 (SKU 먼저, 없으면 ASIN)
+  var ref = adRefFor_(ctx, sku, asin);
+  if (ref && isFinite(ref.margin) && ref.margin > 0 && ref.margin < 100) {
+    return { pct: ref.margin, src: ref.byAsin ? MSRC_REF_ASIN : MSRC_REF,
+             why: '바깥 시트 [' + AD_REF_TAB + '] 탭에 ' + (ref.byAsin ? 'ASIN ' + asin : 'SKU ' + sku) +
+                  ' 로 적어 둔 값입니다 — 여기가 마진율의 원장입니다' +
+                  (ref.memo ? ' (' + ref.memo + ')' : '') };
+  }
+  // ② 광고확대후보 표에 적은 값 (부르는 쪽이 준 것이 있으면 그것)
   var u = Number(userPct);
   if (!(isFinite(u) && u > 0)) u = Number((ctx.user || {})[sku]);
   if (isFinite(u) && u > 0 && u < 100) {
     return { pct: u, src: MSRC_USER,
-             why: '사람이 [' + SHEET_EXPAND + '] 표에 직접 적은 값입니다 — 프로그램이 덮어쓰지 않습니다' };
+             why: '사람이 [' + SHEET_EXPAND + '] 표에 직접 적은 값입니다 — 다음에 표를 세울 때 ' +
+                  '바깥 [' + AD_REF_TAB + '] 탭으로 옮겨 둡니다' };
   }
   return adMarginProgram_(ctx, sku, price, jpName);
+}
+
+/** 기준값 시트에서 이 상품의 줄 — SKU 가 먼저, 없으면 ASIN */
+function adRefFor_(ctx, sku, asin) {
+  var r = ctx && ctx.ref ? ctx.ref : null;
+  if (!r) return null;
+  var k = String(sku || '').trim();
+  if (k && r.bySku[k]) return r.bySku[k];
+  var a = String(asin || '').trim().toUpperCase();
+  if (a && r.byAsin[a]) { var o = r.byAsin[a]; o.byAsin = true; return o; }
+  return null;
+}
+
+/** 기준값 시트가 정한 판매가 (없으면 0) */
+function adRefPrice_(ctx, sku, asin) {
+  var r = adRefFor_(ctx, sku, asin);
+  var p = r ? Number(r.price) : 0;
+  return isFinite(p) && p > 0 ? p : 0;
 }
 
 /**
@@ -174,5 +219,105 @@ function adJpNameMap_(fresh) {
     log_('ads', 'WARN', '리스팅에서 상품명을 못 읽었습니다: ' + String(e).substring(0, 120));
   }
   AD_JPNAME_MAP_ = out;
+  return out;
+}
+
+
+// ── 바깥 '광고 기준값' 탭 ────────────────────────────────
+//
+// 사람이 아는 값(실제 마진율 · 실제 판매가)을 모아 두는 원장이다. 광고 표들은
+// 이것을 비춰 보일 뿐이고, 표를 다시 세워도 값은 여기 남는다.
+// 열쇠는 SKU 와 ASIN 둘 다 받는다 — 같은 물건을 이름만 달리 올린 경우 ASIN 한 줄로 끝난다.
+
+var AD_REF_TAB = '광고 기준값';
+var AD_REF_HEADER = ['SKU', 'ASIN', '상품명(참고)', '마진율(%)', '판매가(JPY)', '메모', '수정일'];
+
+/** 기준값 시트를 읽는다. @return {{bySku:Object, byAsin:Object, n:number}} */
+function adRefValues_(basis) {
+  var out = { bySku: {}, byAsin: {}, n: 0 };
+  var b = basis || adBasis_();
+  var id = String(b['마진율 시트 ID'] || '').trim();
+  if (!id) return out;
+  var sh;
+  try {
+    sh = SpreadsheetApp.openById(id).getSheetByName(AD_REF_TAB);
+  } catch (e) {
+    log_('ads', 'WARN', '기준값 시트를 못 열었습니다: ' + String(e).substring(0, 120));
+    return out;
+  }
+  if (!sh || sh.getLastRow() < 2) return out;
+  var v = sh.getRange(2, 1, sh.getLastRow() - 1, AD_REF_HEADER.length).getValues();
+  for (var i = 0; i < v.length; i++) {
+    var sku = String(v[i][0] || '').trim();
+    var asin = String(v[i][1] || '').trim().toUpperCase();
+    var m = Number(v[i][3]), p = Number(v[i][4]);
+    if (!sku && !asin) continue;
+    var o = { margin: (isFinite(m) && m > 0) ? m : NaN, price: (isFinite(p) && p > 0) ? p : 0,
+              memo: String(v[i][5] || ''), row: i + 2, byAsin: false };
+    if (!(o.margin > 0) && !(o.price > 0)) continue;
+    if (sku) out.bySku[sku] = o;
+    else if (asin) out.byAsin[asin] = o;      // SKU 가 비어 있는 줄만 ASIN 열쇠로 쓴다
+    out.n++;
+  }
+  return out;
+}
+
+/**
+ * 표에서 고친 값을 기준값 시트로 밀어 올린다 (있으면 고치고, 없으면 붙인다).
+ *
+ * 이렇게 해야 값이 한 곳에 모인다 — 표는 다시 세우면 줄이 바뀌지만 이 시트는 남는다.
+ * @param {Array<{sku,asin,name,margin,price}>} items
+ * @return {{updated:number, added:number}}
+ */
+function adRefPush_(items) {
+  var out = { updated: 0, added: 0 };
+  if (!items || !items.length) return out;
+  var id = String(adBasis_()['마진율 시트 ID'] || '').trim();
+  if (!id) return out;
+  var ss2, sh;
+  try {
+    ss2 = SpreadsheetApp.openById(id);
+    sh = ss2.getSheetByName(AD_REF_TAB);
+    if (!sh) {
+      sh = ss2.insertSheet(AD_REF_TAB);
+      sh.getRange(1, 1, 1, AD_REF_HEADER.length).setValues([AD_REF_HEADER])
+        .setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
+      sh.setFrozenRows(1);
+    }
+  } catch (e) {
+    log_('ads', 'WARN', '기준값 시트에 못 썼습니다: ' + String(e).substring(0, 120));
+    return out;
+  }
+  var last = sh.getLastRow();
+  var v = last > 1 ? sh.getRange(2, 1, last - 1, AD_REF_HEADER.length).getValues() : [];
+  var idx = {};
+  for (var i = 0; i < v.length; i++) {
+    var k = String(v[i][0] || '').trim();
+    if (k) idx[k] = i;
+  }
+  var today = ymd_(new Date()), add = [], dirty = false;
+  for (var j = 0; j < items.length; j++) {
+    var it = items[j];
+    if (!it.sku) continue;
+    var row = idx[it.sku];
+    if (row === undefined) {
+      add.push([it.sku, it.asin || '', String(it.name || '').substring(0, 60),
+                it.margin > 0 ? it.margin : '', it.price > 0 ? it.price : '',
+                '광고 표에서 옮김', today]);
+      out.added++;
+    } else {
+      var changed = false;
+      if (it.margin > 0 && Math.abs(Number(v[row][3]) - it.margin) > 0.005) { v[row][3] = it.margin; changed = true; }
+      if (it.price > 0 && Math.abs(Number(v[row][4]) - it.price) > 0.5) { v[row][4] = it.price; changed = true; }
+      if (changed) { v[row][6] = today; out.updated++; dirty = true; }
+    }
+  }
+  if (dirty && v.length) sh.getRange(2, 1, v.length, AD_REF_HEADER.length).setValues(v);
+  if (add.length) {
+    var at = Math.max(sh.getLastRow(), 1) + 1;
+    var need = at + add.length - 1;
+    if (sh.getMaxRows() < need) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
+    sh.getRange(at, 1, add.length, AD_REF_HEADER.length).setValues(add);
+  }
   return out;
 }

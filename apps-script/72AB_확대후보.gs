@@ -153,19 +153,24 @@ function buildAdExpandCandidates(opts) {
   var ctx = adMarginCtx_(true);
   var pc = adExpandPlanCtx_();                 // 손잡이 · 예산 신호 · 돌고 있는 시험 · 정책
   var grow = adStopGrowSkus_();
-  var rows = [], cnt = {}, act = {}, nUser = 0, nSheet = 0, nCost = 0, nDef = 0;
+  var rows = [], cnt = {}, act = {}, push = [], nUser = 0, nSheet = 0, nCost = 0, nDef = 0;
   for (var sku2 in agg) {
     var a2 = agg[sku2], inf = info[sku2] || { asin: a2.asin, jp: '', price: 0 };
     var aov = a2.od > 0 ? a2.sales / a2.od : 0;
     var price = inf.price || aov;
+    var refP = adRefPrice_(ctx, sku2, inf.asin || a2.asin);   // 기준값 시트가 정한 판매가
+    if (refP > 0) price = refP;
     var pg = adMarginProgram_(ctx, sku2, price, inf.jp);      // 프로그램만으로 낸 값
     var mine = keep[sku2];
     // 옛 표(프로그램값 칸이 없던 것)는 지금 셈한 값과 달라야 사람이 고친 것으로 본다
     if (!(Number(mine) > 0) && oldProg[sku2] > 0 && Math.abs(oldProg[sku2] - pg.pct) > 0.05) {
       mine = oldProg[sku2];
     }
-    var m = adMarginFor_(ctx, sku2, price, inf.jp, mine);
-    if (m.src === MSRC_USER) nUser++;
+    var m = adMarginFor_(ctx, sku2, price, inf.jp, mine, inf.asin || a2.asin);
+    if (m.src === MSRC_USER) {
+      push.push({ sku: sku2, asin: inf.asin || a2.asin, name: inf.jp, margin: m.pct, price: 0 });
+    }
+    if (m.src === MSRC_USER || m.src === MSRC_REF || m.src === MSRC_REF_ASIN) nUser++;
     else if (m.src === MSRC_SHEET) nSheet++;
     else if (m.src === MSRC_COST || m.src === MSRC_LOSS) nCost++;
     else nDef++;
@@ -229,6 +234,10 @@ function buildAdExpandCandidates(opts) {
     return (Number(y[18]) || 0) - (Number(x[18]) || 0);
   });
 
+  // 표에서 고친 값을 바깥 기준값 시트로 올린다 — 값이 한 곳에 모여야 잃지 않는다
+  var pushed = { updated: 0, added: 0 };
+  try { pushed = adRefPush_(push); } catch (e9) { log_('ads', 'WARN', '기준값 올리기 실패: ' + e9); }
+
   writeTable_(sh, EXPAND_HEADER, rows);
   sh.getRange(1, 1, 1, EXPAND_HEADER.length).setValues([EXPAND_HEADER])
     .setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
@@ -251,7 +260,10 @@ function buildAdExpandCandidates(opts) {
     '(최근 ' + (SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS) + '일 ' + perf.young + '줄은 주문이 아직 다 안 붙어 뺐습니다' +
     (perf.old ? ' · 창 밖 ' + perf.old + '줄' : '') + ')\n' +
     Object.keys(cnt).map(function (k) { return k + ' ' + cnt[k]; }).join(' · ') + '\n\n' +
-    '마진율 출처 — 사용자 입력 ' + nUser + ' · 원가 계산 ' + nCost +
+    (pushed.added || pushed.updated
+      ? '표에서 고친 마진율 ' + (pushed.added + pushed.updated) + '개를 바깥 [' + AD_REF_TAB +
+        '] 탭으로 옮겼습니다 (새로 ' + pushed.added + ' · 고침 ' + pushed.updated + ')\n\n' : '') +
+    '마진율 출처 — 기준값·직접입력 ' + nUser + ' · 원가 계산 ' + nCost +
     ' · 마진율 시트 ' + nSheet + ' · 기본 ' + nDef + '\n\n' +
     (nDef ? '⚠ ' + nDef + '개는 기본 ' + ctx.def + '% 로 셌습니다. 실제 마진율을 아시면\n' +
             '   [마진율(%)] 칸에 적어 주세요 — 다시 눌러도 그 값은 지워지지 않습니다.\n' +
@@ -262,9 +274,13 @@ function buildAdExpandCandidates(opts) {
 
 function adExpandNotes_(sh) {
   headerNotes_(sh, 1, EXPAND_HEADER, {
-    '마진율(%)': '광고 전 공헌이익 비율. 여기에 직접 적으면 그 값이 가장 셉니다 —\n' +
-      '다시 계산해도 덮어쓰지 않습니다 ([마진출처] 가 "' + MSRC_USER + '" 이 됩니다).',
-    '마진출처': MSRC_USER + ' > ' + MSRC_COST + ' > ' + MSRC_SHEET + ' > ' + MSRC_DEFAULT + ' 순서로 씁니다.\n' +
+    '마진율(%)': '광고 전 공헌이익 비율. 여기에 직접 적어도 되고 (다시 계산해도 안 지워집니다),\n' +
+      '다음에 표를 세울 때 바깥 시트의 [' + AD_REF_TAB + '] 탭으로 옮겨 둡니다.\n' +
+      '판매가를 고치려면 그 탭의 [판매가(JPY)] 칸에 적으세요 — 여기 판매가는 리스팅 값입니다.',
+    '마진출처': MSRC_REF + ' > ' + MSRC_USER + ' > ' + MSRC_COST + ' > ' + MSRC_SHEET + ' > ' +
+      MSRC_DEFAULT + ' 순서로 씁니다.\n' +
+      '"' + MSRC_REF + '" 은 바깥 시트의 [' + AD_REF_TAB + '] 탭에 SKU(또는 ASIN)로 적어 둔 값입니다 —\n' +
+      '거기가 원장이라, 이 표를 다시 세워도 그 값은 그대로입니다.\n' +
       '기본값이 많은 것이 정상입니다 — 바깥 시트는 일본어 상품명이 정확히 같을 때만 붙습니다.',
     '필요마진율(%)': '= 실제 클릭비용 ÷ (객단가 × 실제 주문율).\n' +
       '지금 내는 값이 손익분기가 되는 마진율입니다. 마진율을 몰라도 계산됩니다 —\n' +

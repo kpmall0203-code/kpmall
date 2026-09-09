@@ -73,8 +73,9 @@ function buildAdExpandResults(opts) {
     var arm = String(v[i][XT_ARM]);
 
     var b = perf(sku, baseFrom, baseTo), r = perf(sku, runFrom, runTo);
-    var price = r.od > 0 ? r.sales / r.od : (b.od > 0 ? b.sales / b.od : 0);
-    var m = adMarginFor_(ctx, sku, price, '', null);
+    var asin = String(v[i][XT_ASIN] || '');
+    var price = adRefPrice_(ctx, sku, asin) || (r.od > 0 ? r.sales / r.od : (b.od > 0 ? b.sales / b.od : 0));
+    var m = adMarginFor_(ctx, sku, price, '', null, asin);
     var bProfit = b.sales * m.pct / 100 - b.cost;
     var rProfit = r.sales * m.pct / 100 - r.cost;
     var bDays = Math.max(1, daysBetween_(baseFrom, baseTo) + 1);

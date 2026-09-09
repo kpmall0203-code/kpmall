@@ -680,7 +680,8 @@ function adExpandLossNow_(rows) {
     if (!from) continue;
     var a = perf(String(rows[i][XT_SKU]), from, ymd_(new Date()));
     if (!a || !a.cost) continue;
-    var m = adMarginFor_(ctx, String(rows[i][XT_SKU]), a.od ? a.sales / a.od : 0, '', null);
+    var m = adMarginFor_(ctx, String(rows[i][XT_SKU]), a.od ? a.sales / a.od : 0, '', null,
+                         String(rows[i][XT_ASIN] || ''));
     sum += a.cost - a.sales * m.pct / 100;
   }
   return Math.max(0, Math.round(sum));

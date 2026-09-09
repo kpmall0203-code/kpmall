@@ -101,8 +101,9 @@ function buildAdStopCandidates() {
     var u = units[sku];
     var inf = info[sku] || { asin: a.asin, jp: '', price: 0 };
     var aov = a.od > 0 ? a.sales / a.od : 0;
-    var price = inf.price || aov;
-    var m = adMarginFor_(ctx, sku, price, inf.jp, null);
+    var asin = inf.asin || a.asin;
+    var price = adRefPrice_(ctx, sku, asin) || inf.price || aov;
+    var m = adMarginFor_(ctx, sku, price, inf.jp, null, asin);
     var sv = adStopVerdict_(a, m, price, u, !!grow[sku]);
     cnt[sv.v] = (cnt[sv.v] || 0) + 1;
     if (sv.v === ASV_STOP) nStop++;
