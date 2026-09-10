@@ -55,9 +55,18 @@ function startAdActions() {
       (pol.canAuto ? ' (' + pol.runDays + '일 뒤 자동 되돌림)' : ' — ⚠ ' + adExpandGateText_(pol).trim().split('\n')[0]));
   }
   if (plan.ctrl.length) lines.push('· 대조군 등록 ' + plan.ctrl.length + '개 (바꾸지 않음)');
+  var pre = null;
   if (plan.split.length) {
+    // 승격은 이 프로그램에서 가장 큰 돈이 걸린 걸음이다. 주간 지출한도를 비워 두면
+    // 막는 것이 이 확인창뿐이라, 얼마가 걸리는지 여기서 먼저 셈해 보여 준다 (표는 안 건드린다).
+    var want0 = {};
+    for (var s5 = 0; s5 < plan.split.length; s5++) want0[String(v[plan.split[s5].i][EX_SKU])] = true;
+    try { pre = planAdPromoteBands({ skus: want0, dry: true }); } catch (e0) { pre = null; }
     lines.push('· 승격(가격선 캠페인으로 꺼내기) ' + plan.split.length + '개' +
-      (Number(adBasis_()['확대 · 승격 일예산 상한(JPY)']) > 0 ? '' : ' — ⚠ 하루 예산 상한이 비어 있어 안 만듭니다'));
+      (pre && pre.rows
+        ? ' → 캠페인 ' + pre.rows + '개 · 하루 예산 합계 ' + fmtYen_(pre.daily) +
+          ' · 한 주에 더 쓸 것으로 보는 돈 ' + fmtYen_(pre.week)
+        : pre && pre.blocked ? ' — ⚠ ' + pre.blocked : ''));
   }
   var ok = ui_().alert('② 시작',
     lines.join('\n') + '\n\n' +
@@ -68,7 +77,7 @@ function startAdActions() {
 
   var token = adsToken_(), logBuf = adLogBuffer_(20), today = ymd_(new Date());
   var done = { stop: 0, down: 0, test: 0, ctrl: 0, split: 0 }, failed = 0;
-  var promo = null;
+  var promo = null, st2 = null;
 
   // ② 멈춤
   for (var s0 = 0; s0 < plan.stop.length; s0++) {
@@ -102,11 +111,13 @@ function startAdActions() {
     for (var c0 = 0; c0 < plan.ctrl.length; c0++) want[String(v[plan.ctrl[c0].i][EX_SKU])] = true;
     adExpandPlanFromFront_(want);
     var st = pol.canAuto ? adExpandStartApproved_() : { done: 0, failed: 0, blocked: adExpandGateText_(pol).trim() };
+    st2 = st;
     done.test = st.done; failed += st.failed; done.ctrl = st.ctrl || 0;
     for (var t1 = 0; t1 < plan.test.length; t1++) {
       v[plan.test[t1].i][EX_RESULT] = st.blocked
         ? '시험 계획만 세움 — ' + st.blocked.split('\n')[0]
-        : '시험 시작 ' + today + ' (' + SHEET_EXTEST + ' 참고)';
+        : '시험 시작 ' + today + ' (' + SHEET_EXTEST + ' 참고)' +
+          (st.left ? ' · 일부는 다음 걸음이 이어서' : '');
     }
     for (var c1 = 0; c1 < plan.ctrl.length; c1++) v[plan.ctrl[c1].i][EX_RESULT] = '대조군 등록 ' + today;
   }
@@ -140,6 +151,7 @@ function startAdActions() {
         '  ' + Object.keys(promo.bands).map(function (b) { return '¥' + b + ' 선 ' + promo.bands[b] + '개'; }).join(' · ') +
         (promo.over ? '\n  예산 상한에 걸려 미룬 것 ' + promo.over + '개 — 다음에 다시 계획됩니다' : '') + '\n'
       : '') + '\n' +
+    (st2 && st2.left ? '시간이 다 돼 못 보낸 시험 ' + st2.left + '개는 [확대 시험 주기](매일)가 이어서 시작합니다.\n' : '') +
     '걸음 ' + nTrig + '개가 걸렸습니다 — 되돌림·판정·채택·다음 계단·자료 갱신·후보 다시 세우기.\n' +
     '이제 사람이 할 일은 가끔 [① 후보 찾기·확인] 을 열어 새 줄의 [승인] 을 켜는 것뿐입니다.\n\n' +
     '어디까지 갔는지는 [📊 광고 운영 현황] 과 ' + SHEET_EXTEST + ' 의 [상태] 에 있습니다.',

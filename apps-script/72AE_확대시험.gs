@@ -114,24 +114,49 @@ function adExpandPolicy_() {
     boot: Math.round(num('부트스트랩 횟수', 1000)),
     level: num('구간 수준', 0.90),
     minGain: Number(b['확대 · 최소 유의미 이익(JPY/상품군/일)']),
-    maxConcurrent: money('최대 동시 시험 수'),
-    weekSpend: money('시험 주간 지출한도(JPY)'),
-    lossCap: money('시험 손실한도(JPY)'),
-    maxBid: money('최대 유효입찰(JPY)'),
+    maxConcurrent: money('최대 동시 시험 수'),   // 0 = 제한 없음
+    weekSpend: money('시험 주간 지출한도(JPY)'),   // 0 = 제한 없음
+    lossCap: money('시험 손실한도(JPY)'),          // 0 = 제한 없음
+    maxBid: money('최대 유효입찰(JPY)'),           // ⚠ 이것만은 있어야 한다
     cooldown: Math.round(num('실패 냉각기간(일)', 28)),
     base: Number(b['묶음 CPC 기준점']) || 2,          // 가격선 사다리 (승격이 쓴다)
     mult: Number(b['묶음 CPC 배수']) || 1.5,
-    promoCap: Number(b['확대 · 승격 일예산 상한(JPY)']) || 0,
     perItem: String(b['확대 · 상품별로 판단해 이어가기'] || '').toUpperCase() === 'TRUE'
   };
+  // 비어 있으면 '제한 없음' 인 것과 '시작하지 않음' 인 것을 가른다.
+  // 동시 시험 수 · 주간 지출한도 · 손실한도는 비우면 제한을 걸지 않는다 (그 자리의 0 이 그 뜻이다).
+  // [최대 유효입찰] 만은 반드시 있어야 한다 — 마진이나 판매가를 잘못 적으면 목표 상한이
+  // 얼마든 커질 수 있고, 그것을 막을 마지막 잣대가 이 하나뿐이다.
   p.need = [];
-  if (!p.maxConcurrent) p.need.push('최대 동시 시험 수');
-  if (!p.weekSpend) p.need.push('시험 주간 지출한도(JPY)');
-  if (!p.lossCap) p.need.push('시험 손실한도(JPY)');
   if (!p.maxBid) p.need.push('최대 유효입찰(JPY)');
   p.ready = !p.need.length;
   p.canAuto = p.ready && p.mode === EXPAND_MODE_AUTO;
   return p;
+}
+
+/**
+ * 이번 주에 이미 예약해 둔 돈 — 돌고 있는 시험들의 [예약액] 합계.
+ *
+ * 새 시험도 승격도 같은 주머니에서 꺼낸다 ([확대 · 시험 주간 지출한도]).
+ * 돌고 있는 것을 세지 않으면, 주마다 한도를 새로 다 쓸 수 있어 한도가 한도가 아니다.
+ *
+ * @param {Array=} rows 이미 읽어 둔 시험 표 (없으면 여기서 읽는다)
+ */
+function adExpandWeekUsed_(rows) {
+  var v = rows;
+  if (!v) {
+    var sh = ss_().getSheetByName(SHEET_EXTEST);
+    if (!sh || sh.getLastRow() < 2) return 0;
+    v = sh.getRange(2, 1, sh.getLastRow() - 1,
+                    Math.max(sh.getLastColumn(), EXTEST_HEADER.length)).getValues();
+  }
+  var sum = 0;
+  for (var i = 0; i < v.length; i++) {
+    if (String(v[i][XT_STATE]) !== XS_RUN) continue;
+    if (String(v[i][XT_ARM]) !== XARM_TEST) continue;
+    sum += Number(v[i][XT_HOLD]) || 0;
+  }
+  return sum;
 }
 
 /**
@@ -156,7 +181,7 @@ function adExpandIsControl_(famKey, pol, round) {
  */
 function adExpandPlanCtx_() {
   var pol = adExpandPolicy_();
-  var pc = { pol: pol, busy: {}, cool: {}, round: {}, keepOk: {}, live: [], nOpen: 0,
+  var pc = { pol: pol, busy: {}, cool: {}, round: {}, keepOk: {}, live: [], nOpen: 0, weekUsed: 0,
              units: adUnitMap_(), grp: adExpandGroupIndex_(), burn: adExpandBudgetSignal_(),
              unitAt: adUnitCollectedAt_(), today: ymd_(new Date()) };
   var sh = ss_().getSheetByName(SHEET_EXTEST);
@@ -170,6 +195,9 @@ function adExpandPlanCtx_() {
     if (!sk) continue;
     if (st === XS_RUN || st === XS_MATURE) {
       pc.busy[sk] = st; pc.nOpen++; pc.live.push(old[o].slice(0, EXTEST_HEADER.length));
+      if (st === XS_RUN && String(old[o][XT_ARM]) === XARM_TEST) {
+        pc.weekUsed += Number(old[o][XT_HOLD]) || 0;      // 이미 나가 있는 몫
+      }
     } else if (st === XS_DONE || st === XS_GUARD || st === XS_CANCEL || st === XS_ADOPT || st === XS_STAY) {
       pc.live.push(old[o].slice(0, EXTEST_HEADER.length));
       if (st !== XS_CANCEL) pc.round[fam] = (pc.round[fam] || 0) + 1;
@@ -266,7 +294,7 @@ function planAdExpandTests(opts) {
   }
   var pc = adExpandPlanCtx_(), pol = pc.pol;
   var cand = adExpandCandRows_(csh);
-  var rows = [], cnt = {}, nCtrl = 0, hold = 0, running = pc.nOpen;
+  var rows = [], cnt = {}, nCtrl = 0, hold = pc.weekUsed, running = pc.nOpen;
 
   for (var i = 0; i < cand.length; i++) {
     var c = cand[i];
@@ -478,21 +506,35 @@ function adExpandStartRow_(token, r, pol, logBuf) {
   return '';
 }
 
+var EXTEST_SAVE_EVERY = 20;      // 몇 개마다 표에 적어 둘까 (6분에 걸려 끊겨도 기록이 남게)
+
 /**
  * 승인 ✓ 인 계획 줄을 전부 시작한다 (② 시작이 부른다).
- * @return {{done:number, failed:number, hold:number, blocked:string}}
+ *
+ * ⚠ 여기서 값이 실제로 아마존에 나간다. [최대 동시 시험 수] 를 비워 두면 한 번에
+ * 백 개가 넘게 나갈 수 있는데, Apps Script 는 6분에 끊긴다. 끊긴 뒤에도
+ * "아마존은 바뀌었는데 표에는 기록이 없는" 줄이 생기면 되돌릴 사람도 프로그램도
+ * 없어진다 — 그래서 시간이 다 되기 전에 멈추고, 가는 동안에도 20개마다 표에 적는다.
+ * 남은 것은 [확대 시험 주기](매일)가 이어서 시작한다.
+ *
+ * @return {{done:number, failed:number, ctrl:number, hold:number, left:number, blocked:string}}
  */
 function adExpandStartApproved_(opts) {
   var pol = adExpandPolicy_();
-  var out = { done: 0, failed: 0, hold: 0, blocked: '' };
+  var out = { done: 0, failed: 0, ctrl: 0, hold: 0, left: 0, blocked: '' };
   if (!pol.ready) { out.blocked = '광고기준의 ' + pol.need.join(' · ') + ' 이 비어 있습니다'; return out; }
   if (!pol.canAuto) { out.blocked = '[확대 · 모드] 가 "' + pol.mode + '" 입니다'; return out; }
   var sh = ss_().getSheetByName(SHEET_EXTEST);
   if (!sh || sh.getLastRow() < 2) return out;
   var width = Math.max(sh.getLastColumn(), EXTEST_HEADER.length);
   var v = sh.getRange(2, 1, sh.getLastRow() - 1, width).getValues();
-  var token = null, logBuf = adLogBuffer_(20), dirty = false;
-  var today = ymd_(new Date());
+  var token = null, logBuf = adLogBuffer_(EXTEST_SAVE_EVERY), dirty = false;
+  var today = ymd_(new Date()), t0 = Date.now(), since = 0;
+  var save = function () {
+    logBuf.flush();
+    if (dirty) { sh.getRange(2, 1, v.length, width).setValues(v); SpreadsheetApp.flush(); dirty = false; }
+    since = 0;
+  };
   for (var i = 0; i < v.length; i++) {
     if (String(v[i][XT_STATE]) !== XS_PLAN) continue;
     if (!adRowApproved_(v[i][XT_APPROVE])) continue;
@@ -500,18 +542,23 @@ function adExpandStartApproved_(opts) {
       // 대조군은 아마존에 아무것도 보내지 않는다 — 같은 기간을 재려고 줄만 연다
       v[i][XT_STATE] = XS_RUN; v[i][XT_RUNFROM] = today; v[i][XT_RUNTO] = addDays_(today, pol.runDays);
       v[i][XT_RESULT] = '대조군 등록 ' + today + ' (바꾸지 않음)';
-      out.ctrl = (out.ctrl || 0) + 1; dirty = true;
+      out.ctrl++; dirty = true;
       continue;
     }
     if (!(Number(v[i][XT_TO]) > Number(v[i][XT_FROM]))) continue;
+    if (Date.now() - t0 > ADS_SOFT_MS) { out.left++; continue; }   // 보내기 전에 멈춘다
     if (!token) token = adsToken_();
     var err = adExpandStartRow_(token, v[i], pol, logBuf);
     if (err) out.failed++; else { out.done++; out.hold += Number(v[i][XT_HOLD]) || 0; }
     dirty = true;
+    if (++since >= EXTEST_SAVE_EVERY) save();
   }
-  logBuf.flush();
-  if (dirty) sh.getRange(2, 1, v.length, width).setValues(v);
-  if (out.done || out.failed) log_('ads', 'INFO', '확대 시험 시작 — ' + out.done + '개' + (out.failed ? ' · 실패 ' + out.failed : ''));
+  save();
+  if (out.done || out.failed) {
+    log_('ads', 'INFO', '확대 시험 시작 — ' + out.done + '개' +
+         (out.failed ? ' · 실패 ' + out.failed : '') +
+         (out.left ? ' · 시간이 다 돼 미룸 ' + out.left : ''));
+  }
   return out;
 }
 
@@ -553,14 +600,14 @@ function adExpandCycle(opts) {
   var token = null, logBuf = adLogBuffer_(20);
   var back = 0, guard = 0, evald = 0, dirty = false;
 
-  // 지금까지의 시험 손실 — 한도를 넘으면 전부 되돌린다
-  var loss = adExpandLossNow_(v);
-  var over = pol.lossCap > 0 && loss > pol.lossCap;
+  // 지금까지의 시험 손실 — 한도를 넘으면 손해가 큰 것부터 되돌린다 (벌고 있는 것은 둔다)
+  var lg = adExpandLossGuard_(v, pol);
 
   for (var i = 0; i < v.length; i++) {
     var st = String(v[i][XT_STATE]);
     if (st === XS_RUN && String(v[i][XT_ARM]) === XARM_TEST) {
       var due = String(v[i][XT_RUNTO] || '').substring(0, 10);
+      var over = !!lg.cut[i];
       var must = over || (due && today >= due);
       if (!must) continue;
       if (!token) token = adsToken_();
@@ -573,8 +620,12 @@ function adExpandCycle(opts) {
         v[i][XT_MATURE] = addDays_(today, SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS);
         v[i][XT_STATE] = over ? XS_GUARD : XS_MATURE;
         v[i][XT_RESULT] = (over ? '손실한도 초과로 즉시 되돌림 ' : '운영 끝 · 되돌림 ') + today;
-        if (over) { v[i][XT_WHY] = '시험 손실 ' + fmtYen_(loss) + ' 이 한도 ' +
-                                   fmtYen_(pol.lossCap) + ' 을 넘었습니다'; guard++; }
+        if (over) {
+          v[i][XT_WHY] = '이 시험의 손해 ' + fmtYen_(lg.by[i]) + ' · 확대 전체 손해 ' +
+                         fmtYen_(lg.total) + ' 이 한도 ' + fmtYen_(pol.lossCap) +
+                         ' 을 넘었습니다 — 손해가 큰 것부터 되돌립니다';
+          guard++;
+        }
         else back++;
         dirty = true;
         logBuf.push([adLogRow_({ kind: '확대시험', camp: String(v[i][XT_RNAME]),
@@ -600,8 +651,23 @@ function adExpandCycle(opts) {
   logBuf.flush();
   if (dirty) sh.getRange(2, 1, v.length, width).setValues(v);
 
-  var msg = '되돌림 ' + back + (guard ? ' · 보호중단 ' + guard : '') +
+  var msg = '되돌림 ' + back +
+            (guard ? ' · 보호중단 ' + guard +
+                     (lg.nKeep ? ' (나머지 ' + lg.nKeep + '개는 그대로 — 손해를 내고 있지 않습니다)' : '') : '') +
             (evald ? ' · 성숙 완료 ' + evald : '');
+
+  // ② 시작이 6분에 걸려 못 보낸 승인분을 여기서 이어 보낸다.
+  // 사람이 이미 그 줄의 [승인] 을 켰고 모드가 자동운영이라 다시 물을 것이 없다 —
+  // 물어야 할 것이었다면 ② 시작에서 벌써 물었다.
+  if (pol.canAuto) {
+    try {
+      var st2 = adExpandStartApproved_();
+      if (st2.done || st2.failed) {
+        msg += ' | 이어서 시작 ' + st2.done + (st2.failed ? ' · 실패 ' + st2.failed : '') +
+               (st2.left ? ' · 아직 남음 ' + st2.left : '');
+      }
+    } catch (e4) { log_('ads', 'WARN', '이어서 시작 실패: ' + e4); }
+  }
   // 판정을 기다리는 줄이 하나라도 있으면 판정하고 채택/머묾을 정한다
   // (오늘 성숙한 것뿐 아니라, 지난번에 판정을 못 낸 것도 — 표가 없어 못 냈을 수 있다)
   var pending = false;
@@ -733,24 +799,72 @@ function adExpandAdopt_(pol) {
          (stay ? ' · 머묾 ' + stay : '');
 }
 
-/** 지금까지 시험이 낸 손실 (광고비 − 광고귀속 공헌이익) */
-function adExpandLossNow_(rows) {
+/**
+ * 돌고 있는 시험이 지금까지 낸 손해 — 줄마다, 그리고 합계.
+ *
+ * 한 줄의 손해 = 그 기간의 광고비 − 광고매출 × 마진율. 음수면 그 줄은 벌고 있다는 뜻이고,
+ * 합계에서 다른 줄의 손해를 덜어 준다.
+ *
+ * 셈이 아직 여물지 않은 기간을 본다는 것을 알고 써야 한다 — 주문은 클릭 뒤 14일까지
+ * 붙고 보고가 2일 늦으므로, 도는 중의 손해는 실제보다 크게 보인다. 그래서 이 숫자는
+ * '판정' 이 아니라 '급한 브레이크' 로만 쓴다.
+ *
+ * @return {{total:number, by:Object}} by 는 줄 번호 → 손해
+ */
+function adExpandLossBySku_(rows) {
+  var out = { total: 0, by: {} };
   var perf = null;
-  try { perf = adPerfWindow_(); } catch (e) { return 0; }
-  if (!perf) return 0;
-  var ctx = adMarginCtx_(), sum = 0;
+  try { perf = adPerfWindow_(); } catch (e) { return out; }
+  if (!perf) return out;
+  var ctx = adMarginCtx_(), today = ymd_(new Date());
   for (var i = 0; i < rows.length; i++) {
     if (String(rows[i][XT_STATE]) !== XS_RUN) continue;
     if (String(rows[i][XT_ARM]) !== XARM_TEST) continue;
     var from = String(rows[i][XT_RUNFROM] || '').substring(0, 10);
     if (!from) continue;
-    var a = perf(String(rows[i][XT_SKU]), from, ymd_(new Date()));
+    var a = perf(String(rows[i][XT_SKU]), from, today);
     if (!a || !a.cost) continue;
     var m = adMarginFor_(ctx, String(rows[i][XT_SKU]), a.od ? a.sales / a.od : 0, '', null,
                          String(rows[i][XT_ASIN] || ''));
-    sum += a.cost - a.sales * m.pct / 100;
+    var one = Math.round(a.cost - a.sales * m.pct / 100);
+    out.by[i] = one;
+    out.total += one;
   }
-  return Math.max(0, Math.round(sum));
+  out.total = Math.round(out.total);
+  return out;
+}
+
+/** 지금까지 시험이 낸 손실 합계 (0 아래로는 안 내려간다) */
+function adExpandLossNow_(rows) {
+  return Math.max(0, adExpandLossBySku_(rows).total);
+}
+
+/**
+ * 손실한도를 넘었을 때 '무엇을' 되돌릴지 고른다.
+ *
+ * 한도는 확대 전체의 손해에 걸리지만, 되돌리는 것은 손해를 내고 있는 시험뿐이다.
+ * 벌고 있는 시험을 같이 내리는 것은 두 번 손해다 — 그 줄은 합계의 손해를 덜어 주고
+ * 있었으니 내려도 한도를 지키는 데 도움이 안 되고, 벌고 있던 것을 끊는다.
+ * 그래서 손해가 큰 순서로, 남은 합계가 한도 아래로 내려가는 데까지만 되돌린다.
+ * (한도를 넘긴 것들을 다 내리면 남는 줄은 전부 벌고 있는 쪽이므로 반드시 끝난다.)
+ *
+ * @return {{total:number, left:number, by:Object, cut:Object, nCut:number, nKeep:number}}
+ */
+function adExpandLossGuard_(rows, pol) {
+  var l = adExpandLossBySku_(rows);
+  var out = { total: l.total, left: l.total, by: l.by, cut: {}, nCut: 0, nKeep: 0 };
+  var keys = Object.keys(l.by);
+  out.nKeep = keys.length;
+  if (!(pol.lossCap > 0) || l.total <= pol.lossCap) return out;
+  var red = keys.filter(function (i) { return l.by[i] > 0; })
+                .sort(function (a, b) { return l.by[b] - l.by[a]; });
+  var left = l.total;
+  for (var k = 0; k < red.length && left > pol.lossCap; k++) {
+    out.cut[red[k]] = true; left -= l.by[red[k]]; out.nCut++;
+  }
+  out.left = Math.round(left);
+  out.nKeep = keys.length - out.nCut;
+  return out;
 }
 
 function adExpandTestNotes_(sh) {
@@ -767,7 +881,7 @@ function adExpandTestNotes_(sh) {
     '성숙예정일': '되돌린 날 + ' + (SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS) + '일.\n' +
       '마지막 클릭의 주문이 다 붙어야 결과를 셀 수 있습니다.',
     '예약액(JPY)': '이 시험이 한 주에 더 쓸 것으로 보는 돈 (지금 하루 광고비 × 인상폭 × 7일).\n' +
-      '[확대 · 시험 주간 지출한도] 는 돌고 있는 시험들의 이 값 합계와 견줍니다.\n' +
+      '[확대 · 시험 주간 지출한도] 는 돌고 있는 시험들의 이 값 합계(+승격의 주간 추가액)와 견줍니다.\n' +
       '실제로는 노출이 더 붙어 이보다 더 쓸 수 있습니다 — 그것은 매일 도는 손실한도가 막습니다.',
     '상태': XS_PLAN + ' → ' + XS_RUN + ' → ' + XS_MATURE + ' → ' + XS_DONE + ' → ' + XS_ADOPT + ' 또는 ' + XS_STAY + '\n' +
       XS_ADOPT + ' = 판정이 좋아 그 값을 다시 올려 둠 (다음 계획이 거기서 한 계단 더)\n' +

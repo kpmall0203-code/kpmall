@@ -31,8 +31,15 @@
  * 새 그룹에 담은 뒤 옛 그룹의 그 상품 광고를 PAUSED 로 바꾼다 — 지우지는 않는다.
  *
  * ── 돈 ──────────────────────────────────────────────────
- * 새 캠페인은 저마다 일예산이 붙는다. [확대 · 승격 일예산 상한(JPY)] 을 적어 두지 않으면
- * 한 줄도 만들지 않는다. 합계가 그 상한을 넘으면 넘는 만큼은 계획에서 뺀다.
+ * 승격은 돈을 새로 쓰는 일이 아니라 이미 쓰던 돈의 자리를 옮기는 일이다. 새 캠페인의
+ * 일예산은 '그 상품들이 지금 하루에 쓰던 돈 × [일예산 여유 배수]' 로 잡는다 — 예산은
+ * 천장이지 지출이 아니다. 실제로 더 나가는 돈은 입찰이 올라간 만큼이라,
+ *
+ *   한 주에 더 쓸 것으로 보는 돈 = 지금 하루 광고비 × (처음 입찰 ÷ 지금 값 − 1) × 7
+ *
+ * 로 셈해 [확대 · 시험 주간 지출한도] 와 견준다 — 증액 시험과 같은 주머니다.
+ * 그 한도가 비어 있으면 제한을 걸지 않는다. 그때 승격을 막는 것은 ② 시작의 확인창
+ * 하나뿐이므로, 확인창에 하루 예산 합계와 주간 추가액을 함께 적는다.
  */
 
 var PROMO_PREFIX = 'EXPAND';           // 캠페인 이름에 쓸 말 (아마존은 아스키만 받는다)
@@ -55,15 +62,18 @@ function adPromoBand_(target, base, mult) {
 /**
  * 승격 계획을 세운다 — 광고생성계획 표에 줄을 넣는다. 아마존은 건드리지 않는다.
  *
- * @param {Object} opts {skus: {sku:true} 한정, quiet}
- * @return {{rows:number, skus:number, daily:number, over:number, bands:Object, blocked:string}}
+ * @param {Object} opts {skus: {sku:true} 한정, quiet, dry: 표에 쓰지 않고 셈만}
+ * @return {{rows:number, skus:number, daily:number, week:number, over:number,
+ *           bands:Object, blocked:string}}
  */
 function planAdPromoteBands(opts) {
   var only = (opts && opts.skus) || null;
-  var out = { rows: 0, skus: 0, daily: 0, over: 0, bands: {}, blocked: '' };
+  var dry = !!(opts && opts.dry);
+  var out = { rows: 0, skus: 0, daily: 0, week: 0, over: 0, bands: {}, blocked: '' };
   var basis = adBasis_();
-  var cap = Number(basis['확대 · 승격 일예산 상한(JPY)']) || 0;
-  if (!cap) { out.blocked = '[확대 · 승격 일예산 상한(JPY)] 이 비어 있습니다'; return out; }
+  // 주간 지출한도가 비어 있으면 제한 없음 — 증액 시험과 같은 주머니를 쓴다
+  var week = Number(basis['확대 · 시험 주간 지출한도(JPY)']) || 0;
+  var used = week ? adExpandWeekUsed_() : 0;
 
   var csh = ss_().getSheetByName(SHEET_EXPAND);
   if (!csh || csh.getLastRow() < 2) { out.blocked = '확대 후보 표가 비어 있습니다'; return out; }
@@ -96,9 +106,9 @@ function planAdPromoteBands(opts) {
     g.amt += Number(cellOf_(v[i], map, '광고매출(JPY)', 0)) || 0;
   }
 
-  // ② 가격선마다 한 줄. 예산이 큰 칸부터 넣다가 상한에 닿으면 멈춘다
+  // ② 가격선마다 한 줄. 쓰던 돈이 큰 칸부터 넣다가 주간 한도에 닿으면 멈춘다
   var keys = Object.keys(by).sort(function (a, b) { return by[b].daily - by[a].daily; });
-  var rows = [], used = 0;
+  var rows = [];              // used 는 위에서 이미 '이미 예약한 돈' 으로 열었다 — 다시 0 으로 두면 안 된다
   for (var k = 0; k < keys.length; k++) {
     var g2 = by[keys[k]];
     if (g2.skus.length < PROMO_MIN_SKUS) continue;
@@ -110,8 +120,10 @@ function planAdPromoteBands(opts) {
     // 상한 이하 방향으로 내린다 (기획서 4.3 과 같은 규칙).
     bid = Math.max(EXTEST_MIN_BID, Math.floor(bid));
     var daily = Math.max(minDaily, Math.round(g2.daily * room));
-    if (used + daily > cap) { out.over += g2.skus.length; continue; }
-    used += daily;
+    // 더 나가는 돈은 예산이 아니라 입찰이 올라간 만큼이다 (예산은 천장일 뿐)
+    var more = Math.max(0, Math.round(g2.daily * (bid / med - 1) * EXTEST_WEEK_DAYS));
+    if (week && used + more > week) { out.over += g2.skus.length; continue; }
+    used += more; out.week += more;
     var nm = pre + ' ' + PROMO_PREFIX + ' B' + g2.band.i;
     rows.push(adPlanRow_({
       action: '생성', kind: '가격선', name: nm, daily: daily, bid: bid,
@@ -126,8 +138,9 @@ function planAdPromoteBands(opts) {
     out.bands[g2.band.lo] = g2.skus.length;
     out.skus += g2.skus.length;
   }
-  out.rows = rows.length; out.daily = used;
-  if (!rows.length) return out;
+  out.rows = rows.length;
+  for (var dd = 0; dd < rows.length; dd++) out.daily += Number(rows[dd][AP_DAILY - 1]) || 0;
+  if (!rows.length || dry) return out;
 
   // ③ 계획 표에 넣는다 (이미 같은 이름의 줄이 있으면 건드리지 않는다)
   var made = makeOneSheet_([{ name: SHEET_ADPLAN, header: ADPLAN_HEADER }]);
@@ -148,7 +161,8 @@ function planAdPromoteBands(opts) {
   }
   out.rows = add.length;
   log_('ads', 'INFO', '승격 계획 — 가격선 ' + add.length + '개 · SKU ' + out.skus +
-       ' · 하루 예산 ' + used + '엔' + (out.over ? ' · 상한에 걸려 미룸 ' + out.over : ''));
+       ' · 하루 예산 ' + out.daily + '엔 · 주간 추가 ' + out.week + '엔' +
+       (out.over ? ' · 주간 한도에 걸려 미룸 ' + out.over : ''));
   return out;
 }
 
@@ -156,16 +170,17 @@ function planAdPromoteBands(opts) {
 function planAdPromoteBandsMenu() {
   var r = planAdPromoteBands();
   if (r.blocked) {
-    ui_().alert('승격 계획', '아직 세울 수 없습니다 — ' + r.blocked + '.\n\n' +
-      '광고기준에 하루 예산 상한을 적어 주세요. 그 금액 안에서만 캠페인을 만듭니다.',
-      ui_().ButtonSet.OK);
+    ui_().alert('승격 계획', '아직 세울 수 없습니다 — ' + r.blocked + '.', ui_().ButtonSet.OK);
     return;
   }
   showSheet_(SHEET_ADPLAN);
   ui_().alert('승격 계획',
-    '가격선 ' + r.rows + '개 · SKU ' + r.skus + '개 · 하루 예산 합계 ' + fmtYen_(r.daily) + '\n' +
+    '가격선 ' + r.rows + '개 · SKU ' + r.skus + '개\n' +
+    '하루 예산 합계 ' + fmtYen_(r.daily) + ' (천장 — 지금 쓰던 돈의 ' +
+    (Number(adBasis_()['일예산 여유 배수']) || 2) + '배)\n' +
+    '한 주에 더 쓸 것으로 보는 돈 ' + fmtYen_(r.week) + '\n' +
     Object.keys(r.bands).map(function (b) { return '   ¥' + b + ' 선 — ' + r.bands[b] + '개'; }).join('\n') +
-    (r.over ? '\n\n예산 상한에 걸려 미룬 SKU ' + r.over + '개 (다음에 다시 계획됩니다)' : '') +
+    (r.over ? '\n\n주간 지출한도에 걸려 미룬 SKU ' + r.over + '개 (다음에 다시 계획됩니다)' : '') +
     '\n\n[' + SHEET_ADPLAN + '] 표에 넣었습니다. [⑤ 승인분 캠페인 생성] 이 만듭니다.',
     ui_().ButtonSet.OK);
 }
