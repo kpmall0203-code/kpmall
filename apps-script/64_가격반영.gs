@@ -461,6 +461,16 @@ function applyChunk_() {
   if (rows.length) {
     var out = ensureSheet_(SHEET_APPLY, APPLY_HEADER);
     out.getRange(out.getLastRow() + 1, 1, rows.length, APPLY_HEADER.length).setValues(rows);
+    // 실제로 바뀐 가격은 바깥 [상품 목록] 의 판매가·마진율에도 옮겨 적는다 (64B).
+    // 여기서 무엇이 실패해도 가격반영은 멈추지 않는다
+    if (mode !== 'preview') {
+      var okItems = [];
+      for (var oi = 0; oi < rows.length; oi++) {
+        if (rows[oi][3] === 'ACCEPTED') okItems.push({ sku: rows[oi][0], price: rows[oi][2] });
+      }
+      try { sourceMarginSync_(okItems); }
+      catch (eSync) { log_('apply', 'WARN', '리프라이싱 마진 동기 실패: ' + String(eSync).substring(0, 150)); }
+    }
   }
   ptypeSave_(newTypes);
   // 큐를 다시 쓰지 않고 커서만 옮긴다
