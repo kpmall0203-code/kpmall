@@ -56,7 +56,16 @@ var AD_AUTOMATIONS = [
     why: '어디에 더 쓸지 · 어디서 새는지. 적기만 하고 아무것도 바꾸지 않는다' }
 ];
 
-var ADS_AUTO_DAYS = 46;      // SKU별 광고비를 몇 일치 받을까 (성숙 16일 + 판정 30일)
+/**
+ * SKU별 광고비를 몇 일치 받을까 = 아직 안 여문 날(귀속 14 + 보고 지연 2) + 세는 창(45) = 61.
+ *
+ * 창보다 짧게 받으면 새로 시작한 계정은 창이 다 찰 때까지 몇 주를 기다려야 한다.
+ * 함수인 이유: 앱스 스크립트는 파일마다 맨 위의 var 를 파일 순서대로 실행한다.
+ * 다른 파일의 상수로 var 를 초기화하면 그 파일이 뒤에 놓이는 순간 조용히 NaN 이 된다.
+ */
+function adsAutoDays_() {
+  return SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS + EXPAND_WINDOW_DAYS;
+}
 
 var ADSCHED_RETRY_PROP = 'ADSCHED_TRY_';
 var ADSCHED_RETRY_MAX = 4;             // 리포트가 늦을 때 몇 번까지 다시 올 것인가
@@ -182,7 +191,7 @@ function scheduledAdVerify() {
  * SKU별 광고비 — 주 1회.
  *
  * 사람이 누를 때는 '기간' 과 '어떤 SKU' 를 묻는다. 트리거에는 물을 사람이 없으니
- * 기간은 ADS_AUTO_DAYS 일, 대상은 지난번에 고른 것을 그대로 쓴다 (속성에 남아 있다).
+ * 기간은 adsAutoDays_() 일, 대상은 지난번에 고른 것을 그대로 쓴다 (속성에 남아 있다).
  * 리포트가 늦으면 adsReportStep_ 이 스스로 1분 뒤 이어받기를 건다.
  */
 function scheduledAdsSpend() {
@@ -191,7 +200,7 @@ function scheduledAdsSpend() {
     if (props.getProperty(PROP_ADS_QUEUE)) return adsReportStep_(false);   // 지난번 이어받기
     var to = ymd_(new Date());
     props.setProperty(PROP_ADS_QUEUE,
-                      JSON.stringify(adsWindows_(addDays_(to, -(ADS_AUTO_DAYS - 1)), to)));
+                      JSON.stringify(adsWindows_(addDays_(to, -(adsAutoDays_() - 1)), to)));
     return adsReportStep_(false);
   });
 }
@@ -391,7 +400,7 @@ function adDataStep_(interactive) {
       if (adQueueLeft_(PROP_ADS_QUEUE) <= 0 && !props.getProperty(PROP_ADS_REPORT)) {
         var to = ymd_(new Date());
         props.setProperty(PROP_ADS_QUEUE,
-                          JSON.stringify(adsWindows_(addDays_(to, -(ADS_AUTO_DAYS - 1)), to)));
+                          JSON.stringify(adsWindows_(addDays_(to, -(adsAutoDays_() - 1)), to)));
       }
       msg = String(adsReportStep_(false) || '리포트 준비 중');
       adsScheduleContinue_(false);                  // 제 트리거는 거둔다 — 이 사슬이 이어 부른다

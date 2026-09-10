@@ -404,7 +404,7 @@ function adExpandCandRows_(csh) {
       G: price * m / 100, q: q,
       room: Number(cellOf_(v[i], map, '여유배수', 0)) || 0,
       clicks: Number(cellOf_(v[i], map, '성숙클릭', 0)) || 0,
-      dailyCost: cost / EXPAND_WINDOW_DAYS
+      dailyCost: cost / adSpanDays_(cellOf_(v[i], map, '자료기간', ''))
     });
   }
   // 여유가 큰 것부터 (기획서 4.1 — 우선점수는 여유 × 근거 가중치)

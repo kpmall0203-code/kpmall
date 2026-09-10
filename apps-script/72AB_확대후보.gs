@@ -85,7 +85,19 @@ var EXPAND_MIN_ORDERS = 3;
 var EXPAND_PRIOR = 50;              // 판단주문율의 사전클릭
 var EXPAND_KEEP = 0.65;             // 이익보존계수 — 목표 CPC = 손익분기 × 이것
 var EXPAND_ROOM = 1.10;             // 목표가 지금보다 이만큼 높아야 '확대검토'
-var EXPAND_WINDOW_DAYS = 30;        // 성숙한 날 중 몇 일을 셀까
+/**
+ * 성숙한 날 중 몇 일을 셀까.
+ *
+ * 30일이었다. 45일로 넓힌 이유는 재 봤기 때문이다 — 8/11~8/25 의 주문율을 맞히게 하니
+ * 짧은 창(15일)은 중앙 오차 45.7%, 긴 창(34일)은 37.8% 였다. 주문율은 한 달 표본으로도
+ * 여전히 잡음이 커서, 날을 더 주는 쪽이 낫다. 클릭비용은 반대로 짧은 창이 조금 나았지만
+ * (6.2% vs 7.7%) 그 차이는 작고, 사다리는 어차피 광고그룹의 '지금 부르는 값' 에서 오른다.
+ *
+ * 무한정 넓히지 않는 이유: 주문율은 잡음만이 아니라 실제로도 변한다 (계절 · 경쟁 · 재고).
+ * 45일은 지금 가진 성숙한 날(49일) 안쪽이면서, 보관 90일 · 주간 수집 61일이 받쳐 준다.
+ * 자료가 더 쌓이면 같은 방식으로 다시 재서 정할 것.
+ */
+var EXPAND_WINDOW_DAYS = 45;
 
 /**
  * 메뉴: 후보 표를 만들거나 새로 고친다.
@@ -131,6 +143,9 @@ function buildAdExpandCandidates(opts) {
   // ② 광고 실적을 SKU 로 모은다 — 성숙한 날만, 그중 최근 EXPAND_WINDOW_DAYS 일
   var perf = adPerfBySku_(EXPAND_WINDOW_DAYS);
   var agg = perf.sku, span = perf.span, last = perf.last;
+  // 하루 광고비는 창 길이가 아니라 '실제로 센 날' 로 나눈다 — 자료가 창보다 짧으면
+  // 창으로 나눈 값은 실제보다 작고, 그만큼 예약액·승격 예산이 과소로 잡힌다
+  var winDays = Math.max(1, perf.days || EXPAND_WINDOW_DAYS);
   if (!perf.days) {
     if (!(opts && opts.quiet)) ui_().alert('셀 수 있는 날이 없습니다', adMatureHelp_(perf), ui_().ButtonSet.OK);
     return null;
@@ -217,7 +232,7 @@ function buildAdExpandCandidates(opts) {
     // 판정 — 이 상품에 지금 할 일
     var ac = adExpandAction_({ sku: sku2, asin: inf.asin || a2.asin, a: a2, m: m, price: price,
                                cls: cls, G: G, q: q, target: target, cpc: cpc,
-                               dailyCost: a2.cost / EXPAND_WINDOW_DAYS }, pc, grow);
+                               dailyCost: a2.cost / winDays }, pc, grow);
     act[ac.v] = (act[ac.v] || 0) + 1;
     var ka = keepAct[sku2] || {};
     var approved = (ka.ok && ka.act === ac.v && ac.exec) ? true : false;
@@ -377,6 +392,17 @@ function adPerfBySku_(days) {
   out.days = Object.keys(seen).length;
   out.span = out.days ? (w.from + '~' + w.to + ' · ' + out.days + '일') : '';
   return out;
+}
+
+/**
+ * [자료기간] 칸("2026-07-27~2026-08-25 · 30일")에서 실제로 센 날 수를 꺼낸다.
+ * 표를 읽어 하루 광고비를 되짚는 쪽(확대시험 · 승격)이 창 길이가 아니라 이 값으로 나눠야
+ * 자료가 짧을 때 하루 지출을 실제보다 작게 보지 않는다.
+ */
+function adSpanDays_(text) {
+  var m = String(text || '').match(/(\d+)\s*일/);
+  var n = m ? Number(m[1]) : 0;
+  return n > 0 ? n : EXPAND_WINDOW_DAYS;
 }
 
 /** 성숙한 날이 없을 때 무엇을 해야 하는지 */

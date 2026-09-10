@@ -123,11 +123,12 @@ function planAdPromoteBands(opts) {
     if (!band || !(cpc > 0)) continue;
     var g = by[band.i] || (by[band.i] = { band: band, skus: [], cpc: [], daily: 0, be: 0, amt: 0 });
     var asin = String(cellOf_(v[i], map, 'ASIN', ''));
-    g.skus.push({ sku: sku, asin: asin, cpc: cpc, daily: cost / EXPAND_WINDOW_DAYS,
+    var wd = adSpanDays_(cellOf_(v[i], map, '자료기간', ''));
+    g.skus.push({ sku: sku, asin: asin, cpc: cpc, daily: cost / wd,
                   amt: Number(cellOf_(v[i], map, '광고매출(JPY)', 0)) || 0,
                   arm: split ? adPromoteArm_(asin, sku, seed) : XARM_TEST });
     g.cpc.push(cpc);
-    g.daily += cost / EXPAND_WINDOW_DAYS;                     // 지금 하루에 쓰던 돈
+    g.daily += cost / wd;                                     // 지금 하루에 쓰던 돈
     var be = Number(cellOf_(v[i], map, '손익분기클릭비용(JPY)', 0)) || 0;
     if (!g.be || be < g.be) g.be = be;
     g.amt += Number(cellOf_(v[i], map, '광고매출(JPY)', 0)) || 0;
