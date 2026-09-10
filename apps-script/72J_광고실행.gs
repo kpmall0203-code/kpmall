@@ -245,7 +245,7 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
       var c = adsCreated_(cres, 'campaigns', 'campaignId');
       if (!c.ok) return fail('캠페인 — ' + c.msg);
       cid = c.ids[0]; madeCamp = true;
-      sh.getRange(rowNo, AP_CID).setValue(cid);
+      sh.getRange(rowNo, AP_CID).setNumberFormat('@').setValue(cid);   // 16자리 ID 는 숫자로 두면 끝자리가 깎인다
       log.push(adLogRow_({ at: now, kind: '캠페인', camp: name, group: name,
         sku: skuTxt, asin: asinTxt, item: '생성', to: state,
         sum: '캠페인 만듦 · ' + name + ' · ' + (manual ? '수동' : '자동') +
@@ -260,7 +260,7 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
       var g = adsCreated_(gres, 'adGroups', 'adGroupId');
       if (!g.ok) return fail('광고그룹 — ' + g.msg);
       gid = g.ids[0]; madeGroup = true;
-      sh.getRange(rowNo, AP_GID).setValue(gid);
+      sh.getRange(rowNo, AP_GID).setNumberFormat('@').setValue(gid);
       log.push(adLogRow_({ at: now, kind: '광고그룹', camp: name, group: name,
         sku: skuTxt, asin: asinTxt, item: '기본입찰', to: bid,
         sum: '기본입찰 ¥' + bid + ' · ' + name +

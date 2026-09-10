@@ -196,16 +196,46 @@ function planAdPromoteBands(opts) {
   for (var dd = 0; dd < rows.length; dd++) out.daily += Number(rows[dd][AP_DAILY - 1]) || 0;
   if (!rows.length || dry) return out;
 
-  // ③ 계획 표에 넣는다 (이미 같은 이름의 줄이 있으면 건드리지 않는다)
+  // ③ 계획 표에 넣는다.
+  //    같은 이름의 캠페인이 이미 만들어져 있으면(지난 승격) 새로 만들지 않고 그 광고그룹에
+  //    '추가' 한다 — 캠페인ID·광고그룹ID 를 채워 두면 72J 가 만들기를 건너뛰고 상품만 넣는다.
+  //    이것이 없으면 뒤늦게 '분리 필요' 가 된 상품은 그 가격선이 이미 있다는 이유로 영영 못 옮긴다.
+  //    아직 만들어지지 않은(결과가 성공이 아닌) 같은 이름 줄이 있으면 그대로 둔다 — 그 줄이 만들 것이다.
   var made = makeOneSheet_([{ name: SHEET_ADPLAN, header: ADPLAN_HEADER }]);
   var psh = ss_().getSheetByName(SHEET_ADPLAN);
-  var have = {};
+  var have = {}, placed = {};
   if (psh.getLastRow() > 1) {
     var pv = psh.getRange(2, 1, psh.getLastRow() - 1, ADPLAN_HEADER.length).getValues();
-    for (var p = 0; p < pv.length; p++) have[String(pv[p][AP_NAME - 1])] = true;
+    for (var p = 0; p < pv.length; p++) {
+      var pn = String(pv[p][AP_NAME - 1]);
+      var pOk = String(pv[p][AP_RESULT - 1]).indexOf('성공') === 0;
+      var pGid = String(pv[p][AP_GID - 1] || '').trim(), pCid = String(pv[p][AP_CID - 1] || '').trim();
+      if (pOk && pGid && pCid) placed[pn] = { gid: pGid, cid: pCid, bid: Number(pv[p][AP_BID - 1]) || 0 };
+      else have[pn] = true;                                    // 아직 만드는 중인 줄
+      // 이미 그 캠페인에 들어간 SKU 는 다시 넣지 않는다
+      if (pOk) {
+        var pl = adSkuListSplit_(pv[p][AP_SKUS - 1]);
+        for (var q1 = 0; q1 < pl.length; q1++) placed[pn + '|' + pl[q1]] = true;
+      }
+    }
   }
   var add = [];
-  for (var r = 0; r < rows.length; r++) if (!have[rows[r][AP_NAME - 1]]) add.push(rows[r]);
+  for (var r = 0; r < rows.length; r++) {
+    var nm0 = rows[r][AP_NAME - 1];
+    if (have[nm0]) continue;
+    if (placed[nm0]) {
+      var left = adSkuListSplit_(rows[r][AP_SKUS - 1]).filter(function (x) { return !placed[nm0 + '|' + x]; });
+      if (!left.length) continue;
+      rows[r][AP_ACTION - 1] = '기존에 추가';
+      rows[r][AP_SKUS - 1] = adSkuListJoin_(left);
+      rows[r][7] = left.length;                                  // SKU수
+      rows[r][AP_GID - 1] = placed[nm0].gid;
+      rows[r][AP_CID - 1] = placed[nm0].cid;
+      rows[r][AP_BID - 1] = placed[nm0].bid || rows[r][AP_BID - 1];   // 그 그룹이 지금 부르는 값
+      rows[r][14] = '[이미 있는 가격선 캠페인에 추가] ' + rows[r][14];
+    }
+    add.push(rows[r]);
+  }
   if (add.length) {
     for (var a = 0; a < add.length; a++) add[a][AP_APPROVE - 1] = true;   // ② 시작이 승인한 것이다
     var at = Math.max(psh.getLastRow(), 1) + 1;
@@ -316,6 +346,11 @@ function adPromoteRegister_() {
   if (rows.length) {
     var at = Math.max(tsh.getLastRow(), 1) + 1;
     if (tsh.getMaxRows() < at + rows.length - 1) tsh.insertRowsAfter(tsh.getMaxRows(), at + rows.length - 1 - tsh.getMaxRows());
+    // ID 와 날짜 칸은 글자로 둔다 — 시트가 숫자·날짜로 바꾸면 자릿수가 깎이거나 견줌이 어긋난다
+    for (var ic = 0; ic < EXTEST_ID_COLS.length; ic++) {
+      tsh.getRange(at, EXTEST_ID_COLS[ic], rows.length, 1).setNumberFormat('@');
+    }
+    tsh.getRange(at, XT_BFROM + 1, rows.length, XT_MATURE - XT_BFROM + 1).setNumberFormat('@');
     tsh.getRange(at, 1, rows.length, EXTEST_HEADER.length).setValues(rows);
     tsh.getRange(at, EXTEST_APPROVE_COL, rows.length, 1).insertCheckboxes();
     log_('ads', 'INFO', '승격 반반 시험 등록 — 시험편 ' + out.test + ' · 대조편 ' + out.ctrl);

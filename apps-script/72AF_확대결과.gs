@@ -63,11 +63,11 @@ function buildAdExpandResults(opts) {
   for (var i = 0; i < v.length; i++) {
     var st = String(v[i][XT_STATE]);
     if (st !== XS_DONE && st !== XS_GUARD) continue;
-    var runFrom = String(v[i][XT_RUNFROM] || '').substring(0, 10);
+    var runFrom = adYmd_(v[i][XT_RUNFROM]);
     // 되돌린 날은 이미 원래 값으로 돌아간 날이라 운영기에 넣지 않는다.
     // 넣으면 하루치가 얹혀 하루 평균이 그만큼 묽어진다 (14일이 15일이 된다).
-    var backDay = String(v[i][XT_BACK] || '').substring(0, 10);
-    var runTo = backDay ? addDays_(backDay, -1) : String(v[i][XT_RUNTO] || '').substring(0, 10);
+    var backDay = adYmd_(v[i][XT_BACK]);
+    var runTo = backDay ? addDays_(backDay, -1) : adYmd_(v[i][XT_RUNTO]);
     if (!runFrom || !runTo || runTo < runFrom) continue;
     var baseTo = addDays_(runFrom, -1);
     var baseFrom = addDays_(baseTo, -(pol.baseDays - 1));

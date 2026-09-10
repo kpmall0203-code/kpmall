@@ -78,6 +78,17 @@ var XS_GUARD = '보호중단';
 var XS_CANCEL = '취소';
 var XS_ADOPT = '채택';           // 판정이 좋아 그 값을 그대로 쓰기로 함 — 다음 계단의 바닥이 된다
 var XS_STAY = '머묾';            // 판정이 좋지 않아 직전 값에 머문다 — 여기가 순이익 증가분 0 이다
+var XS_CLOSE = '대조끝';         // 대조군 줄 — 견주던 시험이 다 판정되어 더 볼 일이 없다 (냉각 없음)
+
+/**
+ * 표의 날짜 칸을 'yyyy-mm-dd' 글자로 읽는다.
+ * 시트는 '2026-09-09' 를 쓰면 날짜로 바꿔 둘 때가 있고, 그러면 getValues 가 Date 를 준다.
+ * String(Date) 는 'Wed Sep 09 …' 라 앞 10자를 잘라 견주면 영원히 안 맞는다 — 되돌림이 안 온다.
+ */
+function adYmd_(x) {
+  if (x instanceof Date) return ymd_(x);
+  return String(x == null ? '' : x).substring(0, 10);
+}
 
 // 값을 올렸는데 노출이 이만큼도 안 늘었으면 '경매에 아예 못 들어갔다' 로 본다.
 // 그때는 순이익이 안 늘어난 것이 값이 비싸서가 아니다 — 목표까지 계속 올린다 (기획서 4.3 보완).
@@ -199,13 +210,17 @@ function adExpandPlanCtx_() {
       if (st === XS_RUN && String(old[o][XT_ARM]) === XARM_TEST) {
         pc.weekUsed += Number(old[o][XT_HOLD]) || 0;      // 이미 나가 있는 몫
       }
-    } else if (st === XS_DONE || st === XS_GUARD || st === XS_CANCEL || st === XS_ADOPT || st === XS_STAY) {
+    } else if (st === XS_DONE || st === XS_GUARD || st === XS_CANCEL || st === XS_ADOPT ||
+               st === XS_STAY || st === XS_CLOSE) {
       pc.live.push(old[o].slice(0, EXTEST_HEADER.length));
       if (st !== XS_CANCEL) pc.round[fam] = (pc.round[fam] || 0) + 1;
-      var back = String(old[o][XT_BACK] || '').substring(0, 10);
+      var back = adYmd_(old[o][XT_BACK]);
+      // 효과 없던 것은 냉각기간 동안 쉰다. 대조군은 아무것도 안 바꾼 줄이라 쉴 이유가 없다 —
+      // 다음 회차에 시험군이 될 수 있어야 한다
       if ((st === XS_DONE || st === XS_GUARD || st === XS_STAY) && back &&
+          String(old[o][XT_ARM]) === XARM_TEST &&
           daysBetween_(back, pc.today) < pol.cooldown) {
-        pc.cool[sk] = back;                                   // 효과 없던 것은 냉각기간 동안 쉰다
+        pc.cool[sk] = back;
       }
       if (st === XS_ADOPT && adRowApproved_(old[o][XT_APPROVE])) pc.keepOk[sk] = true;   // 이어가기
     } else if (adRowApproved_(old[o][XT_APPROVE])) {
@@ -610,7 +625,7 @@ function adExpandCycle(opts) {
   for (var i = 0; i < v.length; i++) {
     var st = String(v[i][XT_STATE]);
     if (st === XS_RUN && String(v[i][XT_ARM]) === XARM_TEST) {
-      var due = String(v[i][XT_RUNTO] || '').substring(0, 10);
+      var due = adYmd_(v[i][XT_RUNTO]);
       var over = !!lg.cut[i];
       var must = over || (due && today >= due);
       if (!must) continue;
@@ -644,7 +659,7 @@ function adExpandCycle(opts) {
         dirty = true;
       }
     } else if (st === XS_RUN && String(v[i][XT_ARM]) === XARM_CTRL) {
-      var due2 = String(v[i][XT_RUNTO] || '').substring(0, 10);
+      var due2 = adYmd_(v[i][XT_RUNTO]);
       if (due2 && today >= due2) {                  // 대조군은 되돌릴 것이 없다
         v[i][XT_BACK] = today;
         v[i][XT_MATURE] = addDays_(today, SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS);
@@ -652,7 +667,7 @@ function adExpandCycle(opts) {
         dirty = true;
       }
     } else if (st === XS_MATURE) {
-      var m = String(v[i][XT_MATURE] || '').substring(0, 10);
+      var m = adYmd_(v[i][XT_MATURE]);
       if (m && today >= m) { v[i][XT_STATE] = XS_DONE; evald++; dirty = true; }
     }
   }
@@ -684,8 +699,11 @@ function adExpandCycle(opts) {
   }
   // 판정을 기다리는 줄이 하나라도 있으면 판정하고 채택/머묾을 정한다
   // (오늘 성숙한 것뿐 아니라, 지난번에 판정을 못 낸 것도 — 표가 없어 못 냈을 수 있다)
+  // 대조군 줄만 남아 있으면 판정할 것이 없다 — 시험군 줄이 평가완료일 때만 돈다
   var pending = false;
-  for (var k = 0; k < v.length; k++) if (String(v[k][XT_STATE]) === XS_DONE) { pending = true; break; }
+  for (var k = 0; k < v.length; k++) {
+    if (String(v[k][XT_STATE]) === XS_DONE && String(v[k][XT_ARM]) === XARM_TEST) { pending = true; break; }
+  }
   if (pending) {
     try { msg += ' | ' + buildAdExpandResults({ quiet: true }); } catch (e2) { log_('ads', 'WARN', '판정 실패: ' + e2); }
     try { msg += ' | ' + adExpandAdopt_(pol); } catch (e3) { log_('ads', 'WARN', '채택 실패: ' + e3); }
@@ -708,8 +726,8 @@ function adExpandCycle(opts) {
 function adExpandReach_(perf, row) {
   var out = { known: false, blind: false, b: 0, r: 0 };
   if (!perf) return out;
-  var bf = String(row[XT_BFROM] || '').substring(0, 10), bt = String(row[XT_BTO] || '').substring(0, 10);
-  var rf = String(row[XT_RUNFROM] || '').substring(0, 10), rt = String(row[XT_RUNTO] || '').substring(0, 10);
+  var bf = adYmd_(row[XT_BFROM]), bt = adYmd_(row[XT_BTO]);
+  var rf = adYmd_(row[XT_RUNFROM]), rt = adYmd_(row[XT_RUNTO]);
   if (!bf || !bt || !rf || !rt) return out;
   var a = perf(String(row[XT_SKU]), bf, bt), c = perf(String(row[XT_SKU]), rf, rt);
   if (!a || !c || !a.days || !c.days) return out;          // 자료가 없으면 판단하지 않는다
@@ -812,9 +830,25 @@ function adExpandAdopt_(pol) {
     }
   }
   logBuf.flush();
+
+  // 대조군 닫기 — 같은 묶음(승격 / 평범한 증액)의 시험군이 하나도 평가완료에 남지 않았으면
+  // 그 묶음의 대조군 줄은 더 견줄 상대가 없다. 열어 두면 매일 다시 판정하고, 다음 회차의
+  // 시험군과 옛 대조군이 섞여 견줘진다. 닫힌 줄은 냉각도 없어 다음 회차에 시험군이 될 수 있다.
+  var openTest = {}, closed = 0;
+  var cohortOf = function (r) { return String(r[XT_TYPE]) === XTYPE_PROMO ? XTYPE_PROMO : '증액'; };
+  for (var c1 = 0; c1 < v.length; c1++) {
+    if (String(v[c1][XT_STATE]) === XS_DONE && String(v[c1][XT_ARM]) === XARM_TEST) openTest[cohortOf(v[c1])] = true;
+  }
+  for (var c2 = 0; c2 < v.length; c2++) {
+    if (String(v[c2][XT_STATE]) !== XS_DONE || String(v[c2][XT_ARM]) !== XARM_CTRL) continue;
+    if (openTest[cohortOf(v[c2])]) continue;
+    v[c2][XT_STATE] = XS_CLOSE;
+    v[c2][XT_RESULT] = '대조군 역할 끝 ' + ymd_(new Date()) + ' — 견주던 시험이 모두 판정됐습니다';
+    closed++; dirty = true;
+  }
   if (dirty) tsh.getRange(2, 1, v.length, width).setValues(v);
   return '채택 ' + n + (blind ? ' (노출 못 사서 계속 올림 ' + blind + ')' : '') +
-         (stay ? ' · 머묾 ' + stay : '');
+         (stay ? ' · 머묾 ' + stay : '') + (closed ? ' · 대조끝 ' + closed : '');
 }
 
 /**
@@ -838,7 +872,7 @@ function adExpandLossBySku_(rows) {
   for (var i = 0; i < rows.length; i++) {
     if (String(rows[i][XT_STATE]) !== XS_RUN) continue;
     if (String(rows[i][XT_ARM]) !== XARM_TEST) continue;
-    var from = String(rows[i][XT_RUNFROM] || '').substring(0, 10);
+    var from = adYmd_(rows[i][XT_RUNFROM]);
     if (!from) continue;
     var a = perf(String(rows[i][XT_SKU]), from, today);
     if (!a || !a.cost) continue;
@@ -902,7 +936,8 @@ function adExpandTestNotes_(sh) {
     '예약액(JPY)': '이 시험이 한 주에 더 쓸 것으로 보는 돈 (지금 하루 광고비 × 인상폭 × 7일).\n' +
       '[확대 · 시험 주간 지출한도] 는 돌고 있는 시험들의 이 값 합계(+승격의 주간 추가액)와 견줍니다.\n' +
       '실제로는 노출이 더 붙어 이보다 더 쓸 수 있습니다 — 그것은 매일 도는 손실한도가 막습니다.',
-    '상태': XS_PLAN + ' → ' + XS_RUN + ' → ' + XS_MATURE + ' → ' + XS_DONE + ' → ' + XS_ADOPT + ' 또는 ' + XS_STAY + '\n' +
+    '상태': XS_PLAN + ' → ' + XS_RUN + ' → ' + XS_MATURE + ' → ' + XS_DONE + ' → ' + XS_ADOPT + ' 또는 ' + XS_STAY +
+      ' (대조군은 ' + XS_CLOSE + ')\n' +
       XS_ADOPT + ' = 판정이 좋아 그 값을 다시 올려 둠 (다음 계획이 거기서 한 계단 더)\n' +
       XS_STAY + ' = 판정이 좋지 않아 직전 값에 머묾 — 여기가 이 상품의 순이익 증가분 0 이다 (냉각 뒤 다시 봄)\n' +
       XS_WAIT + ' = 한도·용량·구조 때문에 아직 · ' + XS_GUARD + ' = 손실한도를 넘겨 즉시 복원 · ' +
