@@ -153,6 +153,12 @@ function buildAdExpandCandidates(opts) {
   var ctx = adMarginCtx_(true);
   var pc = adExpandPlanCtx_();                 // 손잡이 · 예산 신호 · 돌고 있는 시험 · 정책
   var grow = adStopGrowSkus_();
+  // 사전분포로 쓸 '전체 주문율' — 이 계정의 광고가 평균 몇 %나 주문으로 이어지나.
+  // 클릭이 적은 상품의 주문율을 여기로 끌어당긴다 (아래 q 참고).
+  var fleetCk = 0, fleetOd = 0;
+  for (var fs in agg) { fleetCk += agg[fs].ck || 0; fleetOd += agg[fs].od || 0; }
+  var fleet = fleetCk > 0 ? fleetOd / fleetCk : 0;
+
   var rows = [], cnt = {}, act = {}, push = [], nUser = 0, nSheet = 0, nCost = 0, nDef = 0;
   for (var sku2 in agg) {
     var a2 = agg[sku2], inf = info[sku2] || { asin: a2.asin, jp: '', price: 0 };
@@ -177,7 +183,11 @@ function buildAdExpandCandidates(opts) {
 
     var cpc = a2.ck > 0 ? a2.cost / a2.ck : 0;
     var real = a2.ck > 0 ? a2.od / a2.ck : 0;
-    var q = (a2.od + EXPAND_PRIOR * real) / (a2.ck + EXPAND_PRIOR);   // 표본이 작으면 실측 쪽으로 눌린다
+    // 판단 주문율 — 클릭이 적으면 전체 주문율 쪽으로 끌어당긴다.
+    // 끌어당기는 곳은 반드시 '그 상품 바깥의 값' 이어야 한다. 제 실측값으로 당기면
+    //   (od + K×od/ck) ÷ (ck + K) = od/ck
+    // 로 약분돼 아무 일도 일어나지 않는다 — 클릭 82회짜리 우연도 그대로 입찰이 된다.
+    var q = fleet > 0 ? (a2.od + EXPAND_PRIOR * fleet) / (a2.ck + EXPAND_PRIOR) : real;
     var G = price * m.pct / 100;
     var be = G * q;
     var target = be * EXPAND_KEEP;
@@ -293,8 +303,9 @@ function adExpandNotes_(sh) {
     '필요마진율(%)': '= 실제 클릭비용 ÷ (객단가 × 실제 주문율).\n' +
       '지금 내는 값이 손익분기가 되는 마진율입니다. 마진율을 몰라도 계산됩니다 —\n' +
       '실제 마진이 이보다 높으면 지금도 이익이고, 낮으면 지금도 밑지고 있습니다.',
-    '판단주문율(%)': '= (성숙 주문 + ' + EXPAND_PRIOR + ' × 실제 주문율) ÷ (성숙 클릭 + ' + EXPAND_PRIOR + ').\n' +
-      '표본이 작을 때 한두 건의 우연이 입찰을 흔들지 않게 눌러 줍니다.',
+    '판단주문율(%)': '= (성숙 주문 + ' + EXPAND_PRIOR + ' × 전체 주문율) ÷ (성숙 클릭 + ' + EXPAND_PRIOR + ').\n' +
+      '표본이 작을 때 한두 건의 우연이 입찰을 흔들지 않게, 계정 전체 평균 쪽으로 눌러 줍니다.\n' +
+      '클릭이 ' + EXPAND_PRIOR + '회면 반반, ' + (EXPAND_PRIOR * 4) + '회면 실측이 8할입니다.',
     '목표클릭비용(JPY)': '= 손익분기 × ' + EXPAND_KEEP + ' (이익보존계수).\n' +
       '손익분기까지 다 쓰지 않고 일부를 이익으로 남깁니다.',
     '여유배수': '= 목표 ÷ 지금 내는 값. 1보다 크면 더 낼 수 있고, 작으면 지금이 과합니다.',
