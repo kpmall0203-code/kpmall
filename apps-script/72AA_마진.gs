@@ -14,8 +14,16 @@
  *   ① 기준값 시트            바깥 시트의 '광고 기준값' 탭 — SKU, 없으면 ASIN 으로 맞댄다
  *   ② 후보 표에 적은 값       광고확대후보 표에서 직접 고친 값 (곧 ① 로 밀어 올린다)
  *   ③ 원가로 계산            원가(원)·배송비(엔)·사내환율·수수료로 낸 실측
- *   ④ 바깥 마진율 시트        '상품 목록' 의 일본어 상품명이 정확히 같을 때만
- *   ⑤ 기본값                위가 다 없을 때. 광고기준의 [기본 마진율] 을 쓴다 (지금 15%)
+ *   ④ 소싱 조달비            바깥 '상품 목록' 의 SKU 로 맞대 조달비(원)에서 낸 실측
+ *   ⑤ 바깥 마진율 시트        '상품 목록' 의 일본어 상품명이 정확히 같을 때만
+ *   ⑥ 기본값                위가 다 없을 때. 광고기준의 [기본 마진율] 을 쓴다 (지금 15%)
+ *
+ * ── ④ 를 넣은 이유 ──────────────────────────────────────
+ * 2026-09-07 부터 바깥 '상품 목록' 이 O열에 아마존 SKU 를, C열에 조달비(원)를 적기
+ * 시작했다. 그 전에는 새로 등록한 상품의 마진을 알 길이 없어 전부 ⑥ 기본값으로 갔다
+ * (확대 후보 452개 중 211개). ④ 는 ③ 과 같은 셈을 쓰되 원가를 '원가' 탭이 아니라
+ * 소싱 시트에서 가져온다 — 사람이 원가 탭을 채우지 않아도 새 상품은 실측이 된다.
+ * 이름이 아니라 SKU 로 맞대므로 ⑤ 보다 세다.
  *
  * ── 왜 기준값 시트가 맨 위인가 ──────────────────────────
  * 마진율과 판매가는 사람이 아는 값이고, 그 값은 한 곳에서 관리돼야 한다.
@@ -48,6 +56,7 @@ var MSRC_REF = '기준값 시트';        // 바깥 시트의 '광고 기준값'
 var MSRC_REF_ASIN = '기준값 시트(ASIN)';
 var MSRC_USER = '사용자 입력';
 var MSRC_COST = '원가 계산';
+var MSRC_SRC = '소싱 조달비';        // 바깥 '상품 목록' 의 SKU·조달비로 낸 실측
 var MSRC_SHEET = '마진율 시트';
 var MSRC_DEFAULT = '기본값';
 var MSRC_LOSS = '원가 계산(적자)';
@@ -75,9 +84,9 @@ function adMarginCtxBuild_() {
   var ctx = {
     def: (Number(basis['기본 마진율']) > 0 ? Number(basis['기본 마진율']) * 100
                                           : MARGIN_DEFAULT_PCT),
-    costs: {}, rate: 0, skuCost: {}, manual: {}, ext: {}, user: {},
+    costs: {}, rate: 0, skuCost: {}, manual: {}, ext: {}, user: {}, src: {},
     ref: { bySku: {}, byAsin: {}, n: 0 },
-    nCost: 0, nExt: 0, nUser: 0
+    nCost: 0, nExt: 0, nUser: 0, nSrc: 0
   };
   // 바깥 '광고 기준값' 탭 — 사람이 관리하는 원장. 가장 세다
   try {
@@ -101,6 +110,10 @@ function adMarginCtxBuild_() {
     ctx.ext = externalMarginMap_(basis) || {};
     ctx.nExt = Object.keys(ctx.ext).length;
   } catch (e) { log_('ads', 'WARN', '마진율 시트를 못 읽었습니다: ' + String(e).substring(0, 120)); }
+  try {
+    ctx.src = sourceCostMap_(basis) || {};
+    ctx.nSrc = Object.keys(ctx.src).length;
+  } catch (e) { log_('ads', 'WARN', '소싱 조달비를 못 읽었습니다: ' + String(e).substring(0, 120)); }
   return ctx;
 }
 
@@ -183,7 +196,31 @@ function adMarginProgram_(ctx, sku, price, jpName) {
     }
   }
 
-  // ③ 바깥 마진율 시트 (일본어 상품명이 정확히 같을 때만)
+  // ④ 소싱 조달비 — 바깥 '상품 목록' 의 SKU 로 맞댄다. ③ 과 같은 셈, 원가만 소싱 시트에서
+  var sc = (ctx.src || {})[String(sku || '').trim()];
+  if (sc && sc.krw > 0 && ctx.rate > 0 && price > 0) {
+    var fee2 = 0, fsrc2 = '배송비 모름';
+    try {
+      var rs2 = resolveShipping_(sku, ctx.skuCost, ctx.manual);
+      fee2 = Number(rs2.fee) || 0; fsrc2 = rs2.src;
+    } catch (e2) {}
+    var unit2 = unitProfitKrw_(price, fee2, sc.krw, ctx.rate, DEFAULT_FEE_RATE);
+    var pct2 = unit2 / ctx.rate / price * 100;
+    if (pct2 > 0 && pct2 < 100) {
+      return { pct: Math.round(pct2 * 10) / 10, src: MSRC_SRC,
+               why: '소싱 시트의 조달비 ' + Math.round(sc.krw).toLocaleString() + '원 · 배송비 ¥' +
+                    Math.round(fee2) + ' (' + fsrc2 + ') · 수수료 ' +
+                    Math.round(DEFAULT_FEE_RATE * 100) + '% · 환율 ' + ctx.rate.toFixed(2) +
+                    ' 로 셈했습니다 (판매가 ¥' + Math.round(price) + ')' };
+    }
+    if (pct2 <= 0) {
+      return { pct: 0, src: MSRC_LOSS,
+               why: '⛔ 이 값·소싱 조달비로는 팔수록 손해입니다 (건당 ' +
+                    Math.round(unit2).toLocaleString() + '원). 광고를 늘릴 상품이 아닙니다' };
+    }
+  }
+
+  // ⑤ 바깥 마진율 시트 (일본어 상품명이 정확히 같을 때만)
   var key = '';
   try { key = normName_(jpName); } catch (e) { key = ''; }
   var ex = key ? Number((ctx.ext || {})[key]) : 0;
@@ -192,9 +229,9 @@ function adMarginProgram_(ctx, sku, price, jpName) {
              why: '바깥 "상품 목록" 시트에서 일본어 상품명이 정확히 같은 줄을 찾았습니다' };
   }
 
-  // ④ 기본값
+  // ⑥ 기본값
   return { pct: ctx.def, src: MSRC_DEFAULT,
-           why: '원가도 없고 바깥 시트에도 없어 기본값 ' + ctx.def + '% 를 씁니다 — ' +
+           why: '원가도 소싱 조달비도 없고 바깥 시트에도 없어 기본값 ' + ctx.def + '% 를 씁니다 — ' +
                 '실제 마진율을 아시면 표의 [마진율(%)] 에 적어 주세요 (그것이 가장 셉니다)' };
 }
 
@@ -320,6 +357,49 @@ function adRefPush_(items) {
     var need = at + add.length - 1;
     if (sh.getMaxRows() < need) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
     sh.getRange(at, 1, add.length, AD_REF_HEADER.length).setValues(add);
+  }
+  return out;
+}
+
+
+// ── 바깥 '상품 목록' 탭 — SKU 로 맞대는 소싱 조달비 ──────
+//
+// 2026-09-07 부터 O열에 아마존 SKU 가 채워진다. 그 전 줄에는 SKU 가 없어 건너뛴다.
+// 이름이 아니라 SKU 로 맞대므로 이름 매칭(externalMarginMap_)보다 세다.
+//
+// 열 위치는 고정으로 쓴다 — O열에 머리글이 없어서 이름으로 찾을 수 없다.
+// 그 대신 읽을 때마다 I열(판매가)·M열(마진)이 숫자인지 보고, 아니면 쓰지 않는다.
+
+var SRCCOST_TAB = '상품 목록';
+var SRCCOST_COL_KRW = 3, SRCCOST_COL_PRICE = 9, SRCCOST_COL_MJPY = 13,
+    SRCCOST_COL_SKU = 15, SRCCOST_COL_SHIP = 16;      // 1부터
+
+/**
+ * SKU → {krw, price, margin, ship} — 바깥 소싱 시트의 조달비 원장.
+ *
+ * 같은 SKU 가 여러 줄이면 마지막(가장 최근에 수집한) 줄을 쓴다.
+ * @return {Object}
+ */
+function sourceCostMap_(basis) {
+  var out = {};
+  var b = basis || adBasis_();
+  var id = String(b['마진율 시트 ID'] || '').trim();
+  if (!id) return out;
+  var sh;
+  try { sh = SpreadsheetApp.openById(id).getSheetByName(SRCCOST_TAB); }
+  catch (e) { log_('ads', 'WARN', '소싱 시트를 못 열었습니다: ' + String(e).substring(0, 120)); return out; }
+  if (!sh || sh.getLastRow() < 2) return out;
+  var n = sh.getLastRow() - 1;
+  var v = sh.getRange(2, 1, n, SRCCOST_COL_SHIP).getValues();
+  for (var i = 0; i < n; i++) {
+    var sku = String(v[i][SRCCOST_COL_SKU - 1] || '').trim();
+    if (!sku) continue;                                   // SKU 열이 생기기 전 줄
+    var krw = srcKrw_(v[i][SRCCOST_COL_KRW - 1]);
+    if (!(krw > 0)) continue;
+    out[sku] = { krw: krw,
+                 price: Number(String(v[i][SRCCOST_COL_PRICE - 1]).replace(/,/g, '')) || 0,
+                 margin: Number(String(v[i][SRCCOST_COL_MJPY - 1]).replace(/,/g, '')) || 0,
+                 ship: String(v[i][SRCCOST_COL_SHIP - 1] || '').trim() };
   }
   return out;
 }
