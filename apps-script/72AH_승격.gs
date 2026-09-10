@@ -54,6 +54,7 @@
 var PROMO_PREFIX = 'EXPAND';           // 캠페인 이름에 쓸 말 (아마존은 아스키만 받는다)
 var PROMO_MIN_SKUS = 1;
 var PROMO_TRACK = 'X';                 // 계획 표 [트랙] 칸 — 확대가 만든 줄이라는 표시
+var PROP_PROMO_CLEAN = 'PROMO_STOPOLD_CLEAN';   // 뒷정리가 "이 목록으로는 끝" 이라고 확인한 가격선들
 
 /** 확대가 만든 가격선 캠페인인가 (이름으로 안다). 72D 가 '전용가능' 을 매길 때도 쓴다 */
 function adIsBandCamp_(name) {
@@ -357,4 +358,136 @@ function adPromoteRegister_() {
     log_('ads', 'INFO', '승격 반반 시험 등록 — 시험편 ' + out.test + ' · 대조편 ' + out.ctrl);
   }
   return out;
+}
+
+
+/**
+ * 옮긴 상품이 옛 그룹에서 아직 켜져 있으면 멈춘다 — 승격의 뒷정리.
+ *
+ * ── 왜 따로 있나 ─────────────────────────────────────────
+ * 캠페인 만들기(72J)는 옛 광고를 찾을 때 아마존에 SKU 로 물었는데(skuFilter), 그 물음이
+ * 거의 아무것도 돌려주지 않았다 — 152개를 옮기고 4개만 멈췄다. 그동안 같은 상품이 두 곳에서
+ * 입찰한다. 그런데 옛 광고의 ID 는 [상품광고목록] 에 이미 전부 있다. 그것을 쓴다.
+ *
+ * ── 무엇을 멈추나 ────────────────────────────────────────
+ * 새 그룹에 '실제로 들어간' SKU 만. 새 그룹의 광고 목록은 그룹 ID 로 묻는다 — 이 물음은
+ * 믿을 수 있다. 등록에 실패한 SKU (자격 오류 등)는 옛 자리가 유일한 자리라 건드리지 않는다.
+ * 멈춘 광고는 [상품광고목록] 의 상태도 PAUSED 로 고쳐 둔다 — 안 그러면 다음 수집 전까지
+ * 매일 같은 것을 또 멈추려 든다.
+ *
+ * 같은 김에 계획 표의 [광고ID들] 도 새 그룹의 진짜 목록으로 다시 적는다 — 시트가 그 칸을
+ * 숫자로 읽어 4.4e+269 같은 값으로 망가뜨린 줄이 있다.
+ *
+ * @param {Object} opts {quiet, dry}
+ * @return {{rows:number, skus:number, paused:number, fixedIds:number, left:number, msg:string}}
+ */
+function adPromoteStopOld_(opts) {
+  var quiet = !!(opts && opts.quiet), dry = !!(opts && opts.dry);
+  var out = { rows: 0, skus: 0, paused: 0, fixedIds: 0, left: 0, msg: '' };
+  var psh = ss_().getSheetByName(SHEET_ADPLAN);
+  if (!psh || psh.getLastRow() < 2) { out.msg = '계획 표가 없습니다'; return out; }
+  var pv = psh.getRange(2, 1, psh.getLastRow() - 1, ADPLAN_HEADER.length).getValues();
+  var units = adUnitMap_();
+  if (!Object.keys(units).length) { out.msg = '[상품광고목록] 이 비어 있습니다 — 먼저 받으세요'; return out; }
+
+  // 싼 검사 먼저: 옮긴 SKU 중 옛 그룹에 켜진 광고가 하나라도 있나 (없으면 아마존을 안 부른다).
+  // 등록에 실패한 SKU 는 옛 광고가 영영 켜져 있는 것이 맞다 — 그 줄을 매일 다시 물어보지 않도록,
+  // "이 목록 스냅샷으로는 더 할 것이 없다" 고 확인한 줄은 목록을 새로 받을 때까지 건너뛴다.
+  var props = PropertiesService.getScriptProperties();
+  var unitAt = '';
+  try { unitAt = String(adUnitCollectedAt_() || ''); } catch (e0) { unitAt = ''; }
+  var clean = {};
+  try { clean = JSON.parse(props.getProperty(PROP_PROMO_CLEAN) || '{}') || {}; } catch (e1) { clean = {}; }
+  var work = [];
+  for (var i = 0; i < pv.length; i++) {
+    if (String(pv[i][AP_TRACK - 1]).trim() !== PROMO_TRACK) continue;
+    if (String(pv[i][AP_RESULT - 1]).indexOf('성공') !== 0) continue;
+    var gid = String(pv[i][AP_GID - 1] || '').trim();
+    if (!gid) continue;
+    if (unitAt && clean[String(pv[i][AP_NAME - 1])] === unitAt) continue;   // 이 스냅샷으로는 이미 확인함
+    var skus = adSkuListSplit_(pv[i][AP_SKUS - 1]), any = false;
+    for (var s = 0; s < skus.length && !any; s++) {
+      var u = units[skus[s]];
+      if (!u) continue;
+      for (var a = 0; a < u.ads.length; a++) if (u.ads[a].state === 'ENABLED' && u.ads[a].gid !== gid) { any = true; break; }
+    }
+    if (any) work.push({ row: i + 2, name: String(pv[i][AP_NAME - 1]), gid: gid, cid: String(pv[i][AP_CID - 1] || ''), skus: skus });
+  }
+  if (!work.length) { out.msg = '옛 그룹에 켜진 것이 없습니다'; return out; }
+
+  var token = adsToken_(), logBuf = adLogBuffer_(20), pausedIds = [], t0 = Date.now();
+  for (var w = 0; w < work.length; w++) {
+    var W = work[w];
+    if (Date.now() - t0 > ADS_SOFT_MS) { out.left++; continue; }
+    // ① 새 그룹에 실제로 든 SKU — 그룹 ID 로 묻는다
+    var inNew = {}, newIds = [], next = null, guard = 0;
+    try {
+      do {
+        var body = { maxResults: 500, adGroupIdFilter: { include: [W.gid] },
+                     stateFilter: { include: ['ENABLED', 'PAUSED'] } };
+        if (next) body.nextToken = next;
+        var r = adsApiRetry_(token, 'post', '/sp/productAds/list', body, ADSW_CT_PRODUCTAD, ADSW_CT_PRODUCTAD);
+        var arr = (r && r.productAds) || [];
+        for (var k = 0; k < arr.length; k++) {
+          inNew[String(arr[k].sku || '')] = true;
+          newIds.push(String(arr[k].adId || ''));
+        }
+        next = r && r.nextToken ? r.nextToken : null;
+      } while (next && guard++ < 20);
+    } catch (e) {
+      log_('ads', 'WARN', '승격 뒷정리 — 새 그룹 조회 실패 (' + W.name + '): ' + String(e).substring(0, 120));
+      out.left++; continue;
+    }
+    // ② 그 SKU 들의 옛 광고 — 상품광고목록에서
+    var ids = [], hit = [];
+    for (var s2 = 0; s2 < W.skus.length; s2++) {
+      var sk = W.skus[s2];
+      if (!inNew[sk]) continue;                          // 새 자리에 없으면 옛 자리를 끄면 안 된다
+      var u2 = units[sk];
+      if (!u2) continue;
+      for (var a2 = 0; a2 < u2.ads.length; a2++) {
+        if (u2.ads[a2].state === 'ENABLED' && u2.ads[a2].gid !== W.gid) { ids.push(u2.ads[a2].id); hit.push(sk); }
+      }
+    }
+    out.rows++; out.skus += hit.length;
+    if (dry) { out.paused += ids.length; continue; }
+    if (!ids.length) { if (unitAt) clean[W.name] = unitAt; continue; }   // 남은 것이 실패 SKU 뿐 — 다음 목록까지 조용히
+    // ③ 멈춘다
+    var bad = ids.length ? adPauseAds_(token, ids) : '';
+    if (bad) { log_('ads', 'WARN', '승격 뒷정리 — 멈춤 실패 (' + W.name + '): ' + bad); out.left++; continue; }
+    out.paused += ids.length; pausedIds = pausedIds.concat(ids);
+    if (ids.length) {
+      logBuf.push([adLogRow_({ kind: '상품', camp: W.name, group: W.name, sku: adSkuText_(hit, 3),
+        target: ids.length + '개', item: '옛 그룹에서 멈춤', from: 'ENABLED', to: 'PAUSED',
+        why: '승격 뒷정리 — 옮긴 상품이 옛 그룹에서 아직 켜져 있었다 (두 곳에서 입찰하면 자기끼리 값을 올림)',
+        by: '자동', cid: W.cid, gid: W.gid })]);
+    }
+    // ④ 계획 표의 [광고ID들] 을 진짜 목록으로 (글자로 고정해서)
+    if (newIds.length) {
+      psh.getRange(W.row, AP_ADIDS).setNumberFormat('@').setValue(newIds.join(','));
+      out.fixedIds++;
+    }
+  }
+  logBuf.flush();
+  if (pausedIds.length) adUnitMarkPaused_(pausedIds);
+  if (!dry) { try { props.setProperty(PROP_PROMO_CLEAN, JSON.stringify(clean)); } catch (e2) {} }
+  out.msg = '가격선 ' + out.rows + '개 · 옛 그룹에서 멈춤 ' + out.paused + '개 (SKU ' + out.skus + ')' +
+            (out.fixedIds ? ' · 광고ID 다시 적음 ' + out.fixedIds + '줄' : '') +
+            (out.left ? ' · 못 한 줄 ' + out.left + ' (다음 주기가 이어서)' : '');
+  log_('ads', out.left ? 'WARN' : 'INFO', '승격 뒷정리 — ' + out.msg);
+  return out;
+}
+
+/** 메뉴(뒤): 승격 뒷정리 — 옮긴 상품을 옛 그룹에서 멈춘다 */
+function promoteStopOldMenu() {
+  if (!adBusyGuard_('승격 뒷정리')) return;
+  var pre = adPromoteStopOld_({ dry: true, quiet: true });
+  if (!pre.paused) { ui_().alert('승격 뒷정리', pre.msg + '.', ui_().ButtonSet.OK); return; }
+  var ok = ui_().alert('승격 뒷정리',
+    '옮긴 상품 ' + pre.skus + '개가 옛 그룹에서 아직 켜져 있습니다 — 광고 ' + pre.paused + '개.\n' +
+    '같은 상품이 두 곳에서 입찰하면 자기끼리 값을 올립니다.\n\n옛 그룹에서 멈출까요? (새 캠페인은 그대로)',
+    ui_().ButtonSet.YES_NO);
+  if (ok !== ui_().Button.YES) return;
+  var r = adPromoteStopOld_({ quiet: true });
+  ui_().alert('승격 뒷정리', r.msg + '\n\n' + SHEET_ADLOG + ' 에 남겼습니다.', ui_().ButtonSet.OK);
 }

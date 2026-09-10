@@ -202,6 +202,28 @@ function adUnitMap_() {
   return out;
 }
 
+/**
+ * 방금 멈춘 광고들의 [상태] 를 PAUSED 로 고쳐 둔다.
+ * 목록은 주 1회 받으므로, 안 고치면 다음 수집 전까지 '아직 켜져 있다' 고 보고 매일 또 멈추려 든다.
+ */
+function adUnitMarkPaused_(ids) {
+  var sh = ss_().getSheetByName(SHEET_ADUNIT);
+  if (!sh || sh.getLastRow() < 2 || !ids || !ids.length) return 0;
+  var want = {};
+  for (var i = 0; i < ids.length; i++) want[String(ids[i])] = true;
+  var n = sh.getLastRow() - 1;
+  var idCol = sh.getRange(2, 6, n, 1).getValues();
+  var stCol = sh.getRange(2, 5, n, 1).getValues();
+  var dirty = false, k = 0;
+  for (var r = 0; r < n; r++) {
+    if (want[String(idCol[r][0] || '').trim()] && String(stCol[r][0]) !== 'PAUSED') {
+      stCol[r][0] = 'PAUSED'; dirty = true; k++;
+    }
+  }
+  if (dirty) sh.getRange(2, 5, n, 1).setValues(stCol);
+  return k;
+}
+
 function adUnitNotes_(sh) {
   headerNotes_(sh, 1, ADUNIT_HEADER, {
     'SKU': '광고에 올라가 있는 SKU. 큰 그룹(몰아넣기)에 든 것도 여기에는 다 있다 —\n' +

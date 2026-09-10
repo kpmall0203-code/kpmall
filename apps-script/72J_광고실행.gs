@@ -57,7 +57,11 @@ function adSkuText_(skus, n) {
 function adsCreated_(res, key, idField) {
   var box = (res && res[key]) || {};
   var succ = box.success || [], errs = box.error || [];
-  if (succ.length) return { ok: true, ids: succ.map(function (x) { return String(x[idField] || ''); }) };
+  if (succ.length) {
+    return { ok: true, ids: succ.map(function (x) { return String(x[idField] || ''); }),
+             idx: succ.map(function (x) { return Number(x.index); }),     // 보낸 것 중 몇 번째가 됐나
+             nErr: errs.length };
+  }
   var e = (errs[0] && errs[0].errors && errs[0].errors[0]) || {};
   return { ok: false, ids: [],
            msg: (e.errorType || '') + ' ' + String(e.message || '').substring(0, 120) };
@@ -269,8 +273,19 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
                     : '겨냥 넷이 이 값을 물려받는다', cid: cid, gid: gid }));
     }
 
-    // ③ 이 SKU 들이 지금 어디 있나 (승인한 줄만이라 한 번이면 끝난다)
-    var placed = {};
+    // ③ 이 SKU 들이 지금 어디 있나.
+    //    [상품광고목록] 을 먼저 본다 — 아마존에 SKU 로 묻는 skuFilter 는 거의 아무것도 못 찾았다
+    //    (152개 중 4개). 목록에 없는 SKU 만 아마존에 묻는다.
+    var placed = {}, unitMap = {};
+    try { unitMap = adUnitMap_(); } catch (eu) { unitMap = {}; }
+    for (var u0 = 0; u0 < skus.length; u0++) {
+      var uu = unitMap[skus[u0]];
+      if (!uu) continue;
+      for (var ua = 0; ua < uu.ads.length; ua++) {
+        if (uu.ads[ua].state !== 'ENABLED' && uu.ads[ua].gid !== gid) continue;   // 이미 꺼진 옛 광고는 볼 일 없다
+        (placed[skus[u0]] || (placed[skus[u0]] = [])).push({ adId: uu.ads[ua].id, gid: uu.ads[ua].gid });
+      }
+    }
     try {
       var pr = adsApiRetry_(token, 'post', '/sp/productAds/list',
         { maxResults: 500, skuFilter: { include: skus },
@@ -280,7 +295,9 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
       for (var a = 0; a < arr.length; a++) {
         var sk = String(arr[a].sku || '');
         if (skus.indexOf(sk) < 0) continue;        // 필터가 안 먹었으면 버린다
-        (placed[sk] || (placed[sk] = [])).push(
+        var dup = false, pl0 = placed[sk] || [];
+        for (var d0 = 0; d0 < pl0.length; d0++) if (pl0[d0].adId === String(arr[a].adId || '')) dup = true;
+        if (!dup) (placed[sk] || (placed[sk] = [])).push(
           { adId: String(arr[a].adId || ''), gid: String(arr[a].adGroupId || '') });
       }
     } catch (e2) {
@@ -294,7 +311,7 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
       for (var l = 0; l < lst.length; l++) if (lst[l].gid === gid) here = true;
       if (!here) add.push({ campaignId: cid, adGroupId: gid, sku: skus[s], state: state });
     }
-    var added = 0, madeIds = [];
+    var added = 0, madeIds = [], okSku = {}, missed = [];
     for (var b = 0; b < add.length; b += ADEXEC_ADS_BATCH) {
       var part = add.slice(b, b + ADEXEC_ADS_BATCH);
       var ares = adsApiRetry_(token, 'post', '/sp/productAds', { productAds: part },
@@ -303,9 +320,17 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
       if (!ad.ok) return fail('상품 등록 — ' + ad.msg);
       added += ad.ids.length;
       madeIds = madeIds.concat(ad.ids);
+      // 한 묶음 안에서 몇 개만 실패하면 아마존은 성공한 것만 돌려준다 — 어느 SKU 가 됐는지 적어 둔다.
+      // 안 된 SKU 의 옛 광고를 끄면 그 상품은 어디에서도 광고하지 않게 된다
+      var okIdx = {};
+      for (var x0 = 0; x0 < ad.idx.length; x0++) if (isFinite(ad.idx[x0])) okIdx[ad.idx[x0]] = true;
+      for (var x1 = 0; x1 < part.length; x1++) {
+        if (ad.idx.length && !okIdx[x1]) missed.push(part[x1].sku); else okSku[part[x1].sku] = true;
+      }
     }
-    // 받은 ID 를 적어 둔다 — 켜고 끌 때 다시 물어보지 않으려고
-    if (madeIds.length) sh.getRange(rowNo, AP_ADIDS).setValue(madeIds.join(','));
+    // 받은 ID 를 적어 둔다 — 켜고 끌 때 다시 물어보지 않으려고. 글자로 고정한다 —
+    // 시트가 "id,id,id" 를 숫자로 읽어 4.4e+269 로 망가뜨린 적이 있다
+    if (madeIds.length) sh.getRange(rowNo, AP_ADIDS).setNumberFormat('@').setValue(madeIds.join(','));
     if (added) {
       log.push(adLogRow_({ at: now, kind: '상품', camp: name, group: name,
         sku: skuTxt, asin: asinTxt, target: added + '개', item: '등록', to: state,
@@ -313,10 +338,15 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
         why: '이 캠페인에 담는다', cid: cid, gid: gid }));
     }
 
-    // ⑤ 옛 그룹에서는 멈춘다 (지우지 않는다 — 되돌릴 수 있어야 한다)
+    // ⑤ 옛 그룹에서는 멈춘다 (지우지 않는다 — 되돌릴 수 있어야 한다).
+    //    새 그룹에 실제로 들어간 SKU 만 — 이미 있던 것(here)이거나 방금 된 것(okSku)
     var stop = [];
     for (var s2 = 0; s2 < skus.length; s2++) {
-      var lst2 = placed[skus[s2]] || [];
+      var landed = okSku[skus[s2]];
+      var lst1 = placed[skus[s2]] || [];
+      for (var l1 = 0; l1 < lst1.length && !landed; l1++) if (lst1[l1].gid === gid) landed = true;
+      if (!landed) continue;
+      var lst2 = lst1;
       for (var l2 = 0; l2 < lst2.length; l2++) {
         if (lst2[l2].gid !== gid && lst2[l2].adId) {
           stop.push({ adId: lst2[l2].adId, state: 'PAUSED' });
@@ -347,8 +377,10 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
 
     if (log.length) { if (bucket) bucket.push(log); else {
       var st3 = adLogWrite_(log); adLogResult_(st3, log.map(function () { return '성공'; })); } }
+    if (stopped) { try { adUnitMarkPaused_(stop.map(function (x) { return x.adId; })); } catch (em) {} }
     sh.getRange(rowNo, AP_RESULT).setValue(
-      '성공 · 상품 ' + added + '개' + (stopped ? ' · 옛 그룹 멈춤 ' + stopped : ''));
+      '성공 · 상품 ' + added + '개' + (stopped ? ' · 옛 그룹 멈춤 ' + stopped : '') +
+      (missed.length ? ' · ⚠ 등록 안 됨 ' + missed.length + '개: ' + adSkuText_(missed, 3) : ''));
     // 트랙 B 줄이면 육성 표에도 ID 를 돌려 적는다 — 상태 점검이 그 ID 로 원장 지출을 찾는다
     if (String(row[AP_TRACK - 1]) === ADPLAN_TRACK_B) {
       try { adGrowStamp_(name, cid, gid); }

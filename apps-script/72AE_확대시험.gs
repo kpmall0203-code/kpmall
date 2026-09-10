@@ -685,6 +685,12 @@ function adExpandCycle(opts) {
     if (pr.test || pr.ctrl) msg += ' | 승격 등록 시험편 ' + pr.test + ' · 대조편 ' + pr.ctrl;
   } catch (e6) { log_('ads', 'WARN', '승격 등록 실패: ' + e6); }
 
+  // 옮긴 상품이 옛 그룹에서 아직 켜져 있으면 멈춘다 (목록에 켜진 것이 없으면 아마존을 안 부른다)
+  try {
+    var so = adPromoteStopOld_({ quiet: true });
+    if (so.paused) msg += ' | 승격 뒷정리 ' + so.paused + '개 멈춤';
+  } catch (e7) { log_('ads', 'WARN', '승격 뒷정리 실패: ' + e7); }
+
   // ② 시작이 6분에 걸려 못 보낸 승인분을 여기서 이어 보낸다.
   // 사람이 이미 그 줄의 [승인] 을 켰고 모드가 자동운영이라 다시 물을 것이 없다 —
   // 물어야 할 것이었다면 ② 시작에서 벌써 물었다.
