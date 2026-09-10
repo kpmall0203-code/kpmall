@@ -83,6 +83,9 @@ var NAR_WEEKLY = 'WEEKLY_CAP';
 var NAR_LISTING_OFF = 'LISTING_INACTIVE';
 var NAR_NO_STOCK = 'NO_STOCK';
 var NAR_LOSS = 'MARGIN_NEGATIVE';
+var NAR_HOLD = 'MANUAL_HOLD';            // 소유가 NEW_ADS 가 아닌 줄 — 사람이 잡고 있다
+var NA_OWNER = 'NEW_ADS';
+var NA_MISMATCH_PP = 5;                  // 바깥 시트 마진율과 이만큼(%p) 어긋나면 사유에 표시한다
 
 /**
  * 리스팅에서 '살 수 있다' 고 볼 상태. 실측 분포(2026-09-10 · 26,811줄):
@@ -314,7 +317,11 @@ function naItemNotes_() {
         NAA_EXCLUDE + ' = 마진 ≤ 0 · 허용입찰 < ¥' + NA_MIN_BID + ' · 이미 광고 중 · 리스팅 비활성\n' +
         NAA_INFO + ' = 아직 아마존에 없음 · 조달비/판매가 모름',
       '소유': '이 SKU 를 만지는 프로그램. NEW_ADS 가 첫 수익 근거까지 데려가고 그 뒤는 EXPAND 에 넘긴다.\n' +
-        '한 SKU 를 두 프로그램이 함께 만지지 않는다.'
+        '한 SKU 를 두 프로그램이 함께 만지지 않는다.\n' +
+        '사람이 잡아 두려면 이 칸을 다른 말(예: 사람)로 바꾸세요 — 그 줄은 가져오기·실행이 다시 건드리지 않습니다 (' + NAR_HOLD + ').',
+      '상태': '가져옴·정보대기·옵션대기·예산대기는 가져오기를 누를 때마다 다시 셈한다 —\n' +
+        '아직 아마존에 없던 것이 올라오면, 비활성이던 리스팅이 살아나면 저절로 시작 대기로 옮겨 간다.\n' +
+        '소액운영 이후(관찰·수익운영·인계·성숙대기·중단·냉각)는 매일 주기만 바꾼다.'
     });
   } catch (e) {}
 }

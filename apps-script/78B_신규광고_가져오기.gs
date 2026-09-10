@@ -19,8 +19,12 @@
  *
  * ── 다시 눌러도 안전하다 ────────────────────────────────
  * 이미 본 SKU 는 새로 만들지 않고 바뀐 것(판매가·조달비·리스팅 상태)만 고친다.
- * 사람이 [상품통합] 에서 손댄 상태(제외·중단 등)와 이미 시작한 것은 덮지 않는다.
- * 6분에 걸리면 거기까지 적고 남은 수를 알린다 — 다시 누르면 이어 간다.
+ * 아직 시작 안 한 줄(가져옴·정보대기·옵션대기·예산대기·제외)은 누를 때마다 배분을 다시
+ * 셈한다 — 아마존 등록이 며칠 늦어 '정보대기' 였던 것, 리스팅이 살아난 것이 저절로 옮겨 온다.
+ * 이미 시작한 줄(소액운영 이후)은 값만 고치고 배분·상태는 매일 주기가 맡는다.
+ * [소유] 가 NEW_ADS 가 아닌 줄은 사람이 잡은 것이다 — 아예 건드리지 않는다.
+ * 6분에 걸리면 거기까지 적고 남은 수를 알린다. 새 상품군을 먼저 돌므로 다시 누르면 이어 간다
+ * (같은 자리에서 매번 끊기지 않는다).
  */
 
 /** 메뉴 ①: 광고할 물건 가져오기 */
@@ -87,36 +91,53 @@ function naImportRun_(opts) {
     }
   }
   var today = ymd_(new Date());
+  // 이미 시작한 줄(mine)과 사람이 잡은 줄(hold). 둘 다 그 상품군의 대표로 남는다 —
+  // 다른 옵션을 대표로 새로 뽑아 ② 가 한 상품군에 둘을 시작하는 일을 막는다
+  var live = naLiveStates_();
+  var mine = {}, hold = {};
+  for (var s1 in have) {
+    var r1 = rows[have[s1]];
+    if (String(r1[NA_I_OWNER] || '').trim() !== NA_OWNER) { hold[s1] = true; mine[s1] = NAR_HOLD; }
+    else if (live[String(r1[NA_I_STATE] || '')]) mine[s1] = String(r1[NA_I_STATE]);
+  }
 
-  // ④ 줄마다 셈한다 (아직 대표를 고르기 전 — 상품군을 다 봐야 정한다)
+  // ④ 상품군 단위로 셈한다 — 새 상품군을 먼저, 옵션은 붙여서 (시간이 다 되면 상품군 사이에서 끊는다)
+  var groups = naOrderGroups_(src, have);
   var calc = {}, add = [], touched = {};
-  for (var r2 = 0; r2 < src.length; r2++) {
-    if (Date.now() - t0 > NA_SOFT_MS) { out.left = src.length - r2; break; }
-    var it = src[r2];
-    var one = naCalcOne_(it, listing, onAd, ctx, pol);
-    calc[it.sku] = one;
-    var famKey = one.fam;
-    (touched[famKey] || (touched[famKey] = [])).push(it.sku);
+  for (var g = 0; g < groups.length; g++) {
+    if (Date.now() - t0 > NA_SOFT_MS) {
+      for (var g2 = g; g2 < groups.length; g2++) out.left += groups[g2].rows.length;
+      break;
+    }
+    var grp = groups[g];
+    for (var r2 = 0; r2 < grp.rows.length; r2++) {
+      var it = grp.rows[r2];
+      (touched[grp.key] || (touched[grp.key] = [])).push(it.sku);
+      if (hold[it.sku]) continue;                       // 사람이 잡은 줄은 셈하지 않는다
+      calc[it.sku] = naCalcOne_(it, listing, onAd, ctx, pol, mine);
+    }
   }
 
   // ⑤ 상품군마다 대표를 고른다
   var famRep = {};
   for (var f in touched) {
-    famRep[f] = naPickRep_(touched[f], calc, pol);
+    famRep[f] = naPickRep_(touched[f], calc, pol, mine);
   }
 
   // ⑥ 표에 반영 — 새 줄은 붙이고, 이미 있는 줄은 바뀐 칸만 고친다
   var dirty = false;
+  for (var h in hold) if (touched[naFamilyKey_(h)]) out.alloc['사람이 잡음'] = (out.alloc['사람이 잡음'] || 0) + 1;
   for (var sku in calc) {
     var c = calc[sku], rep = (famRep[c.fam] === sku);
     var alloc = naAllocOf_(c, rep, pol);
-    out.alloc[alloc.a] = (out.alloc[alloc.a] || 0) + 1;
+    var bucket = mine[sku] ? '운영 중 · ' + mine[sku] : alloc.a;
+    out.alloc[bucket] = (out.alloc[bucket] || 0) + 1;
     if (have[sku] === undefined) {
       add.push(naItemRow_(c, rep, alloc, today));
       out.added++;
     } else {
       var row = rows[have[sku]];
-      if (naItemUpdate_(row, c, rep, alloc, today)) { out.updated++; dirty = true; }
+      if (naItemUpdate_(row, c, rep, alloc, today, live)) { out.updated++; dirty = true; }
     }
   }
   if (dirty) ish.getRange(2, 1, rows.length, NA_ITEM_HEADER.length).setValues(rows);
@@ -129,12 +150,12 @@ function naImportRun_(opts) {
   }
 
   // ⑦ 상품군 표
-  out.fams = naFamWrite_(touched, calc, famRep, pol, today);
+  out.fams = naFamWrite_(touched, calc, famRep, pol, today, live);
 
   // ⑧ 시작할 수 있는 것 셈 (실제 시작은 ② 가 한다)
   var bids = [];
   for (var s2 in calc) {
-    if (famRep[calc[s2].fam] !== s2) continue;
+    if (famRep[calc[s2].fam] !== s2 || mine[s2]) continue;
     if (naAllocOf_(calc[s2], true, pol).a !== NAA_START) continue;
     out.startable++;
     if (calc[s2].bid > 0) bids.push(calc[s2].bid);
@@ -183,6 +204,35 @@ function naSourceRows_() {
   return out;
 }
 
+/**
+ * 소싱 줄을 상품군으로 묶고, 아직 [상품통합] 에 없는 SKU 가 든 상품군을 앞에 둔다.
+ * 시간이 다 돼 끊겨도 다음에 누르면 새 것부터 다시 도니 매번 같은 자리에서 멈추지 않는다.
+ * @return {Array<{key, rows, fresh}>}
+ */
+function naOrderGroups_(src, have) {
+  var by = {}, order = [];
+  for (var i = 0; i < src.length; i++) {
+    var f = naFamilyKey_(src[i].sku);
+    var g = by[f];
+    if (!g) { g = by[f] = { key: f, rows: [], fresh: false, seq: order.length }; order.push(g); }
+    g.rows.push(src[i]);
+    if (have[src[i].sku] === undefined) g.fresh = true;
+  }
+  order.sort(function (a, b) {
+    if (a.fresh !== b.fresh) return a.fresh ? -1 : 1;
+    return a.seq - b.seq;
+  });
+  return order;
+}
+
+/** 이미 시작한 뒤의 상태 — 가져오기가 배분·상태를 덮지 않는다 */
+function naLiveStates_() {
+  var live = {};
+  live[NAS_PROBE] = 1; live[NAS_WATCH] = 1; live[NAS_PROFIT] = 1;
+  live[NAS_HANDED] = 1; live[NAS_MATURE] = 1; live[NAS_STOP] = 1; live[NAS_COOL] = 1;
+  return live;
+}
+
 /** 리스팅 → SKU: {asin, price, stock, state} */
 function naListingMap_() {
   var out = {};
@@ -202,10 +252,10 @@ function naListingMap_() {
  * 한 SKU 의 셈. 시트를 쓰지 않는다.
  * @return {Object} {sku, fam, asin, name, url, krw, jpy, price, mpct, msrc, G, q, cap, bid, block, why, listed}
  */
-function naCalcOne_(it, listing, onAd, ctx, pol) {
+function naCalcOne_(it, listing, onAd, ctx, pol, mine) {
   var o = { sku: it.sku, fam: naFamilyKey_(it.sku), name: it.name, url: it.url,
             krw: it.krw, jpy: 0, price: 0, mpct: 0, msrc: '', G: 0, q: pol.q0,
-            cap: 0, bid: 0, block: '', why: '', listed: false, at: it.at,
+            cap: 0, bid: 0, block: '', why: '', note: '', listed: false, at: it.at,
             asin: '', stock: 0 };
   var L = listing[it.sku];
   if (!L) {
@@ -230,7 +280,8 @@ function naCalcOne_(it, listing, onAd, ctx, pol) {
     o.why = '리스팅 재고가 0 입니다 — 살 수 없는 것에는 광고하지 않습니다';
     return o;
   }
-  if (onAd[it.sku]) {
+  // 광고가 붙어 있어도 그것이 NEW_ADS 가 시작한 것이면 '이미 광고 중' 이 아니다
+  if (onAd[it.sku] && !(mine && mine[it.sku])) {
     o.block = NAR_ALREADY;
     o.why = '이미 광고 중입니다 — 다른 프로그램이나 사람이 넣은 것입니다. NEW_ADS 는 손대지 않습니다';
     return o;
@@ -242,6 +293,14 @@ function naCalcOne_(it, listing, onAd, ctx, pol) {
     o.block = NAR_MARGIN_MISSING;
     o.why = '조달비를 몰라 마진을 셀 수 없습니다 — 신규 상품에는 기본 마진율을 쓰지 않습니다';
     return o;
+  }
+  // 바깥 시트의 마진율은 표시·검증용 — 같은 판매가에서 우리 셈과 크게 어긋나면 사유에 적는다
+  if (it.margin && it.price > 0 && Math.abs(it.price - o.price) < 1) {
+    var sp = it.margin / it.price * 100;
+    if (Math.abs(sp - o.mpct) >= NA_MISMATCH_PP) {
+      o.note = '⚠ 바깥 시트 마진율 ' + sp.toFixed(1) + '% 와 ' + Math.abs(sp - o.mpct).toFixed(1) +
+               '%p 어긋남 (' + NAR_MARGIN_MISMATCH + ') — 배송비·수수료·환율 가운데 한쪽이 다릅니다';
+    }
   }
   if (!(o.mpct > 0)) {
     o.block = NAR_LOSS;
@@ -271,7 +330,11 @@ function naCalcOne_(it, listing, onAd, ctx, pol) {
  * 적격인 것 중 가장 싼 것의 [옵션 가격대] 안에 드는 것들 중 G × q0 가 큰 것.
  * 배수 상품이면 대개 단품이 뽑힌다. 동률은 SKU 문자열 순 (매번 대표가 바뀌지 않게).
  */
-function naPickRep_(skus, calc, pol) {
+function naPickRep_(skus, calc, pol, mine) {
+  // 이미 시작한 옵션이나 사람이 잡은 옵션이 있으면 그것이 대표다 — 새로 뽑지 않는다
+  var held = [];
+  for (var h = 0; h < skus.length; h++) if (mine && mine[skus[h]]) held.push(skus[h]);
+  if (held.length) { held.sort(); return held[0]; }
   var ok = [];
   for (var i = 0; i < skus.length; i++) {
     var c = calc[skus[i]];
@@ -295,13 +358,14 @@ function naAllocOf_(c, isRep, pol) {
   if (c.block === NAR_NOT_LISTED || c.block === NAR_MARGIN_MISSING) {
     return { a: NAA_INFO, why: c.why, state: NAS_INFO };
   }
-  if (c.block) return { a: NAA_EXCLUDE, why: c.why, state: NAS_EXCLUDE };
+  var note = c.note ? ' · ' + c.note : '';
+  if (c.block) return { a: NAA_EXCLUDE, why: c.why + note, state: NAS_EXCLUDE };
   if (!isRep) {
     return { a: NAA_VARWAIT,
-             why: '같은 상품군의 대표 옵션을 먼저 봅니다 (' + NAR_VARWAIT + ')',
+             why: '같은 상품군의 대표 옵션을 먼저 봅니다 (' + NAR_VARWAIT + ')' + note,
              state: NAS_VARWAIT };
   }
-  return { a: NAA_START, why: c.why, state: NAS_NEW };
+  return { a: NAA_START, why: c.why + note, state: NAS_NEW };
 }
 
 function naItemRow_(c, isRep, alloc, today) {
@@ -316,7 +380,7 @@ function naItemRow_(c, isRep, alloc, today) {
   r[NA_I_BID] = c.bid || '';
   r[NA_I_REP] = isRep ? 'O' : '';
   r[NA_I_ALLOC] = alloc.a; r[NA_I_WHY] = alloc.why; r[NA_I_STATE] = alloc.state;
-  r[NA_I_OWNER] = 'NEW_ADS';
+  r[NA_I_OWNER] = NA_OWNER;
   r[NA_I_AT] = c.at; r[NA_I_IN] = today; r[NA_I_NEXT] = today;
   return r;
 }
@@ -327,10 +391,9 @@ function naItemRow_(c, isRep, alloc, today) {
  * ② 가 같은 상품을 또 시작한다.
  * @return {boolean} 바뀐 것이 있나
  */
-function naItemUpdate_(row, c, isRep, alloc, today) {
-  var live = { };
-  live[NAS_PROBE] = 1; live[NAS_WATCH] = 1; live[NAS_PROFIT] = 1;
-  live[NAS_HANDED] = 1; live[NAS_MATURE] = 1; live[NAS_STOP] = 1; live[NAS_COOL] = 1;
+function naItemUpdate_(row, c, isRep, alloc, today, live) {
+  if (!live) live = naLiveStates_();
+  if (String(row[NA_I_OWNER] || '').trim() !== NA_OWNER) return false;   // 사람이 잡은 줄
   var st = String(row[NA_I_STATE] || '');
   var dirty = false;
   var set = function (i, v) {
@@ -362,7 +425,8 @@ function naItemUpdate_(row, c, isRep, alloc, today) {
  * 누적 탐색비·위험손실은 아직 광고가 없으므로 0 으로 열고, 매일 주기가 채운다.
  * @return {number} 상품군 수
  */
-function naFamWrite_(touched, calc, famRep, pol, today) {
+function naFamWrite_(touched, calc, famRep, pol, today, live) {
+  if (!live) live = naLiveStates_();
   var sh = naSheet_(NA_SHEET_FAM, NA_FAM_HEADER);
   var have = {}, rows = [];
   if (sh.getLastRow() > 1) {
@@ -398,6 +462,11 @@ function naFamWrite_(touched, calc, famRep, pol, today) {
       }
       if (c && c.name) set(NA_F_NAME, c.name);
       if (!(Number(row[NA_F_POT]) > 0) && pot) { set(NA_F_POT, pot); set(NA_F_LEFT, pot); }
+      // 아직 시작 안 한 상품군은 대표가 생기면 '가져옴', 없어지면 '정보대기' 로 따라간다
+      if (!live[String(row[NA_F_STATE] || '')]) {
+        set(NA_F_STATE, rep ? NAS_NEW : NAS_INFO);
+        set(NA_F_WHY, rep ? '' : '적격 옵션이 없습니다');
+      }
     }
   }
   if (dirty) sh.getRange(2, 1, rows.length, NA_FAM_HEADER.length).setValues(rows);
