@@ -274,7 +274,9 @@ function fetchAdStructure() {
     grows.push([gc.name || ADSTRUCT_GONE, gc.type || '', gv.name, gv.state,
                 gv.defaultBid === undefined ? '' : gv.defaultBid,
                 gi0.err ? '확인 못 함' : (gi0.big ? ADPROD_PROBE + '개 넘음' : gi0.n),
-                (!gi0.big && gi0.n <= ADPROD_DEDICATED_MAX) ? 'O' : '',
+                // 확대의 가격선 캠페인은 목표 CPC 가 같은 것끼리 모은 그룹이라, 상품 수와 무관하게
+                // 그룹 입찰이 곧 그 상품들의 입찰이다 — 전용으로 본다
+                ((!gi0.big && gi0.n <= ADPROD_DEDICATED_MAX) || adIsBandCamp_(gc.name)) ? 'O' : '',
                 grpTargets[gk] || 0,
                 String(gv.campaignId), String(gk), now]);
   }
@@ -302,7 +304,7 @@ function fetchAdStructure() {
       var n2 = (grpSku[gg2] && grpSku[gg2].n) || 0;
       if (!minN || n2 < minN) minN = n2;
     }
-    var ded = (minN > 0 && minN <= ADPROD_DEDICATED_MAX) ? 'O' : '';
+    var ded = ((minN > 0 && minN <= ADPROD_DEDICATED_MAX) || adIsBandCamp_(sm2.camp)) ? 'O' : '';
     if (ded) nDed++;
     prows.push([sk2, sm2.asin, sm2.nGid || 0, sm2.camp, minN, ded,
                 ids.slice(0, 6).join(','), now]);

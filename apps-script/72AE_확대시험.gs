@@ -66,6 +66,7 @@ var XARM_CTRL = '대조군';
 var XTYPE_BID = '입찰';
 var XTYPE_BUDGET = '예산';
 var XTYPE_SPLIT = '구조준비';
+var XTYPE_PROMO = '승격';        // 가격선 캠페인으로 꺼내며 첫 배수를 반반으로 재는 시험 (72AH)
 
 /** 상태 (기획서 7.1) */
 var XS_PLAN = '계획';
@@ -602,6 +603,9 @@ function adExpandCycle(opts) {
 
   // 지금까지의 시험 손실 — 한도를 넘으면 손해가 큰 것부터 되돌린다 (벌고 있는 것은 둔다)
   var lg = adExpandLossGuard_(v, pol);
+  // 승격 반반 시험은 한 광고그룹에 상품이 여럿이라 줄이 여럿이다 — 같은 그룹을 같은 값으로
+  // 되돌리는 것은 한 번만 보낸다 (열다섯 번 보내 봐야 같은 값이고, 호출 한도만 축낸다)
+  var sentSame = {};
 
   for (var i = 0; i < v.length; i++) {
     var st = String(v[i][XT_STATE]);
@@ -614,8 +618,12 @@ function adExpandCycle(opts) {
       var kind = String(v[i][XT_TYPE]) === XTYPE_BUDGET ? '캠페인' : '광고그룹';
       var act = String(v[i][XT_TYPE]) === XTYPE_BUDGET ? '예산변경' : '입찰변경';
       try {
-        var res = adJobSend_(token, act, kind, String(v[i][XT_RID]), Number(v[i][XT_FROM]));
-        if (!res.ok) throw new Error(res.msg || '실패');
+        var key = act + '|' + String(v[i][XT_RID]) + '|' + Number(v[i][XT_FROM]);
+        if (!sentSame[key]) {
+          var res = adJobSend_(token, act, kind, String(v[i][XT_RID]), Number(v[i][XT_FROM]));
+          if (!res.ok) throw new Error(res.msg || '실패');
+          sentSame[key] = true;
+        }
         v[i][XT_BACK] = today;
         v[i][XT_MATURE] = addDays_(today, SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS);
         v[i][XT_STATE] = over ? XS_GUARD : XS_MATURE;
@@ -655,6 +663,12 @@ function adExpandCycle(opts) {
             (guard ? ' · 보호중단 ' + guard +
                      (lg.nKeep ? ' (나머지 ' + lg.nKeep + '개는 그대로 — 손해를 내고 있지 않습니다)' : '') : '') +
             (evald ? ' · 성숙 완료 ' + evald : '');
+
+  // 승격 캠페인이 다 만들어졌으면 시험 표에 두 편으로 올린다 (만들기가 나눠 돌 수 있어 매일 본다)
+  try {
+    var pr = adPromoteRegister_();
+    if (pr.test || pr.ctrl) msg += ' | 승격 등록 시험편 ' + pr.test + ' · 대조편 ' + pr.ctrl;
+  } catch (e6) { log_('ads', 'WARN', '승격 등록 실패: ' + e6); }
 
   // ② 시작이 6분에 걸려 못 보낸 승인분을 여기서 이어 보낸다.
   // 사람이 이미 그 줄의 [승인] 을 켰고 모드가 자동운영이라 다시 물을 것이 없다 —
@@ -735,7 +749,7 @@ function adExpandAdopt_(pol) {
   var minGain = isFinite(Number(pol.minGain)) ? Number(pol.minGain) : 0;
   var width = Math.max(tsh.getLastColumn(), EXTEST_HEADER.length);
   var v = tsh.getRange(2, 1, tsh.getLastRow() - 1, width).getValues();
-  var token = null, logBuf = adLogBuffer_(20), n = 0, stay = 0, blind = 0, dirty = false;
+  var token = null, logBuf = adLogBuffer_(20), n = 0, stay = 0, blind = 0, dirty = false, adoptSent = {};
   var reach = null;
   try { reach = adPerfWindow_(); } catch (eR) { reach = null; }
   for (var i = 0; i < v.length; i++) {
@@ -778,8 +792,12 @@ function adExpandAdopt_(pol) {
     var kind = String(v[i][XT_TYPE]) === XTYPE_BUDGET ? '캠페인' : '광고그룹';
     var act = String(v[i][XT_TYPE]) === XTYPE_BUDGET ? '예산변경' : '입찰변경';
     try {
-      var res = adJobSend_(token, act, kind, String(v[i][XT_RID]), Number(v[i][XT_TO]));
-      if (!res.ok) throw new Error(res.msg || '실패');
+      var key = act + '|' + String(v[i][XT_RID]) + '|' + Number(v[i][XT_TO]);
+      if (!adoptSent[key]) {                                   // 같은 그룹 같은 값은 한 번만
+        var res = adJobSend_(token, act, kind, String(v[i][XT_RID]), Number(v[i][XT_TO]));
+        if (!res.ok) throw new Error(res.msg || '실패');
+        adoptSent[key] = true;
+      }
       v[i][XT_STATE] = XS_ADOPT;
       v[i][XT_RESULT] = '채택 ' + ymd_(new Date()) + ' · ¥' + v[i][XT_FROM] + ' → ¥' + v[i][XT_TO] +
                         ' (' + vd.v + (climb ? ' · ' + climb : '') + ')';
@@ -874,7 +892,8 @@ function adExpandTestNotes_(sh) {
       '누가 대조군인지는 상품군키와 씨앗으로 정해져, 다시 계산해도 같습니다.',
     '증액유형': XTYPE_BID + ' = 예산은 남는데 값이 낮아 못 사는 것 같을 때\n' +
       XTYPE_BUDGET + ' = 값은 맞는데 예산이 먼저 떨어질 때 (입찰은 그대로)\n' +
-      XTYPE_SPLIT + ' = 몰아넣기 그룹이라 이 상품만 값을 부를 수 없음 — 먼저 분리해야 합니다',
+      XTYPE_SPLIT + ' = 몰아넣기 그룹이라 이 상품만 값을 부를 수 없음 — 먼저 분리해야 합니다\n' +
+      XTYPE_PROMO + ' = 가격선 캠페인으로 꺼내며 첫 배수를 반반으로 재는 중 (시험편 …T · 대조편)',
     '목표상한': '= 주문당 공헌이익 × 판단주문율 × 이익보존계수. 이 위로는 어떤 경우에도 안 올립니다.',
     '시험값': '한 번에 올리는 폭은 정책값(기본 10%)까지이고, 상한 이하 방향으로 내림합니다.\n' +
       '반올림해서 지금 값보다 커지지 않으면 아예 줄을 만들지 않습니다.',

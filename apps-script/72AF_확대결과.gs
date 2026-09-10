@@ -55,8 +55,11 @@ function buildAdExpandResults(opts) {
   var ctx = adMarginCtx_(true);
   var today = ymd_(new Date());
 
-  // ① 시험 줄마다 기준기·운영기를 센다
-  var rows = [], arms = { 시험군: {}, 대조군: {} }, nBad = 0;
+  // ① 시험 줄마다 기준기·운영기를 센다.
+  //    묶음(cohort)을 가른다 — 평범한 증액 시험과 승격 반반 시험은 서로 다른 물음이라
+  //    같은 대조군에 견주면 안 된다. 묶음마다 시험군·대조군을 따로 모은다.
+  var rows = [], pools = {}, nBad = 0;
+  var COHORT_BID = '증액';
   for (var i = 0; i < v.length; i++) {
     var st = String(v[i][XT_STATE]);
     if (st !== XS_DONE && st !== XS_GUARD) continue;
@@ -84,12 +87,15 @@ function buildAdExpandResults(opts) {
     var delta = rAvg - bAvg;
 
     // 상품군 단위로 모은다 (같은 ASIN 의 여러 SKU 는 한 상품군이다)
-    var pool = arms[arm] || (arms[arm] = {});
+    var type = String(v[i][XT_TYPE]);
+    var cohort = type === XTYPE_PROMO ? XTYPE_PROMO : COHORT_BID;
+    var cp = pools[cohort] || (pools[cohort] = {});
+    var pool = cp[arm] || (cp[arm] = {});
     var f = pool[fam] || (pool[fam] = { d: 0, n: 0 });
     f.d += delta; f.n++;
 
-    rows.push({ id: String(v[i][XT_ID]), sku: sku, fam: fam, arm: arm,
-      type: String(v[i][XT_TYPE]), b: b, r: r, bProfit: bProfit, rProfit: rProfit,
+    rows.push({ id: String(v[i][XT_ID]), sku: sku, fam: fam, arm: arm, cohort: cohort,
+      type: type, b: b, r: r, bProfit: bProfit, rProfit: rProfit,
       bAvg: bAvg, rAvg: rAvg, delta: delta, guard: st === XS_GUARD,
       stale: (b.days < 1 || r.days < 1) });
     if (rProfit < 0 && rProfit < bProfit) nBad++;
@@ -101,20 +107,27 @@ function buildAdExpandResults(opts) {
     return '평가할 것 없음';
   }
 
-  // ② 군별 상품군 평균 변화
-  var testArr = adExFamArray_(arms[XARM_TEST]);
-  var ctrlArr = adExFamArray_(arms[XARM_CTRL]);
-  var lift = adExMean_(testArr) - adExMean_(ctrlArr);
-  var ci = (testArr.length && ctrlArr.length)
-    ? adExBootstrap_(testArr, ctrlArr, pol.boot, pol.level, pol.seed) : null;
-  var enough = testArr.length >= pol.minFam && ctrlArr.length >= pol.minFam;
+  // ② 묶음마다 군별 상품군 평균 변화
+  var stats = {};
+  for (var ck in pools) {
+    var tA = adExFamArray_(pools[ck][XARM_TEST] || {});
+    var cA = adExFamArray_(pools[ck][XARM_CTRL] || {});
+    stats[ck] = {
+      testArr: tA, ctrlArr: cA,
+      lift: adExMean_(tA) - adExMean_(cA),
+      ci: (tA.length && cA.length) ? adExBootstrap_(tA, cA, pol.boot, pol.level, pol.seed) : null,
+      enough: tA.length >= pol.minFam && cA.length >= pol.minFam
+    };
+  }
   var minGain = isFinite(pol.minGain) ? Number(pol.minGain) : 0;
   var gainKnown = isFinite(Number(pol.minGain));
 
-  // ③ 줄마다 판정
+  // ③ 줄마다 판정 — 제 묶음의 통계로
   var out = [], cnt = {};
   for (var k = 0; k < rows.length; k++) {
     var x = rows[k];
+    var S = stats[x.cohort];
+    var testArr = S.testArr, ctrlArr = S.ctrlArr, lift = S.lift, ci = S.ci, enough = S.enough;
     var verdict, why;
     if (x.stale) {
       verdict = XV_HOLD; why = 'DATA_PARTIAL — 기준기나 운영기의 자료가 비어 있습니다';
@@ -167,13 +180,16 @@ function buildAdExpandResults(opts) {
 
   var msg = '시험 ' + out.length + '줄 · ' +
             Object.keys(cnt).map(function (a) { return a + ' ' + cnt[a]; }).join(' · ');
+  var lines = Object.keys(stats).map(function (c2) {
+    var S2 = stats[c2];
+    return '[' + c2 + '] 상품군 — 시험군 ' + S2.testArr.length + '개 · 대조군 ' + S2.ctrlArr.length + '개' +
+      (S2.enough ? '' : ' (각각 ' + pol.minFam + '개는 돼야 확증 판정을 냅니다)') + '\n' +
+      '   추가이익 하루 상품군당 ' + fmtYen_(S2.lift) +
+      (S2.ci ? ' (' + Math.round(pol.level * 100) + '% 구간 ' + fmtYen_(S2.ci.lo) + '~' + fmtYen_(S2.ci.hi) + ')' : '');
+  });
   if (!quiet) {
     ui_().alert('확대 결과',
-      msg + '\n\n' +
-      '상품군 — 시험군 ' + testArr.length + '개 · 대조군 ' + ctrlArr.length + '개' +
-      (enough ? '' : ' (각각 ' + pol.minFam + '개는 돼야 확증 판정을 냅니다)') + '\n' +
-      '추가이익 하루 상품군당 ' + fmtYen_(lift) +
-      (ci ? ' (' + Math.round(pol.level * 100) + '% 구간 ' + fmtYen_(ci.lo) + '~' + fmtYen_(ci.hi) + ')' : '') +
+      msg + '\n\n' + lines.join('\n') +
       '\n\n광고매출이 늘어도 전체 이익이 줄었으면 성공이 아닙니다 — ' +
       '이 표는 광고귀속 공헌이익으로 셈합니다.',
       ui_().ButtonSet.OK);

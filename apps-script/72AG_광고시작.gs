@@ -65,7 +65,10 @@ function startAdActions() {
     lines.push('· 승격(가격선 캠페인으로 꺼내기) ' + plan.split.length + '개' +
       (pre && pre.rows
         ? ' → 캠페인 ' + pre.rows + '개 · 하루 예산 합계 ' + fmtYen_(pre.daily) +
-          ' · 한 주에 더 쓸 것으로 보는 돈 ' + fmtYen_(pre.week)
+          ' · 한 주에 더 쓸 것으로 보는 돈 ' + fmtYen_(pre.week) +
+          (pre.arms && pre.arms.ctrl
+            ? '\n     반반 시험: 값 그대로 ' + pre.arms.ctrl + '개 · 첫 배수 ' + pre.arms.test + '개 (30일 뒤 판정)'
+            : '')
         : pre && pre.blocked ? ' — ⚠ ' + pre.blocked : ''));
   }
   var ok = ui_().alert('② 시작',
@@ -134,8 +137,11 @@ function startAdActions() {
     done.split = promo.blocked ? 0 : promo.skus;
   }
   sh.getRange(2, 1, v.length, width).setValues(v);
+  var reg = null;
   if (promo && promo.rows) {
     try { adPlanExecStep_(false); } catch (e5) { log_('ads', 'WARN', '승격 만들기: ' + e5); }
+    // 두 편이 다 만들어졌으면 바로 시험 표에 올린다 (덜 만들어졌으면 매일 주기가 이어서 올린다)
+    try { reg = adPromoteRegister_(); } catch (e6) { log_('ads', 'WARN', '승격 등록: ' + e6); }
   }
 
   // ⑥ 걸음을 건다 (이미 걸려 있으면 다시 건다 — 곱절이 되지 않는다)
@@ -149,7 +155,13 @@ function startAdActions() {
     (promo && promo.rows
       ? '가격선 캠페인 ' + promo.rows + '개를 만드는 중입니다 (하루 예산 합계 ' + fmtYen_(promo.daily) + ').\n' +
         '  ' + Object.keys(promo.bands).map(function (b) { return '¥' + b + ' 선 ' + promo.bands[b] + '개'; }).join(' · ') +
-        (promo.over ? '\n  예산 상한에 걸려 미룬 것 ' + promo.over + '개 — 다음에 다시 계획됩니다' : '') + '\n'
+        (promo.over ? '\n  주간 한도에 걸려 미룬 것 ' + promo.over + '개 — 다음에 다시 계획됩니다' : '') +
+        (promo.arms && promo.arms.ctrl
+          ? '\n  반반 시험 — 값 그대로 ' + promo.arms.ctrl + '개 · 첫 배수 ' + promo.arms.test + '개' +
+            (reg && (reg.test || reg.ctrl)
+              ? ' (시험 표에 올림 ' + (reg.test + reg.ctrl) + '줄)'
+              : ' (다 만들어지면 매일 주기가 시험 표에 올립니다)')
+          : '') + '\n'
       : '') + '\n' +
     (st2 && st2.left ? '시간이 다 돼 못 보낸 시험 ' + st2.left + '개는 [확대 시험 주기](매일)가 이어서 시작합니다.\n' : '') +
     '걸음 ' + nTrig + '개가 걸렸습니다 — 되돌림·판정·채택·다음 계단·자료 갱신·후보 다시 세우기.\n' +

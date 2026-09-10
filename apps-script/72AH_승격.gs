@@ -26,6 +26,15 @@
  * 옮긴 뒤에 평범한 증액 시험(한 번에 10%씩 · 14일 · 대조군)이 한 계단씩 올린다 —
  * 계단마다 이익이 정말 늘었는지를 보고 오르므로, 안 느는 곳에서 저절로 멈춘다.
  *
+ * ── 반반 시험: 첫 배수 자체를 잰다 ──────────────────────
+ * 그 '첫 배수' 도 근거 없이 정한 값이다. 그래서 가격선마다 캠페인을 둘 만든다 —
+ *   KP EXPAND B5   값 그대로 (지금 내던 중앙값)          = 대조군
+ *   KP EXPAND B5T  첫 배수를 건 값                        = 시험군
+ * 같은 ASIN 은 같은 편에 넣는다 (씨앗으로 정하므로 다시 세워도 같다). 두 캠페인이
+ * 만들어지면 시험 표에 시험군·대조군 줄로 올라가고, 그 뒤는 평범한 시험과 같다 —
+ * 14일 뒤 시험편을 대조편 값으로 되돌리고, 성숙 뒤 판정하고, 좋았으면 다시 올린다.
+ * 두 편은 서로 다른 상품이라 같은 경매에서 제 값을 제가 올리는 일은 없다.
+ *
  * ── 옛 그룹에서는 멈춘다 ────────────────────────────────
  * 같은 상품이 두 곳에서 입찰하면 제 값을 제가 올린다. 캠페인 만들기(72J)가
  * 새 그룹에 담은 뒤 옛 그룹의 그 상품 광고를 PAUSED 로 바꾼다 — 지우지는 않는다.
@@ -44,6 +53,19 @@
 
 var PROMO_PREFIX = 'EXPAND';           // 캠페인 이름에 쓸 말 (아마존은 아스키만 받는다)
 var PROMO_MIN_SKUS = 1;
+var PROMO_TRACK = 'X';                 // 계획 표 [트랙] 칸 — 확대가 만든 줄이라는 표시
+
+/** 확대가 만든 가격선 캠페인인가 (이름으로 안다). 72D 가 '전용가능' 을 매길 때도 쓴다 */
+function adIsBandCamp_(name) {
+  return new RegExp('\\b' + PROMO_PREFIX + ' B\\d+T?\\b').test(String(name || ''));
+}
+
+/** 반반 시험에서 이 상품군이 어느 편인가 — 같은 ASIN 은 같은 편 (씨앗으로 정한다) */
+function adPromoteArm_(asin, sku, seed) {
+  var s = String(asin || sku) + '|' + seed + '|promo', h = 2166136261;
+  for (var i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = (h * 16777619) >>> 0; }
+  return (h % 1000) < 500 ? XARM_CTRL : XARM_TEST;
+}
 
 /** 목표 CPC 가 떨어지는 가격선. @return {{i:number, lo:number, hi:number}} */
 function adPromoBand_(target, base, mult) {
@@ -69,8 +91,10 @@ function adPromoBand_(target, base, mult) {
 function planAdPromoteBands(opts) {
   var only = (opts && opts.skus) || null;
   var dry = !!(opts && opts.dry);
-  var out = { rows: 0, skus: 0, daily: 0, week: 0, over: 0, bands: {}, blocked: '' };
+  var out = { rows: 0, skus: 0, daily: 0, week: 0, over: 0, bands: {}, arms: { ctrl: 0, test: 0 }, blocked: '' };
   var basis = adBasis_();
+  var split = String(basis['확대 · 승격 반반 시험'] || 'TRUE').toUpperCase() !== 'FALSE';
+  var seed = Math.round(Number(basis['확대 · 대조군 seed']) || 20260908);
   // 주간 지출한도가 비어 있으면 제한 없음 — 증액 시험과 같은 주머니를 쓴다
   var week = Number(basis['확대 · 시험 주간 지출한도(JPY)']) || 0;
   var used = week ? adExpandWeekUsed_() : 0;
@@ -98,7 +122,10 @@ function planAdPromoteBands(opts) {
     var band = adPromoBand_(target, basis['묶음 CPC 기준점'], basis['묶음 CPC 배수']);
     if (!band || !(cpc > 0)) continue;
     var g = by[band.i] || (by[band.i] = { band: band, skus: [], cpc: [], daily: 0, be: 0, amt: 0 });
-    g.skus.push({ sku: sku, asin: String(cellOf_(v[i], map, 'ASIN', '')) });
+    var asin = String(cellOf_(v[i], map, 'ASIN', ''));
+    g.skus.push({ sku: sku, asin: asin, cpc: cpc, daily: cost / EXPAND_WINDOW_DAYS,
+                  amt: Number(cellOf_(v[i], map, '광고매출(JPY)', 0)) || 0,
+                  arm: split ? adPromoteArm_(asin, sku, seed) : XARM_TEST });
     g.cpc.push(cpc);
     g.daily += cost / EXPAND_WINDOW_DAYS;                     // 지금 하루에 쓰던 돈
     var be = Number(cellOf_(v[i], map, '손익분기클릭비용(JPY)', 0)) || 0;
@@ -106,37 +133,64 @@ function planAdPromoteBands(opts) {
     g.amt += Number(cellOf_(v[i], map, '광고매출(JPY)', 0)) || 0;
   }
 
-  // ② 가격선마다 한 줄. 쓰던 돈이 큰 칸부터 넣다가 주간 한도에 닿으면 멈춘다
+  // ② 가격선마다 (반반이면 두 편에) 한 줄. 쓰던 돈이 큰 칸부터 넣다가 주간 한도에 닿으면 멈춘다
   var keys = Object.keys(by).sort(function (a, b) { return by[b].daily - by[a].daily; });
   var rows = [];              // used 는 위에서 이미 '이미 예약한 돈' 으로 열었다 — 다시 0 으로 두면 안 된다
   for (var k = 0; k < keys.length; k++) {
     var g2 = by[keys[k]];
     if (g2.skus.length < PROMO_MIN_SKUS) continue;
+    // 두 편이 같은 잣대를 갖도록 중앙값은 칸 전체로 잰다
     var med = g2.cpc.slice().sort(function (x, y) { return x - y; })[Math.floor(g2.cpc.length / 2)];
-    var bid = g2.band.lo;
-    if (med > 0) bid = Math.min(bid, med * firstMult);         // 한 번에 뛰는 폭을 막는다
-    if (maxBid > 0) bid = Math.min(bid, maxBid);
+    // 두 편의 값을 먼저 정한다 — 대조편은 값 그대로, 시험편은 가격선 · 첫 배수 · 최대 유효입찰 중 낮은 쪽.
     // 계획 표는 입찰을 정수로 적는다 — 반올림하면 가격선 위로 넘어간다 (¥6.75 → ¥7).
     // 상한 이하 방향으로 내린다 (기획서 4.3 과 같은 규칙).
-    bid = Math.max(EXTEST_MIN_BID, Math.floor(bid));
-    var daily = Math.max(minDaily, Math.round(g2.daily * room));
-    // 더 나가는 돈은 예산이 아니라 입찰이 올라간 만큼이다 (예산은 천장일 뿐)
-    var more = Math.max(0, Math.round(g2.daily * (bid / med - 1) * EXTEST_WEEK_DAYS));
-    if (week && used + more > week) { out.over += g2.skus.length; continue; }
-    used += more; out.week += more;
-    var nm = pre + ' ' + PROMO_PREFIX + ' B' + g2.band.i;
-    rows.push(adPlanRow_({
-      action: '생성', kind: '가격선', name: nm, daily: daily, bid: bid,
-      skus: g2.skus, exist: 0, band: '¥' + g2.band.lo + '~' + g2.band.hi,
-      beMin: g2.be, amt: g2.amt,
-      why: '몰아넣기 그룹에서 꺼낸다 — 목표 클릭비용이 ¥' + g2.band.lo + '~' + g2.band.hi +
-           ' 인 ' + g2.skus.length + '개를 한 캠페인에. 처음 입찰 ¥' + bid +
-           ' (가격선 ¥' + g2.band.lo + ' · 지금 중앙값 ¥' + (Math.round(med * 100) / 100) +
-           ' 의 ' + firstMult + '배 중 낮은 쪽). 목표선까지는 증액 시험이 한 계단씩 올린다. ' +
-           '옛 그룹에서는 멈춘다'
-    }));
-    out.bands[g2.band.lo] = g2.skus.length;
-    out.skus += g2.skus.length;
+    var ctrlBid = Math.max(EXTEST_MIN_BID, Math.floor(maxBid > 0 ? Math.min(med, maxBid) : med));
+    var testBid = g2.band.lo;
+    if (med > 0) testBid = Math.min(testBid, med * firstMult);          // 한 번에 뛰는 폭을 막는다
+    if (maxBid > 0) testBid = Math.min(testBid, maxBid);
+    testBid = Math.max(EXTEST_MIN_BID, Math.floor(testBid));
+    // 두 편으로 가를 수 있는가 — 정수로 내리고 나니 두 편이 같은 값이면 잴 것이 없고,
+    // 한 편이 비어도(상품이 한둘뿐이라) 견줄 것이 없다. 그때는 값 그대로 옮기기만 한다:
+    // 재지 않은 채 올리는 일은 하지 않는다
+    var subs = {};
+    subs[XARM_CTRL] = g2.skus.filter(function (x) { return x.arm === XARM_CTRL; });
+    subs[XARM_TEST] = g2.skus.filter(function (x) { return x.arm === XARM_TEST; });
+    var pair = split && testBid > ctrlBid && subs[XARM_CTRL].length > 0 && subs[XARM_TEST].length > 0;
+    var arms = pair ? [XARM_CTRL, XARM_TEST] : [XARM_TEST];
+    for (var a0 = 0; a0 < arms.length; a0++) {
+      var arm = arms[a0];
+      var sub = pair ? subs[arm] : g2.skus;
+      if (!sub.length) continue;
+      var subDaily = 0, subAmt = 0;
+      for (var q0 = 0; q0 < sub.length; q0++) { subDaily += sub[q0].daily; subAmt += sub[q0].amt; }
+      var bid = arm === XARM_CTRL ? ctrlBid : (pair ? testBid : (split ? ctrlBid : testBid));
+      var daily = Math.max(minDaily, Math.round(subDaily * room));
+      // 더 나가는 돈은 예산이 아니라 입찰이 올라간 만큼이다 (예산은 천장일 뿐). 대조편은 0
+      var more = med > 0 ? Math.max(0, Math.round(subDaily * (bid / med - 1) * EXTEST_WEEK_DAYS)) : 0;
+      if (week && used + more > week) { out.over += sub.length; continue; }
+      used += more; out.week += more;
+      var nm = pre + ' ' + PROMO_PREFIX + ' B' + g2.band.i + (pair && arm === XARM_TEST ? 'T' : '');
+      var row = adPlanRow_({
+        action: '생성', kind: '가격선', name: nm, daily: daily, bid: bid,
+        skus: sub, exist: 0, band: '¥' + g2.band.lo + '~' + g2.band.hi,
+        beMin: g2.be, amt: subAmt,
+        why: (pair ? (arm === XARM_CTRL ? '[반반 시험 · 대조편] ' : '[반반 시험 · 시험편] ')
+                   : (split ? '[반반 시험 없음 — ' + (testBid > ctrlBid ? '한 편이 비어 견줄 수 없음' : '첫 배수를 걸어도 정수로는 같은 값') + '] ' : '')) +
+             '몰아넣기 그룹에서 꺼낸다 — 목표 클릭비용이 ¥' + g2.band.lo + '~' + g2.band.hi +
+             ' 인 ' + sub.length + '개를 한 캠페인에. 처음 입찰 ¥' + bid +
+             (arm === XARM_CTRL
+               ? ' (지금 중앙값 ¥' + (Math.round(med * 100) / 100) + ' 그대로 — 자리만 옮긴다)'
+               : ' (가격선 ¥' + g2.band.lo + ' · 지금 중앙값 ¥' + (Math.round(med * 100) / 100) +
+                 ' 의 ' + firstMult + '배 중 낮은 쪽). 목표선까지는 증액 시험이 한 계단씩 올린다') +
+             '. 옛 그룹에서는 멈춘다'
+      });
+      if (split && !pair) { arm = XARM_CTRL; }                 // 값 그대로 옮긴 것은 대조편으로 센다
+      row[AP_TRACK - 1] = PROMO_TRACK;                          // 만들 때 켠다 (옛 광고를 멈추므로)
+      rows.push(row);
+      out.bands[g2.band.lo] = (out.bands[g2.band.lo] || 0) + sub.length;
+      out.skus += sub.length;
+      if (arm === XARM_CTRL) out.arms.ctrl += sub.length; else out.arms.test += sub.length;
+    }
   }
   out.rows = rows.length;
   for (var dd = 0; dd < rows.length; dd++) out.daily += Number(rows[dd][AP_DAILY - 1]) || 0;
@@ -183,4 +237,88 @@ function planAdPromoteBandsMenu() {
     (r.over ? '\n\n주간 지출한도에 걸려 미룬 SKU ' + r.over + '개 (다음에 다시 계획됩니다)' : '') +
     '\n\n[' + SHEET_ADPLAN + '] 표에 넣었습니다. [⑤ 승인분 캠페인 생성] 이 만듭니다.',
     ui_().ButtonSet.OK);
+}
+
+
+/**
+ * 만들어진 가격선 캠페인을 시험 표에 올린다 — 반반 시험의 두 편.
+ *
+ * 캠페인 만들기(72J)는 6분에 걸려 몇 번에 나눠 돌 수 있다. 그래서 ② 시작 직후와
+ * 매일 [확대 시험 주기]에서 부른다 — 이미 올라간 SKU 는 건너뛴다.
+ * 시험편(…T)과 대조편이 둘 다 만들어진 가격선만 올린다. 한쪽만 있으면 견줄 것이 없다.
+ * 올라간 줄은 평범한 시험처럼 굴러간다: 14일 뒤 시험편을 대조편 값으로 되돌리고,
+ * 성숙 뒤 판정하고, 좋았으면 다시 올린다.
+ *
+ * @return {{test:number, ctrl:number}}
+ */
+function adPromoteRegister_() {
+  var out = { test: 0, ctrl: 0 };
+  var psh = ss_().getSheetByName(SHEET_ADPLAN);
+  if (!psh || psh.getLastRow() < 2) return out;
+  var pv = psh.getRange(2, 1, psh.getLastRow() - 1, ADPLAN_HEADER.length).getValues();
+  var byName = {};
+  for (var i = 0; i < pv.length; i++) {
+    if (String(pv[i][AP_TRACK - 1]) !== PROMO_TRACK) continue;
+    byName[String(pv[i][AP_NAME - 1])] = pv[i];
+  }
+  var names = Object.keys(byName).filter(function (n) { return /T$/.test(n); });
+  if (!names.length) return out;
+
+  makeOneSheet_([{ name: SHEET_EXTEST, header: EXTEST_HEADER }]);
+  var tsh = ss_().getSheetByName(SHEET_EXTEST);
+  var have = {};
+  if (tsh.getLastRow() > 1) {
+    var tv = tsh.getRange(2, 1, tsh.getLastRow() - 1,
+                          Math.max(tsh.getLastColumn(), EXTEST_HEADER.length)).getValues();
+    for (var t = 0; t < tv.length; t++) {
+      if (String(tv[t][XT_TYPE]) === XTYPE_PROMO) have[String(tv[t][XT_SKU]).trim()] = true;
+    }
+  }
+  var pol = adExpandPolicy_(), basis = adBasis_();
+  var room = Number(basis['일예산 여유 배수']) || 2;
+  var asinMap = adSkuAsin_();
+  var today = ymd_(new Date()), rows = [];
+  var made = function (r) { return String(r[AP_RESULT - 1]).indexOf('성공') === 0 && !!String(r[AP_GID - 1]).trim(); };
+
+  for (var n = 0; n < names.length; n++) {
+    var tr = byName[names[n]], cr = byName[names[n].slice(0, -1)];
+    if (!cr || !made(tr) || !made(cr)) continue;         // 둘 다 만들어져야 같은 날부터 잰다
+    var from = Number(cr[AP_BID - 1]) || 0, to = Number(tr[AP_BID - 1]) || 0;
+    var pairs = [[tr, XARM_TEST], [cr, XARM_CTRL]];
+    for (var p = 0; p < pairs.length; p++) {
+      var row = pairs[p][0], arm = pairs[p][1];
+      var skus = adSkuListSplit_(row[AP_SKUS - 1]);
+      var gid = String(row[AP_GID - 1]).trim(), name = String(row[AP_NAME - 1]);
+      var daily = Number(row[AP_DAILY - 1]) || 0;
+      // 예약액 — 시험편이 한 주에 더 쓸 것으로 보는 돈을 상품 수로 나눈 몫. 대조편은 0
+      var hold = (arm === XARM_TEST && from > 0 && skus.length)
+        ? Math.max(1, Math.round((daily / room) * (to / from - 1) * EXTEST_WEEK_DAYS / skus.length)) : 0;
+      for (var s = 0; s < skus.length; s++) {
+        if (have[skus[s]]) continue;
+        var asin = asinMap[skus[s]] || '';
+        rows.push([
+          'P' + (asin || skus[s]) + '|' + today, today, skus[s], asin, asin || skus[s], arm, XTYPE_PROMO,
+          '광고그룹', gid, name,
+          from, arm === XARM_TEST ? to : from, '',
+          addDays_(today, -pol.baseDays), addDays_(today, -1),
+          today, addDays_(today, pol.runDays), '', '',
+          hold || '', XS_RUN, true,
+          (arm === XARM_TEST ? '승격 시험편 ' + today + ' · ¥' + from + ' → ¥' + to
+                             : '승격 대조편 ' + today + ' (값 그대로 ¥' + from + ')'),
+          '승격 반반 시험 — 같은 가격선에서 절반은 값 그대로(' + names[n].slice(0, -1) +
+          '), 절반은 첫 배수(' + names[n] + '). 첫 배수가 정말 버는지를 잰다'
+        ]);
+        have[skus[s]] = true;
+        if (arm === XARM_TEST) out.test++; else out.ctrl++;
+      }
+    }
+  }
+  if (rows.length) {
+    var at = Math.max(tsh.getLastRow(), 1) + 1;
+    if (tsh.getMaxRows() < at + rows.length - 1) tsh.insertRowsAfter(tsh.getMaxRows(), at + rows.length - 1 - tsh.getMaxRows());
+    tsh.getRange(at, 1, rows.length, EXTEST_HEADER.length).setValues(rows);
+    tsh.getRange(at, EXTEST_APPROVE_COL, rows.length, 1).insertCheckboxes();
+    log_('ads', 'INFO', '승격 반반 시험 등록 — 시험편 ' + out.test + ' · 대조편 ' + out.ctrl);
+  }
+  return out;
 }
