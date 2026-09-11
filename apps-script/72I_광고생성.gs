@@ -105,6 +105,20 @@ function adPlanOnlyGet_() {
   return PropertiesService.getScriptProperties().getProperty(PROP_ADPLAN_ONLY) || '';
 }
 
+/**
+ * 표 하나 안에서도 트랙 하나만. 신규(78C)가 제 줄만 만들고 싶을 때 쓴다 —
+ * 같은 표에 승격(X)이 승인해 둔 채 실패해 있는 줄이 있으면, 트랙을 안 가리는 순간
+ * 신규 버튼이 승격의 줄을 다시 보낸다. 실자료로 돌려 보니 KP EXPAND B8T 가 그랬다 (2026-09-11).
+ * 비우면 트랙을 안 가린다 (옛 동작).
+ */
+var PROP_ADPLAN_TRACK = 'ADPLAN_TRACK';
+function adPlanTrackSet_(track) {
+  PropertiesService.getScriptProperties().setProperty(PROP_ADPLAN_TRACK, track || '');
+}
+function adPlanTrackGet_() {
+  return PropertiesService.getScriptProperties().getProperty(PROP_ADPLAN_TRACK) || '';
+}
+
 function adPlanTables_(only) {
   var out = [], names = adPlanSheetNames_();
   for (var i = 0; i < names.length; i++) {
@@ -267,6 +281,24 @@ function adSkuListSplit_(text) {
   var out = [];
   for (var i = 0; i < parts.length; i++) { var t = parts[i].trim(); if (t) out.push(t); }
   return out;
+}
+
+/**
+ * 계획 한 줄의 SKU 들. **이것을 쓰고 adSkuListSplit_ 을 직접 부르지 않는다.**
+ *
+ * SKU 하나짜리 줄이 함정이다 — "퀼리올리브스낵,-150g-JVEO-1" 처럼 이름에 쉼표가 든
+ * SKU 는 ' | ' 가 없으니 옛 쉼표 규칙으로 떨어져 둘로 쪼개지고, 72J 가 없는 SKU 둘로
+ * 상품광고를 만들려다 실패한다. 실자료로 신규 시작 대기 132개 중 7개, 상품통합 654개 중
+ * 48개가 그렇다 (2026-09-11 실자료 끝까지 돌려 잡았다).
+ *
+ * [SKU목록] 이 [대표SKU] 와 글자 그대로 같으면 그 줄은 SKU 하나다 — 쪼개지 않는다.
+ * 계획 줄을 만드는 쪽(72I·72AH·78C)은 전부 대표SKU 를 첫 SKU 로 적으므로 이 규칙이 선다.
+ */
+function adPlanSkus_(row) {
+  var list = String(row[AP_SKUS - 1] || '').trim();
+  var rep = String(row[9] || '').trim();               // 대표SKU
+  if (list && rep && list === rep) return [list];
+  return adSkuListSplit_(list);
 }
 
 function adPlanRow_(o) {

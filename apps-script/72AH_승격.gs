@@ -216,7 +216,7 @@ function planAdPromoteBands(opts) {
       else have[pn] = true;                                    // 아직 만드는 중인 줄
       // 이미 그 캠페인에 들어간 SKU 는 다시 넣지 않는다
       if (pOk) {
-        var pl = adSkuListSplit_(pv[p][AP_SKUS - 1]);
+        var pl = adPlanSkus_(pv[p]);
         for (var q1 = 0; q1 < pl.length; q1++) placed[pn + '|' + pl[q1]] = true;
       }
     }
@@ -226,7 +226,7 @@ function planAdPromoteBands(opts) {
     var nm0 = rows[r][AP_NAME - 1];
     if (have[nm0]) continue;
     if (placed[nm0]) {
-      var left = adSkuListSplit_(rows[r][AP_SKUS - 1]).filter(function (x) { return !placed[nm0 + '|' + x]; });
+      var left = adPlanSkus_(rows[r]).filter(function (x) { return !placed[nm0 + '|' + x]; });
       if (!left.length) continue;
       rows[r][AP_ACTION - 1] = '기존에 추가';
       rows[r][AP_SKUS - 1] = adSkuListJoin_(left);
@@ -319,7 +319,7 @@ function adPromoteRegister_() {
     var pairs = [[tr, XARM_TEST], [cr, XARM_CTRL]];
     for (var p = 0; p < pairs.length; p++) {
       var row = pairs[p][0], arm = pairs[p][1];
-      var skus = adSkuListSplit_(row[AP_SKUS - 1]);
+      var skus = adPlanSkus_(row);
       var gid = String(row[AP_GID - 1]).trim(), name = String(row[AP_NAME - 1]);
       var daily = Number(row[AP_DAILY - 1]) || 0;
       // 예약액 — 시험편이 한 주에 더 쓸 것으로 보는 돈을 상품 수로 나눈 몫. 대조편은 0
@@ -408,7 +408,7 @@ function adPromoteStopOld_(opts) {
     var gid = String(pv[i][AP_GID - 1] || '').trim();
     if (!gid) continue;
     if (unitAt && clean[String(pv[i][AP_NAME - 1])] === unitAt) continue;   // 이 스냅샷으로는 이미 확인함
-    var skus = adSkuListSplit_(pv[i][AP_SKUS - 1]), any = false;
+    var skus = adPlanSkus_(pv[i]), any = false;
     for (var s = 0; s < skus.length && !any; s++) {
       var u = units[skus[s]];
       if (!u) continue;

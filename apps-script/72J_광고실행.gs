@@ -134,7 +134,9 @@ function adPlanExecStep_(interactive) {
 
   var logBuf = adLogBuffer_(ADEXEC_FLUSH_EVERY);
   var okN = 0, failN = 0, left = 0, timeUp = false, gaveUp = 0, streak = 0, aborted = '';
+  var trackOnly = adPlanTrackGet_();                       // 비어 있으면 안 가린다
   adPlanEachRow_(function (row, sh, rowNo) {
+    if (trackOnly && String(row[AP_TRACK - 1]).trim() !== trackOnly) return;
     if (row[AP_APPROVE - 1] !== true) return;
     if (String(row[AP_RESULT - 1]).indexOf('성공') === 0) return;
     if (adIsGivenUp_(row[AP_RESULT - 1])) return;         // 이미 그만둔 줄
@@ -204,7 +206,7 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
   var daily = Number(row[AP_DAILY - 1]) || 0;
   var gid = String(row[AP_GID - 1] || '').trim();
   var cid = String(row[AP_CID - 1] || '').trim();
-  var skus = adSkuListSplit_(row[AP_SKUS - 1]);
+  var skus = adPlanSkus_(row);
   var log = [], now = new Date();
   var asinMap = adSkuAsin_();
   var skuTxt = adSkuText_(skus);

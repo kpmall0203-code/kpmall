@@ -62,8 +62,8 @@ function naCycle() {
     '② 다시 시도 ' + r.retried + '개' + (r.gaveUp ? ' · 그만둠 ' + r.gaveUp : '') + '\n' +
     '③ 입찰 올림 ' + r.raised + '개' + (r.lowRel ? ' · 관련성 없음 ' + r.lowRel : '') + '\n' +
     '④ 판정 — 수익운영 ' + r.profit + ' · 관찰 ' + r.watch + ' · 중단 ' + r.stopped + '\n' +
-    '⑤ EXPAND 로 인계 ' + r.handed + '개\n\n' +
-    (r.sent ? '아마존에 보낸 것: 멈춤 ' + r.sentStop + '개 · 입찰 ' + r.sentBid + '개\n\n'
+    '⑤ EXPAND 로 인계 ' + r.handed + '개 · 다시 켬 ' + r.resumed + '개\n\n' +
+    (r.sent ? '아마존에 보낸 것: 멈춤 ' + r.sentStop + '개 · 다시 켬 ' + r.sentResume + '개 · 입찰 ' + r.sentBid + '개\n\n'
             : naGateText_(r.pol) +
               '⚠ 모의운영이라 아마존에 아무것도 보내지 않았습니다.\n' +
               '   멈춰야 할 광고가 있으면 그동안 계속 돈이 나갑니다.\n\n') +
@@ -77,8 +77,8 @@ function naCycle() {
  */
 function naCycleRun_(opts) {
   var out = { blocked: '', pol: null, live: 0, guard: 0, guardWhy: '', retried: 0, gaveUp: 0,
-              raised: 0, lowRel: 0, profit: 0, watch: 0, stopped: 0, handed: 0,
-              sent: false, sentStop: 0, sentBid: 0, left: 0, perfLast: '', matureTo: '' };
+              raised: 0, lowRel: 0, profit: 0, watch: 0, stopped: 0, handed: 0, resumed: 0,
+              sent: false, sentStop: 0, sentResume: 0, sentBid: 0, left: 0, perfLast: '', matureTo: '' };
   var t0 = Date.now();
   var pol = naPolicy_();
   out.pol = pol;
@@ -107,15 +107,14 @@ function naCycleRun_(opts) {
   for (var i = 0; i < rows.length; i++) {
     if (String(rows[i][NA_I_OWNER] || '').trim() !== NA_OWNER) continue;
     var st = String(rows[i][NA_I_STATE] || '');
-    if (st !== NAS_PROBE && st !== NAS_WATCH && st !== NAS_PROFIT) continue;
-    work.push(i);
+    if (st === NAS_PROBE || st === NAS_WATCH || st === NAS_PROFIT) { work.push(i); out.live++; }
+    else if ((st === NAS_STOP || st === NAS_COOL) && String(rows[i][NA_I_GID] || '').trim()) work.push(i);
   }
-  out.live = work.length;
 
   // 판돈 원장을 먼저 새로 센다 — 보호·판정이 다 이 값을 본다
   naPotUpdate_(rows, fams, famAt, perf, ctx);
 
-  var stopIds = [], bidJobs = [], notes = {};
+  var stopIds = [], bidJobs = [], resumeIds = [];
   for (var w = 0; w < work.length; w++) {
     if (Date.now() - t0 > NA_SOFT_MS) { out.left = work.length - w; break; }
     var ri = work[w];
@@ -123,6 +122,19 @@ function naCycleRun_(opts) {
     var sku = String(r[NA_I_SKU] || '').trim();
     var fam = fams[famAt[String(r[NA_I_FAM] || '').trim()]];
     var o = perf.bySku[sku] || null;
+    var st0 = String(r[NA_I_STATE] || '');
+    if (st0 === NAS_STOP || st0 === NAS_COOL) {
+      // 멈춘 것 — 다시 켤 수 있나만 본다
+      var rs = naResume_(r, fam, listing[sku], ctx, pol, today);
+      if (rs.resume) {
+        var ids0 = naAdIdsFor_(units, sku, String(r[NA_I_GID] || ''), 'PAUSED', r[NA_I_ADIDS]);
+        for (var k0 = 0; k0 < ids0.length; k0++) resumeIds.push(ids0[k0]);
+        r[NA_I_STATE] = NAS_PROBE; r[NA_I_ALLOC] = NAA_START; r[NA_I_WHY] = rs.why; r[NA_I_NEXT] = today;
+        if (fam) { fam[NA_F_STATE] = NAS_PROBE; fam[NA_F_WHY] = ''; fam[NA_F_COOL] = ''; }
+        out.resumed++;
+      } else if (rs.why && rs.why !== String(r[NA_I_WHY])) r[NA_I_WHY] = rs.why;
+      continue;
+    }
     var d = naDecide_(r, fam, o, listing[sku], ctx, pol, today);
 
     if (d.stop) {
@@ -135,7 +147,7 @@ function naCycleRun_(opts) {
         fam[NA_F_WHY] = d.why;
         if (d.cool) fam[NA_F_COOL] = naPlusDays_(today, d.cool);
       }
-      var ids = naAdIdsFor_(units, sku, String(r[NA_I_GID] || ''));
+      var ids = naAdIdsFor_(units, sku, String(r[NA_I_GID] || ''), 'ENABLED', r[NA_I_ADIDS]);
       for (var k = 0; k < ids.length; k++) stopIds.push(ids[k]);
       if (d.guard) { out.guard++; if (!out.guardWhy) out.guardWhy = d.tag; }
       else out.stopped++;
@@ -175,9 +187,10 @@ function naCycleRun_(opts) {
   out.retried = rt.retried; out.gaveUp = rt.gaveUp;
 
   // 보내기 — 모드가 자동운영일 때만
-  if (pol.canAuto && (stopIds.length || bidJobs.length)) {
+  if (pol.canAuto && (stopIds.length || bidJobs.length || resumeIds.length)) {
     out.sent = true;
-    out.sentStop = naSendStops_(stopIds);
+    out.sentStop = naSendState_(stopIds, 'PAUSED');
+    out.sentResume = naSendState_(resumeIds, 'ENABLED');
     out.sentBid = naSendBids_(bidJobs, rows);
   }
 
@@ -185,8 +198,8 @@ function naCycleRun_(opts) {
   if (fams.length) fsh.getRange(2, 1, fams.length, NA_FAM_HEADER.length).setValues(fams);
   log_('newads', 'INFO', '매일 주기 — 도는 것 ' + out.live + ' · 보호 ' + out.guard +
        ' · 중단 ' + out.stopped + ' · 수익 ' + out.profit + ' · 관찰 ' + out.watch +
-       ' · 인계 ' + out.handed + ' · 인상 ' + out.raised +
-       (out.sent ? ' · 보냄(멈춤 ' + out.sentStop + '/입찰 ' + out.sentBid + ')' : ' · 모의') +
+       ' · 인계 ' + out.handed + ' · 인상 ' + out.raised + ' · 재개 ' + out.resumed +
+       (out.sent ? ' · 보냄(멈춤 ' + out.sentStop + '/재개 ' + out.sentResume + '/입찰 ' + out.sentBid + ')' : ' · 모의') +
        (out.left ? ' · 남음 ' + out.left : ''));
   return out;
 }
@@ -220,9 +233,10 @@ function naPotUpdate_(rows, fams, famAt, perf, ctx) {
     var o = perf.bySku[sku];
     if (!o) continue;
     var fk = String(rows[i][NA_I_FAM] || '').trim();
-    var a = agg[fk] || (agg[fk] = { cost: 0, mSales: 0, pct: 0 });
+    var a = agg[fk] || (agg[fk] = { cost: 0, mSales: 0, mOd: 0, pct: 0 });
     a.cost += o.cost;
     a.mSales += o.mSales;
+    a.mOd += o.mOd;
     var pct = Number(rows[i][NA_I_MPCT]) || 0;
     if (pct > a.pct) a.pct = pct;                 // 상품군 안에서 가장 높은 마진율로 본다
   }
@@ -235,7 +249,10 @@ function naPotUpdate_(rows, fams, famAt, perf, ctx) {
     var risk = Math.max(0, a2.cost - profit);
     fam[NA_F_SPENT] = Math.round(a2.cost);
     fam[NA_F_RISK] = Math.round(risk);
-    fam[NA_F_LEFT] = pot > 0 ? Math.round(Math.min(pot - a2.cost, pot - risk)) : '';
+    // 남은 판돈 — 성숙 주문이 하나라도 있으면 손실만 깎는다 (naDecide_ 의 잣대와 같다).
+    // 탐색 중에만 누적 광고비로도 깎는다. 표의 숫자와 멈추는 규칙이 같은 셈이어야 사람이 읽는다
+    fam[NA_F_LEFT] = pot > 0
+      ? Math.round(a2.mOd >= 1 ? pot - risk : Math.min(pot - a2.cost, pot - risk)) : '';
   }
 }
 
@@ -273,12 +290,25 @@ function naDecide_(r, fam, o, L, ctx, pol, today) {
     return no(NAR_BELOW_MIN, '마진이 줄어 감당 가능한 입찰이 ¥' + (Math.round(cap * 100) / 100) +
               ' 가 됐습니다 (아마존 최소 ¥' + NA_MIN_BID + ') — 멈춥니다', pol.cooldown, true);
   }
-  if (fam) {
-    var left = Number(fam[NA_F_LEFT]);
-    if (fam[NA_F_LEFT] !== '' && !(left > 0)) {
-      return no(NAR_POT_OUT, '상품군 판돈 ¥' + Math.round(Number(fam[NA_F_POT]) || 0) +
-                ' 을 다 썼습니다 (누적 ¥' + Math.round(Number(fam[NA_F_SPENT]) || 0) +
-                ' · 위험손실 ¥' + Math.round(Number(fam[NA_F_RISK]) || 0) + ') — 멈춥니다',
+  /**
+   * 판돈 검사 — 상태에 따라 잣대가 다르다.
+   *   탐색(소액운영)     남은 판돈 = min(판돈 − 누적, 판돈 − 위험손실) 이 0 이면 멈춘다 (§8.3)
+   *   관찰·수익운영      판돈 − 위험손실 만 본다. 누적 광고비가 판돈을 넘어도 벌고 있으면 두는 것 —
+   *                     "수익을 내는 광고는 끄지 않는다" (사용자). 판돈은 탐색비 한도지 이익 한도가 아니다
+   */
+  var stNow = String(r[NA_I_STATE] || '');
+  // 성숙 주문이 하나라도 있으면 '탐색' 이 아니다 — 판돈은 손실만 막는다. 이 검사를 판정보다
+  // 먼저 하므로, 상태가 아직 소액운영인 채로 잘 팔리는 것을 누적 광고비 때문에 멈추면 안 된다
+  // (실자료로 돌려 보니 하루 한 건씩 팔리는 것 17개가 그렇게 멈췄다 — 2026-09-11)
+  var hasSale = !!(o && o.mOd >= 1);
+  if (fam && Number(fam[NA_F_POT]) > 0) {
+    var pot = Number(fam[NA_F_POT]), spent = Number(fam[NA_F_SPENT]) || 0, risk = Number(fam[NA_F_RISK]) || 0;
+    var probing = stNow === NAS_PROBE && !hasSale;
+    var leftNow = probing ? Math.min(pot - spent, pot - risk) : pot - risk;
+    if (!(leftNow > 0)) {
+      return no(NAR_POT_OUT, '상품군 판돈 ¥' + Math.round(pot) + ' 을 ' +
+                (probing ? '다 썼습니다' : '손실로 다 깎았습니다') +
+                ' (누적 ¥' + Math.round(spent) + ' · 위험손실 ¥' + Math.round(risk) + ') — 멈춥니다',
                 pol.cooldown);
     }
   }
@@ -292,6 +322,11 @@ function naDecide_(r, fam, o, L, ctx, pol, today) {
   // ── ⑤ 인계 — 성숙 자료로 근거가 쌓였나 ──────────────────
   var mProfit = o.mSales * (pct / 100) - o.mCost;
   if (o.mCk >= pol.handClicks && o.mOd >= pol.handOrders && mProfit > 0) {
+    if (!pol.handover) {
+      return { state: NAS_PROFIT, tag: NAR_PROFIT,
+               why: '넘길 근거는 됐지만 [신규 · 인계 켜기] 가 꺼져 있습니다 — 수익운영으로 둡니다 ' +
+                    '(클릭 ' + o.mCk + ' · 주문 ' + o.mOd + ' · 이익 ¥' + Math.round(mProfit) + ')' };
+    }
     if (naExpandReady_()) {
       return { hand: true, tag: NAR_HANDED,
                why: '성숙 클릭 ' + o.mCk + ' · 주문 ' + o.mOd + ' · 공헌이익 ¥' +
@@ -303,8 +338,8 @@ function naDecide_(r, fam, o, L, ctx, pol, today) {
   }
 
   // ── ④ 판정 ──────────────────────────────────────────────
-  var spent = fam ? Number(fam[NA_F_SPENT]) || 0 : o.cost;
-  var potGone = fam && Number(fam[NA_F_POT]) > 0 && spent >= Number(fam[NA_F_POT]);
+  var spent2 = fam ? Number(fam[NA_F_SPENT]) || 0 : o.cost;
+  var potGone = fam && Number(fam[NA_F_POT]) > 0 && spent2 >= Number(fam[NA_F_POT]);
   var age = o.first ? daysBetween_(o.first, today) : 0;
   var expired = age >= pol.probeDays;
   var matureDone = o.last ? adSpendMature_(o.last, today) : false;
@@ -384,18 +419,28 @@ function naExpandReady_() {
   return false;
 }
 
-/** 그 SKU 의 켜진 상품광고 ID. 우리 그룹 것을 먼저, 없으면 전부 */
-function naAdIdsFor_(units, sku, gid) {
+/**
+ * 그 SKU 의 상품광고 ID (state 인 것만). 우리 그룹 것을 먼저, 없으면 전부.
+ *
+ * [상품광고목록] 에 아직 없으면 (주 1회 수집이라 새 광고는 최대 7일 비어 있다) 만들 때
+ * 받아 둔 [광고ID들] 을 쓴다. 이것이 없으면 시트는 '중단' 인데 아마존은 켜진 채 남는다 —
+ * 실자료로 돌려 보니 멈춘 50줄이 전부 그랬다 (2026-09-11).
+ */
+function naAdIdsFor_(units, sku, gid, state, fallback) {
   var u = units[sku];
-  if (!u || !u.ads) return [];
   var mine = [], all = [];
-  for (var i = 0; i < u.ads.length; i++) {
-    var a = u.ads[i];
-    if (a.state !== 'ENABLED') continue;
-    all.push(a.id);
-    if (gid && String(a.gid) === String(gid)) mine.push(a.id);
+  if (u && u.ads) {
+    for (var i = 0; i < u.ads.length; i++) {
+      var a = u.ads[i];
+      if (a.state !== state) continue;
+      all.push(a.id);
+      if (gid && String(a.gid) === String(gid)) mine.push(a.id);
+    }
   }
-  return mine.length ? mine : all;
+  if (mine.length) return mine;
+  if (all.length) return all;
+  var fb = String(fallback || '').split(',').map(function (x) { return x.trim(); }).filter(Boolean);
+  return fb;
 }
 
 /**
@@ -414,7 +459,8 @@ function naRetryIneligible_(today) {
     if (String(v[i][AP_TRACK - 1]).trim() !== NA_TRACK) continue;
     var res = String(v[i][AP_RESULT - 1] || '');
     if (!res || res.indexOf('성공') === 0) continue;
-    if (!/ineligible|not eligible|자격|INELIGIBLE/i.test(res)) continue;
+    // 72J 가 실제로 남기는 말: 'adEligibilityError → 아마존이 이 상품의 광고를 허용하지 않습니다'
+    if (!/eligib|허용하지 않|자격/i.test(res)) continue;
     // 첫 거절 날짜는 [근거] 칸에 남긴다 — [결과] 는 다시 시도할 때 비우므로 거기 두면 잃는다
     var why0 = String(v[i][14] || '');
     var mark = /\[(\d{4}-\d{2}-\d{2})\s*첫거절\]/.exec(why0);
@@ -443,25 +489,76 @@ function naRetryIneligible_(today) {
   return out;
 }
 
-/** 상품광고를 멈춘다 */
-function naSendStops_(ids) {
-  if (!ids.length) return 0;
+/**
+ * 멈춘 것을 다시 켤 수 있나.
+ *
+ *   보호로 멈춘 것(냉각 없음)   원인이 사라지면 바로 — 재고가 들어왔다 · 리스팅이 살아났다
+ *   판정으로 멈춘 것(냉각 28일) 냉각이 끝나고 G 가 20% 이상 달라졌을 때만 (기획서 §7.3).
+ *                             날짜만으로 다시 켜지 않는다 — 같은 조건이면 같은 결과다.
+ *                             달라졌으면 판돈을 새 G 로 다시 세고, 누적은 그대로 잇는다
+ * 같은 광고그룹의 상품광고를 다시 켠다 — 새 그룹을 만들면 탐색비 원장이 끊긴다 (§7.1)
+ */
+function naResume_(r, fam, L, ctx, pol, today) {
+  var sku = String(r[NA_I_SKU] || '').trim();
+  var cool = fam ? adYmd_(fam[NA_F_COOL]) : '';
+  if (cool && cool > today) return { why: String(r[NA_I_WHY] || '') };
+  if (!L) return { why: '리스팅에 없습니다 — 올라오면 다시 켭니다' };
+  if (!NA_LISTING_OK[String(L.state || '').trim().toLowerCase()]) {
+    return { why: '리스팅 상태가 "' + (L.state || '(빈칸)') + '" 입니다 — 살아나면 다시 켭니다' };
+  }
+  if (!(L.stock > 0)) return { why: '재고가 0 입니다 — 들어오면 다시 켭니다' };
+  var price = L.price > 0 ? L.price : (Number(r[NA_I_PRICE]) || 0);
+  var m = adMarginFor_(ctx, sku, price, String(r[NA_I_NAME] || ''), null, String(r[NA_I_ASIN] || ''));
+  var pct = Number(m.pct) || 0;
+  if (!(pct > 0)) return { why: '아직 팔수록 손해입니다 — 값·조달비가 바뀌면 다시 봅니다' };
+  var G = price * pct / 100;
+  var cap = Math.min(pol.maxBid > 0 ? pol.maxBid : Infinity, G * pol.q0 * pol.beta);
+  if (cap < NA_MIN_BID) return { why: '감당 가능한 입찰이 ¥' + (Math.round(cap * 100) / 100) + ' 라 아직 못 켭니다' };
+
+  if (cool) {
+    // 판정으로 멈춘 것 — G 가 달라져야 다시 본다
+    var G0 = Number(r[NA_I_G]) || 0;
+    var moved = G0 > 0 ? Math.abs(G - G0) / G0 : 1;
+    if (moved < 0.20) {
+      return { why: '냉각이 끝났지만 주문당공헌이익이 ¥' + Math.round(G0) + ' → ¥' + Math.round(G) +
+                    ' (' + Math.round(moved * 100) + '%) 로 거의 그대로입니다 — 같은 조건이면 같은 결과라 다시 켜지 않습니다' };
+    }
+    if (fam) {
+      var pot2 = Math.min(pol.famPot, Math.round(G * pol.famMult));
+      var spent = Number(fam[NA_F_SPENT]) || 0, risk = Number(fam[NA_F_RISK]) || 0;
+      var left2 = Math.min(pot2 - spent, pot2 - risk);
+      if (!(left2 > 0)) {
+        return { why: 'G 가 ¥' + Math.round(G0) + ' → ¥' + Math.round(G) + ' 로 달라졌지만 새 판돈 ¥' + pot2 +
+                      ' 도 이미 쓴 ¥' + Math.round(spent) + ' 에 못 미칩니다 — 다시 켜지 않습니다' };
+      }
+      fam[NA_F_POT] = pot2; fam[NA_F_LEFT] = Math.round(left2);
+    }
+    r[NA_I_G] = Math.round(G); r[NA_I_MPCT] = pct; r[NA_I_CAP] = Math.round(cap * 100) / 100;
+    return { resume: true, why: '냉각이 끝나고 주문당공헌이익이 ¥' + Math.round(G0) + ' → ¥' + Math.round(G) +
+                                ' 로 달라져 다시 켭니다 (판돈 ¥' + (fam ? fam[NA_F_POT] : '') + ')' };
+  }
+  return { resume: true, why: '멈춘 원인이 사라져 다시 켭니다 (재고 ' + L.stock + ' · ' + L.state + ')' };
+}
+
+/** 상품광고 상태를 바꾼다 (PAUSED / ENABLED) */
+function naSendState_(ids, state) {
+  if (!ids || !ids.length) return 0;
   var token, done = 0;
   try { token = adsToken_(); } catch (e) { return 0; }
   for (var i = 0; i < ids.length; i += 100) {
     var part = ids.slice(i, i + 100);
     try {
       var res = adsApiRetry_(token, 'put', '/sp/productAds',
-        { productAds: part.map(function (x) { return { adId: String(x), state: 'PAUSED' }; }) },
+        { productAds: part.map(function (x) { return { adId: String(x), state: state }; }) },
         ADSW_CT_PRODUCTAD, ADSW_CT_PRODUCTAD);
       var st = adsCreated_(res, 'productAds', 'adId');
       if (st.ok) {
         done += st.ids.length;
-        try { adUnitMarkPaused_(st.ids); } catch (e2) {}
-      } else log_('newads', 'WARN', '광고 멈춤 실패: ' + st.msg);
-    } catch (e3) { log_('newads', 'WARN', '광고 멈춤 실패: ' + String(e3).substring(0, 120)); }
+        if (state === 'PAUSED') { try { adUnitMarkPaused_(st.ids); } catch (e2) {} }
+      } else log_('newads', 'WARN', '광고 ' + state + ' 실패: ' + st.msg);
+    } catch (e3) { log_('newads', 'WARN', '광고 ' + state + ' 실패: ' + String(e3).substring(0, 120)); }
   }
-  if (done) log_('newads', 'INFO', '상품광고 ' + done + '개를 멈췄습니다');
+  if (done) log_('newads', 'INFO', '상품광고 ' + done + '개를 ' + (state === 'PAUSED' ? '멈췄습니다' : '다시 켰습니다'));
   return done;
 }
 

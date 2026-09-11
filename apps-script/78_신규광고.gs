@@ -38,15 +38,15 @@ var NA_ITEM_HEADER = [
   '조달비(KRW)', '조달비(JPY)', '판매가(JPY)', '마진율(%)', '마진출처',
   '주문당공헌이익(JPY)', '판단주문율(%)', '허용입찰(JPY)', '시작입찰(JPY)',
   '대표', '배분', '사유', '상태', '소유', '수집일시', '들어온날', '다음평가일',
-  '캠페인', '캠페인ID', '광고그룹ID', '시작일'
+  '캠페인', '캠페인ID', '광고그룹ID', '시작일', '광고ID들'
 ];
 var NA_I_SKU = 0, NA_I_ASIN = 1, NA_I_FAM = 2, NA_I_NAME = 3, NA_I_URL = 4,
     NA_I_KRW = 5, NA_I_JPY = 6, NA_I_PRICE = 7, NA_I_MPCT = 8, NA_I_MSRC = 9,
     NA_I_G = 10, NA_I_Q = 11, NA_I_CAP = 12, NA_I_BID = 13,
     NA_I_REP = 14, NA_I_ALLOC = 15, NA_I_WHY = 16, NA_I_STATE = 17, NA_I_OWNER = 18,
     NA_I_AT = 19, NA_I_IN = 20, NA_I_NEXT = 21,
-    NA_I_CAMP = 22, NA_I_CID = 23, NA_I_GID = 24, NA_I_START = 25;
-var NA_ITEM_ID_COLS = [24, 25];          // 1부터 — 16자리 ID 는 글자로 못 박는다
+    NA_I_CAMP = 22, NA_I_CID = 23, NA_I_GID = 24, NA_I_START = 25, NA_I_ADIDS = 26;
+var NA_ITEM_ID_COLS = [24, 25, 27];      // 1부터 — 16자리 ID 는 글자로 못 박는다
 
 var NA_FAM_HEADER = [
   '상품군키', '옵션수', '대표SKU', '이전대표', '상품명',
@@ -143,7 +143,11 @@ var NA_CFG_DEFAULTS = [
   ['신규 · 풀 캠페인당 그룹 수', 20, '가격선 캠페인 하나에 광고그룹(=SKU) 몇 개를 담을까'],
   ['신규 · 판정 유지 주문', 2, '이만큼 성숙 주문이 있고 이익이 양수면 수익운영'],
   ['신규 · 인계 클릭', 50, '이만큼 성숙 클릭이 쌓이고'],
-  ['신규 · 인계 주문', 3, '이만큼 성숙 주문이 있고 이익이 양수면 확대(EXPAND)에 넘긴다']
+  ['신규 · 인계 주문', 3, '이만큼 성숙 주문이 있고 이익이 양수면 확대(EXPAND)에 넘긴다'],
+  ['신규 · 인계 켜기', 'FALSE',
+   'TRUE 면 근거가 쌓인 SKU 의 소유권을 EXPAND 로 넘긴다. ⚠ EXPAND 쪽이 KP NEW 캠페인을 ' +
+   '제 것으로 알아보고 광고실적에 그 SKU 를 남기는 받을 준비가 아직 없다 — 그 전에 켜면 ' +
+   '넘긴 SKU 를 아무도 안 본다. 준비될 때까지 FALSE 로 두고 수익운영에 머문다']
 ];
 
 /** 새 파일을 연다. ID 가 없으면 무엇을 해야 하는지 말한다 */
@@ -314,7 +318,8 @@ function naPolicy_() {
     poolGroups: Math.round(num('신규 · 풀 캠페인당 그룹 수', 20)),
     keepOrders: Math.round(num('신규 · 판정 유지 주문', 2)),
     handClicks: Math.round(num('신규 · 인계 클릭', 50)),
-    handOrders: Math.round(num('신규 · 인계 주문', 3))
+    handOrders: Math.round(num('신규 · 인계 주문', 3)),
+    handover: String(c['신규 · 인계 켜기']).trim().toUpperCase() === 'TRUE'
   };
   // 최대 유효입찰은 비우면 광고기준의 확대 값을 따른다 — 두 프로그램이 같은 천장을 쓴다
   var mb = Number(c['신규 · 최대 유효입찰(JPY)']);
@@ -367,6 +372,8 @@ function naItemNotes_() {
         NAA_INFO + ' = 아직 아마존에 없음 · 조달비/판매가 모름',
       '시작일': '광고가 실제로 만들어진 날. 주간 시작 수는 이 날짜로 센다 (월요일 기준).',
       '캠페인ID': '16자리라 글자로 못 박아 둔다 — 숫자로 두면 끝자리가 깎인다.',
+      '광고ID들': '만들 때 받은 상품광고 ID. [상품광고목록] 은 주 1회 수집이라 새 광고가 거기 오르기 전에도\n' +
+        '이것으로 멈추고 다시 켠다. 없으면 그 일주일은 멈출 수가 없다.',
       '소유': '이 SKU 를 만지는 프로그램. NEW_ADS 가 첫 수익 근거까지 데려가고 그 뒤는 EXPAND 에 넘긴다.\n' +
         '한 SKU 를 두 프로그램이 함께 만지지 않는다.\n' +
         '사람이 잡아 두려면 이 칸을 다른 말(예: 사람)로 바꾸세요 — 그 줄은 가져오기·실행이 다시 건드리지 않습니다 (' + NAR_HOLD + ').',

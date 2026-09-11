@@ -120,7 +120,9 @@ function naRunStep_(opts) {
   // ② 주간 문 — 개수와 돈을 따로 센다
   var wk = naWeekUsed_(fams, plan, today);
   out.weekStarts = wk.starts; out.weekSpend = wk.spend; out.pending = wk.pending;
-  out.slots = Math.max(0, pol.weekStarts - wk.starts);
+  // 계획에 넣었지만 아직 안 만들어진 줄도 자리를 차지한다 — 안 그러면 모의운영으로 적어 둔
+  // 줄이 승인되는 날 그 수만큼 한도를 넘긴다
+  out.slots = Math.max(0, pol.weekStarts - wk.starts - wk.queued);
   if (pol.weekSpend > 0 && wk.spend + wk.pending >= pol.weekSpend) {
     out.slots = 0;
     out.why = '이번 주 실지출 ' + fmtYen_(wk.spend + wk.pending) + ' 이 한도 ' +
@@ -174,9 +176,10 @@ function naRunStep_(opts) {
     out.approved += approved;
     if (!pol.canAuto || !(w.planned || approved)) break;
 
-    var prevOnly = adPlanOnlyGet_();
+    var prevOnly = adPlanOnlyGet_(), prevTrack = adPlanTrackGet_();
     try {
       adPlanOnlySet_(SHEET_ADPLAN);
+      adPlanTrackSet_(NA_TRACK);                           // 우리 줄만 — 승격(X) 줄은 승격 주기가 맡는다
       var msg = adPlanExecStep_(false);
       out.made = true;
       var m1 = /성공 (\d+)/.exec(String(msg)); if (m1) out.ok += Number(m1[1]);
@@ -184,10 +187,10 @@ function naRunStep_(opts) {
     } catch (e) {
       log_('newads', 'ERROR', '② 캠페인 생성 실패: ' + String(e).substring(0, 200));
       out.why = (out.why ? out.why + ' · ' : '') + '캠페인 생성에서 막혔습니다: ' + String(e).substring(0, 120);
-      adPlanOnlySet_(prevOnly);
+      adPlanOnlySet_(prevOnly); adPlanTrackSet_(prevTrack);
       break;
     }
-    adPlanOnlySet_(prevOnly);
+    adPlanOnlySet_(prevOnly); adPlanTrackSet_(prevTrack);
     // 만든 결과를 거둔다 — 캠페인ID·광고그룹ID 가 이때 생긴다
     plan = naPlanRead_();
     out.synced += naSyncFromPlan_(rows, fams, famAt, plan, today);
@@ -233,7 +236,8 @@ function naPlanRead_() {
               cid: String(v[i][AP_CID - 1] || '').trim(),
               gid: String(v[i][AP_GID - 1] || '').trim(),
               res: String(v[i][AP_RESULT - 1] || ''),
-              skus: adSkuListSplit_(v[i][AP_SKUS - 1]) };
+              adIds: String(v[i][AP_ADIDS - 1] || '').trim(),
+              skus: adPlanSkus_(v[i]) };
     o.ok = o.res.indexOf('성공') === 0;
     out.rows.push(o);
     if (o.name) (out.byName[o.name] || (out.byName[o.name] = [])).push(o);
@@ -259,6 +263,7 @@ function naSyncFromPlan_(rows, fams, famAt, plan, today) {
     rows[i][NA_I_CAMP] = p.name;
     rows[i][NA_I_CID] = p.cid;
     rows[i][NA_I_GID] = p.gid;
+    rows[i][NA_I_ADIDS] = p.adIds;
     if (!String(rows[i][NA_I_START] || '').trim()) rows[i][NA_I_START] = today;
     rows[i][NA_I_STATE] = NAS_PROBE;
     rows[i][NA_I_WHY] = '광고그룹 ' + p.gid + ' 에서 탐색 중입니다 (' + p.name + ')';
@@ -285,18 +290,23 @@ function naSyncFromPlan_(rows, fams, famAt, plan, today) {
  */
 function naWeekUsed_(fams, plan, today) {
   var mon = weekStart_(today);
-  var out = { starts: 0, spend: 0, pending: 0, mon: mon };
+  var out = { starts: 0, queued: 0, spend: 0, pending: 0, mon: mon };
   for (var i = 0; i < fams.length; i++) {
     var d = adYmd_(fams[i][NA_F_START]);
     if (d && d >= mon) out.starts++;
   }
-  // 트랙 N 이 만든 캠페인ID 묶음
-  var cids = {}, daily = 0;
+  // 트랙 N 이 만든 캠페인ID 묶음. 일예산은 풀마다 가장 큰 값 — 같은 풀의 줄은 나중 것이
+  // 그 풀의 총합을 들고 있다 (naPlanWrite_)
+  var cids = {}, budget = {};
   for (var p = 0; p < plan.rows.length; p++) {
     var r = plan.rows[p];
-    if (!r.ok || !r.cid) continue;
-    if (!cids[r.cid]) { cids[r.cid] = true; daily += Number(r.v[AP_DAILY - 1]) || 0; }
+    if (!r.ok) { if (!adIsGivenUp_(r.res)) out.queued++; continue; }
+    if (!r.cid) continue;
+    cids[r.cid] = true;
+    budget[r.cid] = Math.max(budget[r.cid] || 0, Number(r.v[AP_DAILY - 1]) || 0);
   }
+  var daily = 0;
+  for (var c in budget) daily += budget[c];
   if (!Object.keys(cids).length) return out;                 // 아직 만든 것이 없다
   var led;
   try { led = adSpendRead_(); } catch (e) { return out; }
@@ -324,9 +334,17 @@ function naCandidates_(rows, fams, famAt, plan, today) {
     if (String(r[NA_I_ALLOC]) !== NAA_START && String(r[NA_I_ALLOC]) !== NAA_BUDWAIT) continue;
     if (live[String(r[NA_I_STATE])]) continue;                       // 이미 도는 것
     if (String(r[NA_I_GID] || '').trim()) continue;                  // 이미 붙었다
-    // 계획 표에 이미 줄이 있으면 또 넣지 않는다 — 모의운영으로 두 번 눌러도 겹치지 않는다
+    // 계획 표에 이미 줄이 있으면 또 넣지 않는다 — 모의운영으로 두 번 눌러도 겹치지 않는다.
+    // 72J 가 그만둔 줄도 다시 넣지 않는다 — 같은 이유로 또 실패할 줄을 매일 하나씩 늘리게 된다.
+    // 사람이 계획 표의 [결과] 를 비우면 72J 가 다시 시도한다 (72J 의 규칙)
     var have = plan.bySku[String(r[NA_I_SKU] || '').trim()];
-    if (have && !adIsGivenUp_(have.res)) continue;
+    if (have) {
+      if (adIsGivenUp_(have.res) && String(r[NA_I_WHY]).indexOf('그만뒀습니다') < 0) {
+        r[NA_I_WHY] = '계획 표 ' + String(have.v[0]) + ' 이 그만뒀습니다: ' + have.res.substring(0, 140) +
+                      ' — [' + SHEET_ADPLAN + '] 의 [결과] 를 비우면 다시 시도합니다';
+      }
+      continue;
+    }
     var bid = Number(r[NA_I_BID]) || 0;
     if (!(bid >= NA_MIN_BID)) continue;
     var fk = String(r[NA_I_FAM] || '').trim();
