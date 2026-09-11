@@ -27,9 +27,18 @@
  * (같은 자리에서 매번 끊기지 않는다).
  */
 
-/** 정기 작업: 매일 10시 — 새 SKU 를 읽어 셈한다. 돈이 나가지 않으므로 조건 없이 돈다 */
+/**
+ * 정기 작업: 매일 10시 — 새 SKU 를 읽어 셈한다. 돈이 나가지 않으므로 조건 없이 돈다.
+ *
+ * 잠금이 바쁘면(다른 걸음이 20초 넘게 쥐고 있으면) 그날치를 버리지 않고 3분 뒤 다시 온다 —
+ * withLock_ 은 건너뛰고, withLockOrRetry_ 는 매일 트리거까지 지우므로(rescheduleContinue_)
+ * 둘 다 정기 작업엔 안 맞는다. adSchedRun_ 의 '리포트 준비 중' 되돌림을 그대로 쓴다
+ */
 function scheduledNewAdsImport() {
-  withLock_('신규 상품 광고 가져오기', function () { naImportRun_({ quiet: true }); });
+  return adSchedRun_('scheduledNewAdsImport', '신규 가져오기', function () {
+    var r = withLock_('신규 상품 광고 가져오기', function () { return naImportRun_({ quiet: true }); });
+    return r.ran ? '완료' : ADSPEND_PENDING;
+  });
 }
 
 /** 메뉴 ①: 광고할 물건 가져오기 */

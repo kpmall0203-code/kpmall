@@ -135,6 +135,7 @@ function advanceAdGrow(opts) {
    * 이어실행 트리거가 나중에 이어받아도 울타리가 남아 있어야 하므로 속성에 적는다.
    */
   adPlanOnlySet_(SHEET_ADPLAN_GROW);
+  adPlanTrackSet_('');                                // 이 표는 B 줄뿐이라 트랙은 안 가린다
   var props = PropertiesService.getScriptProperties();
   props.setProperty(PROP_ADEXEC_STATE, 'off');       // 언제나 멈춘 상태로 만든다
   var made = adPlanExecStep_(false);

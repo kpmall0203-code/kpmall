@@ -46,7 +46,10 @@ var NA_RETRY_UNTIL_D = 21;               // 언제까지 다시 (1~2주 걸린�
 
 /** 정기 작업: 매일 주기 */
 function scheduledNewAdsCycle() {
-  withLock_('신규 상품 광고 주기', function () { naCycleRun_({ quiet: true }); });
+  return adSchedRun_('scheduledNewAdsCycle', '신규 매일 주기', function () {
+    var r = withLock_('신규 상품 광고 주기', function () { return naCycleRun_({ quiet: true }); });
+    return r.ran ? '완료' : ADSPEND_PENDING;          // 잠금이 바쁘면 3분 뒤 다시
+  });
 }
 
 /** 메뉴: 매일 주기를 지금 한 번 */

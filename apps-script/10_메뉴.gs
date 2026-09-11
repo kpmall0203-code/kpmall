@@ -86,6 +86,7 @@ function buildPriceMenu_() {
         .addItem('② 배분대로 광고 시작 (모드가 자동운영이면 돈이 나갑니다)', 'naRun')
         .addItem('③ 매일 주기 지금 한 번 (보호 · 판정 · 인계)', 'naCycle')
         .addSeparator()
+        .addItem('⏰ 정기 작업 걸기 — 광고 걸음 13개를 매일 시각에 (한 번만)', 'setupAdGrowTriggers')
         .addItem('처음 설치 (새 파일에 표 만들기)', 'setupNewAds'))
       /**
        * 기존 광고는 단추가 둘이다: ① 후보 찾기·확인 → ② 시작.

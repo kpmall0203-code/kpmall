@@ -139,6 +139,7 @@ function startAdActions() {
   sh.getRange(2, 1, v.length, width).setValues(v);
   var reg = null;
   if (promo && promo.rows) {
+    adPlanOnlySet_(SHEET_ADPLAN); adPlanTrackSet_(PROMO_TRACK);   // 승격 줄만 (신규 N · 검색어 M 은 제 시작점이 만든다)
     try { adPlanExecStep_(false); } catch (e5) { log_('ads', 'WARN', '승격 만들기: ' + e5); }
     // 두 편이 다 만들어졌으면 바로 시험 표에 올린다 (덜 만들어졌으면 매일 주기가 이어서 올린다)
     try { reg = adPromoteRegister_(); } catch (e6) { log_('ads', 'WARN', '승격 등록: ' + e6); }

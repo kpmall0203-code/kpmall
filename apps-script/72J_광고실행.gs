@@ -71,6 +71,7 @@ function adsCreated_(res, key, idField) {
 function executeAdPlan() {
   if (!adBusyGuard_('캠페인 만들기')) return;
   adPlanOnlySet_('');                     // 사람이 눌렀다 — 두 표 다 본다
+  adPlanTrackSet_('');                    // 트랙도 안 가린다 (신규가 'N' 으로 두고 갔을 수 있다)
   var props = PropertiesService.getScriptProperties();
   var tabs = adPlanTables_();
   if (!tabs.length) throw new Error('계획 표가 비어 있습니다 ("' +

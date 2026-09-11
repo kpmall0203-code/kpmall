@@ -49,7 +49,10 @@ var NA_TAIL_QUOTA = 0.10;                // 시작 슬롯의 이만큼은 G×q �
  * 모드가 모의운영이면 계획만 적는다. 사람이 안 눌러도 아마존에 안 간다.
  */
 function scheduledNewAdsStart() {
-  withLock_('신규 상품 광고 시작', function () { naRunStep_({ quiet: true }); });
+  return adSchedRun_('scheduledNewAdsStart', '신규 시작', function () {
+    var r = withLock_('신규 상품 광고 시작', function () { return naRunStep_({ quiet: true }); });
+    return r.ran ? '완료' : ADSPEND_PENDING;          // 잠금이 바쁘면 3분 뒤 다시
+  });
 }
 
 /** 메뉴 ②: 실행하기 */
@@ -176,7 +179,8 @@ function naRunStep_(opts) {
     out.approved += approved;
     if (!pol.canAuto || !(w.planned || approved)) break;
 
-    var prevOnly = adPlanOnlyGet_(), prevTrack = adPlanTrackGet_();
+    // 표와 트랙 울타리를 속성에 적고 되돌리지 않는다 — 6분에 끊기면 이어실행 트리거가
+    // 그 속성을 보고 이어받는다. 다른 시작점(사람의 [승인분 만들기]·승격·키우기)은 제 울타리를 스스로 적는다
     try {
       adPlanOnlySet_(SHEET_ADPLAN);
       adPlanTrackSet_(NA_TRACK);                           // 우리 줄만 — 승격(X) 줄은 승격 주기가 맡는다
@@ -187,10 +191,8 @@ function naRunStep_(opts) {
     } catch (e) {
       log_('newads', 'ERROR', '② 캠페인 생성 실패: ' + String(e).substring(0, 200));
       out.why = (out.why ? out.why + ' · ' : '') + '캠페인 생성에서 막혔습니다: ' + String(e).substring(0, 120);
-      adPlanOnlySet_(prevOnly); adPlanTrackSet_(prevTrack);
       break;
     }
-    adPlanOnlySet_(prevOnly); adPlanTrackSet_(prevTrack);
     // 만든 결과를 거둔다 — 캠페인ID·광고그룹ID 가 이때 생긴다
     plan = naPlanRead_();
     out.synced += naSyncFromPlan_(rows, fams, famAt, plan, today);
