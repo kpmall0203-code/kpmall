@@ -142,9 +142,10 @@ function adPlanExecStep_(interactive) {
     if (aborted) { left++; return; }
     if (Date.now() - t0 > ADS_SOFT_MS) { timeUp = true; left++; return; }
 
-    // 확대(승격)가 만드는 줄은 언제나 켜서 만든다 — 같은 상품을 옛 그룹에서 멈추므로,
-    // 꺼진 채 만들면 그 상품은 어디에서도 광고하지 않게 된다
-    var st0 = String(row[AP_TRACK - 1]).trim() === PROMO_TRACK ? 'ENABLED' : state;
+    // 확대(승격)와 신규가 만드는 줄은 언제나 켜서 만든다 — 같은 상품을 옛 그룹에서
+    // 멈추므로, 꺼진 채 만들면 그 상품은 어디에서도 광고하지 않게 된다
+    var tk0 = String(row[AP_TRACK - 1]).trim();
+    var st0 = (tk0 === PROMO_TRACK || tk0 === NA_TRACK) ? 'ENABLED' : state;
     var r = adExecRow_(token, sh, rowNo, row, st0, logBuf);
     if (r.ok) { okN++; streak = 0; }
     else {

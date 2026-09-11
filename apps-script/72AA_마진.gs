@@ -204,6 +204,12 @@ function adMarginProgram_(ctx, sku, price, jpName) {
       var rs2 = resolveShipping_(sku, ctx.skuCost, ctx.manual);
       fee2 = Number(rs2.fee) || 0; fsrc2 = rs2.src;
     } catch (e2) {}
+    // 실측도 무게도 없어 '추정(0.5kg)' 으로 떨어졌으면 소싱 줄의 예측 배송비를 쓴다.
+    // 그 값은 개입수를 반영한다 — 0.5kg 고정은 20개입도 1개입과 같게 본다 (adSrcShip_)
+    if (/추정/.test(String(fsrc2))) {
+      var predShip = adSrcShip_(sc, ctx.rate);
+      if (predShip > 0) { fee2 = predShip; fsrc2 = '소싱 예측(' + Math.round(predShip) + ')'; }
+    }
     var unit2 = unitProfitKrw_(price, fee2, sc.krw, ctx.rate, DEFAULT_FEE_RATE);
     var pct2 = unit2 / ctx.rate / price * 100;
     if (pct2 > 0 && pct2 < 100) {
@@ -380,6 +386,35 @@ var SRCCOST_COL_KRW = 3, SRCCOST_COL_PRICE = 9, SRCCOST_COL_MJPY = 13,
  * 같은 SKU 가 여러 줄이면 마지막(가장 최근에 수집한) 줄을 쓴다.
  * @return {Object}
  */
+/**
+ * 소싱 줄이 쓴 배송비를 거꾸로 꺼낸다 — 64B 와 같은 셈이다.
+ *
+ *   마진 = 판매가 × (1 − 수수료) − 배송비 − 조달비   →   배송비 = 판매가 × (1 − 수수료) − 조달비 − 마진
+ *
+ * ── 왜 이것이 우리 요율표보다 나은가 ────────────────────
+ * 갓 등록한 SKU 는 청구서 실측도 무게 입력도 없어서 57 의 사슬이 마지막 칸
+ * '추정(0.5kg)' = ¥605 로 떨어진다. 그 값은 개입수를 모른다 — 20개입도 ¥605 다.
+ * 소싱 시트가 역산으로 가정한 배송비는 개입수에 따라 오른다 (2026-09-11 · 646줄):
+ *   1개입 중앙 ¥729 · 3개입 ¥744 · 6개입 ¥1,054 · 20개입 ¥1,521
+ * 그래서 그것을 쓰지 않으면 마진을 과대평가한다 — 실제로 신규 639줄 가운데 156줄이
+ * 우리 셈이 바깥 시트보다 마진율이 높게 나왔고(중앙 +12.2%p), 전부 같은 방향이었다.
+ * 개입수가 클수록 벌어졌다 (1개입 +2.7%p → 6개입 +11.0%p → 20개입 +17.5%p).
+ * 마진을 과대평가하면 허용 입찰이 그만큼 높아진다 — 그것이 광고비로 나간다.
+ *
+ * 사용자 확인: "여기서 쓴 배송비는 예측이야 실측이 아니라 배송비는 그대로 써."
+ * 예측을 우리가 다시 세우지 않는다. 실측(청구서)이나 무게 입력이 있으면 그쪽이 먼저다.
+ *
+ * @return {number} 배송비(JPY). 줄이 앞뒤가 안 맞으면 0
+ */
+function adSrcShip_(sc, rate) {
+  if (!sc || !(rate > 0)) return 0;
+  var p = Number(sc.price) || 0, m = Number(sc.margin) || 0, k = Number(sc.krw) || 0;
+  if (!(p > 0) || !(m > 0) || !(k > 0)) return 0;
+  var ship = p * (1 - DEFAULT_FEE_RATE) - k / rate - m;
+  // 음수면 그 줄의 마진이 배송비를 안 뺀 값이고, 판매가보다 크면 줄이 깨진 것이다
+  return ship > 0 && ship < p ? ship : 0;
+}
+
 function sourceCostMap_(basis) {
   var out = {};
   var b = basis || adBasis_();

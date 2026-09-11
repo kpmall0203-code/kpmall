@@ -383,6 +383,9 @@ function adPromoteRegister_() {
  */
 function adPromoteStopOld_(opts) {
   var quiet = !!(opts && opts.quiet), dry = !!(opts && opts.dry);
+  // 어느 트랙의 줄을 뒷정리할까. 승격(X)이 기본이고 신규(N)도 같은 뒷정리가 필요하다 —
+  // 둘 다 '새 그룹으로 옮겼으니 옛 그룹에서 멈춘다' 가 할 일이다
+  var track = String((opts && opts.track) || PROMO_TRACK);
   var out = { rows: 0, skus: 0, paused: 0, fixedIds: 0, left: 0, msg: '' };
   var psh = ss_().getSheetByName(SHEET_ADPLAN);
   if (!psh || psh.getLastRow() < 2) { out.msg = '계획 표가 없습니다'; return out; }
@@ -400,7 +403,7 @@ function adPromoteStopOld_(opts) {
   try { clean = JSON.parse(props.getProperty(PROP_PROMO_CLEAN) || '{}') || {}; } catch (e1) { clean = {}; }
   var work = [];
   for (var i = 0; i < pv.length; i++) {
-    if (String(pv[i][AP_TRACK - 1]).trim() !== PROMO_TRACK) continue;
+    if (String(pv[i][AP_TRACK - 1]).trim() !== track) continue;
     if (String(pv[i][AP_RESULT - 1]).indexOf('성공') !== 0) continue;
     var gid = String(pv[i][AP_GID - 1] || '').trim();
     if (!gid) continue;

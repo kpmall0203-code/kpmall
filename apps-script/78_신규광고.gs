@@ -28,26 +28,35 @@ var NA_SHEET_CFG = '설정';
 var NA_SHEET_ITEM = '상품통합';
 var NA_SHEET_FAM = '상품군광고';
 
+/**
+ * 칸을 늘릴 때는 반드시 **뒤에 붙인다**. 가운데 끼우면 아래 번호들이 한 칸씩 밀려
+ * 이미 쌓인 자료를 엉뚱한 칸에서 읽는다 — 번호는 코드에 박혀 있고 자료는 시트에 있다.
+ * naMigrate_() 가 머리글만 보고 빠진 칸을 뒤에 채운다.
+ */
 var NA_ITEM_HEADER = [
   'SKU', 'ASIN', '상품군키', '상품명', '소싱URL',
   '조달비(KRW)', '조달비(JPY)', '판매가(JPY)', '마진율(%)', '마진출처',
   '주문당공헌이익(JPY)', '판단주문율(%)', '허용입찰(JPY)', '시작입찰(JPY)',
-  '대표', '배분', '사유', '상태', '소유', '수집일시', '들어온날', '다음평가일'
+  '대표', '배분', '사유', '상태', '소유', '수집일시', '들어온날', '다음평가일',
+  '캠페인', '캠페인ID', '광고그룹ID', '시작일'
 ];
 var NA_I_SKU = 0, NA_I_ASIN = 1, NA_I_FAM = 2, NA_I_NAME = 3, NA_I_URL = 4,
     NA_I_KRW = 5, NA_I_JPY = 6, NA_I_PRICE = 7, NA_I_MPCT = 8, NA_I_MSRC = 9,
     NA_I_G = 10, NA_I_Q = 11, NA_I_CAP = 12, NA_I_BID = 13,
     NA_I_REP = 14, NA_I_ALLOC = 15, NA_I_WHY = 16, NA_I_STATE = 17, NA_I_OWNER = 18,
-    NA_I_AT = 19, NA_I_IN = 20, NA_I_NEXT = 21;
+    NA_I_AT = 19, NA_I_IN = 20, NA_I_NEXT = 21,
+    NA_I_CAMP = 22, NA_I_CID = 23, NA_I_GID = 24, NA_I_START = 25;
+var NA_ITEM_ID_COLS = [24, 25];          // 1부터 — 16자리 ID 는 글자로 못 박는다
 
 var NA_FAM_HEADER = [
   '상품군키', '옵션수', '대표SKU', '이전대표', '상품명',
   '판돈(JPY)', '누적탐색비(JPY)', '위험손실(JPY)', '남은판돈(JPY)',
-  '상태', '사유', '처음편입일', '냉각해제일'
+  '상태', '사유', '처음편입일', '냉각해제일', '시작일', '캠페인'
 ];
 var NA_F_KEY = 0, NA_F_N = 1, NA_F_REP = 2, NA_F_PREV = 3, NA_F_NAME = 4,
     NA_F_POT = 5, NA_F_SPENT = 6, NA_F_RISK = 7, NA_F_LEFT = 8,
-    NA_F_STATE = 9, NA_F_WHY = 10, NA_F_IN = 11, NA_F_COOL = 12;
+    NA_F_STATE = 9, NA_F_WHY = 10, NA_F_IN = 11, NA_F_COOL = 12,
+    NA_F_START = 13, NA_F_CAMP = 14;
 
 // ── 배분 ─────────────────────────────────────────────────
 var NAA_EVID = '검증근거운영';
@@ -174,6 +183,44 @@ function naSheet_(name, header) {
   return sh;
 }
 
+/**
+ * 표에 빠진 칸을 뒤에 채운다. 이미 쌓인 자료는 건드리지 않는다.
+ *
+ * 왜 필요한가: ② 를 만들면서 [캠페인]·[캠페인ID]·[광고그룹ID]·[시작일] 이 늘었다.
+ * 시트는 이미 639줄을 담고 있어 다시 만들 수 없다. 머리글만 보고 뒤에 붙인다.
+ * @return {number} 채운 칸 수
+ */
+function naMigrate_() {
+  var n = 0;
+  var specs = [[NA_SHEET_ITEM, NA_ITEM_HEADER, NA_ITEM_ID_COLS],
+               [NA_SHEET_FAM, NA_FAM_HEADER, []]];
+  for (var i = 0; i < specs.length; i++) {
+    var name = specs[i][0], want = specs[i][1], idCols = specs[i][2];
+    var sh = naSheet_(name, want);
+    var have = sh.getLastColumn() > 0
+      ? sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0] : [];
+    // 이름이 다르면 우리가 아는 표가 아니다 — 손대지 않고 알린다
+    for (var c = 0; c < Math.min(have.length, want.length); c++) {
+      if (String(have[c]).trim() !== want[c]) {
+        log_('newads', 'WARN', '[' + name + '] ' + (c + 1) + '번째 칸이 "' + have[c] +
+             '" 입니다 (기대: "' + want[c] + '") — 칸을 늘리지 않았습니다');
+        return n;
+      }
+    }
+    if (have.length >= want.length) continue;
+    if (sh.getMaxColumns() < want.length) sh.insertColumnsAfter(sh.getMaxColumns(), want.length - sh.getMaxColumns());
+    var addN = want.length - have.length;
+    sh.getRange(1, have.length + 1, 1, addN).setValues([want.slice(have.length)])
+      .setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
+    for (var d = 0; d < idCols.length; d++) {
+      if (idCols[d] > have.length) sh.getRange(2, idCols[d], Math.max(1, sh.getMaxRows() - 1), 1).setNumberFormat('@');
+    }
+    n += addN;
+    log_('newads', 'INFO', '[' + name + '] 칸 ' + addN + '개를 뒤에 붙였습니다: ' + want.slice(have.length).join(' · '));
+  }
+  return n;
+}
+
 /** 메뉴: 새 파일에 표 셋을 만들고 설정 기본값을 채운다 (있으면 빠진 항목만) */
 function setupNewAds() {
   var ss = naSS_();
@@ -185,6 +232,7 @@ function setupNewAds() {
     if (!ss.getSheetByName(specs[i][0])) made.push(specs[i][0]);
     naSheet_(specs[i][0], specs[i][1]);
   }
+  var grew = naMigrate_();
   var add = naCfgFill_();
   // 처음 만들면 기본 시트1 이 남아 있다 — 비어 있으면 치운다
   try {
@@ -196,6 +244,7 @@ function setupNewAds() {
   ui_().alert('신규 상품 광고 — 설치',
     (made.length ? '표를 만들었습니다: ' + made.join(' · ') + '\n' : '표는 이미 있습니다.\n') +
     (add ? '설정 ' + add + '개를 채웠습니다.\n' : '설정은 이미 다 있습니다.\n') +
+    (grew ? '표에 칸 ' + grew + '개를 뒤에 붙였습니다.\n' : '') +
     '\n파일: ' + ss.getName() + '\n\n' +
     '[신규 · 모드] 는 "모의운영" 입니다 — ② 실행을 눌러도 아마존에 아무것도 보내지 않습니다.\n' +
     '먼저 [① 광고할 물건 가져오기] 로 배분이 어떻게 나오는지 보세요.',
@@ -316,6 +365,8 @@ function naItemNotes_() {
         NAA_BUDWAIT + ' = 적격이지만 이번 주 몫이 찼다 (다음 주에 다시 줄 선다)\n' +
         NAA_EXCLUDE + ' = 마진 ≤ 0 · 허용입찰 < ¥' + NA_MIN_BID + ' · 이미 광고 중 · 리스팅 비활성\n' +
         NAA_INFO + ' = 아직 아마존에 없음 · 조달비/판매가 모름',
+      '시작일': '광고가 실제로 만들어진 날. 주간 시작 수는 이 날짜로 센다 (월요일 기준).',
+      '캠페인ID': '16자리라 글자로 못 박아 둔다 — 숫자로 두면 끝자리가 깎인다.',
       '소유': '이 SKU 를 만지는 프로그램. NEW_ADS 가 첫 수익 근거까지 데려가고 그 뒤는 EXPAND 에 넘긴다.\n' +
         '한 SKU 를 두 프로그램이 함께 만지지 않는다.\n' +
         '사람이 잡아 두려면 이 칸을 다른 말(예: 사람)로 바꾸세요 — 그 줄은 가져오기·실행이 다시 건드리지 않습니다 (' + NAR_HOLD + ').',
@@ -324,36 +375,4 @@ function naItemNotes_() {
         '소액운영 이후(관찰·수익운영·인계·성숙대기·중단·냉각)는 매일 주기만 바꾼다.'
     });
   } catch (e) {}
-}
-
-
-/**
- * 메뉴 ②: 실행하기 — 아직 만들지 않았다.
- *
- * 여기서 돈이 나가므로, 절반만 만들어 두고 '되는 척' 하지 않는다.
- * ① 가져오기의 배분이 맞는지 사람이 먼저 보고, 그 다음에 이 걸음을 붙인다.
- */
-function naRun() {
-  var pol = naPolicy_();
-  var n = 0, ready = 0;
-  try {
-    var sh = naSS_().getSheetByName(NA_SHEET_ITEM);
-    if (sh && sh.getLastRow() > 1) {
-      var v = sh.getRange(2, 1, sh.getLastRow() - 1, NA_ITEM_HEADER.length).getValues();
-      n = v.length;
-      for (var i = 0; i < v.length; i++) if (String(v[i][NA_I_ALLOC]) === NAA_START) ready++;
-    }
-  } catch (e) {}
-  ui_().alert('② 실행하기 — 아직 없습니다',
-    '[' + NA_SHEET_ITEM + '] 에 상품 ' + n + '개 · 시작 대기 ' + ready + '개가 있습니다.\n\n' +
-    '실행 걸음은 아직 만들지 않았습니다. 여기서 실제로 돈이 나가므로,\n' +
-    '① 가져오기의 [배분]·[사유]·[시작입찰] 이 맞는지 먼저 보셔야 합니다.\n\n' +
-    '보시고 알려 주시면 이어 만듭니다:\n' +
-    '  · 시작입찰이 지금 ¥5 보다 터무니없이 높거나 낮지 않은지\n' +
-    '  · 대표 옵션(O 표시)이 단품 쪽으로 잘 뽑혔는지\n' +
-    '  · 정보대기·광고제외의 사유가 납득되는지\n\n' +
-    naGateText_(pol) +
-    '설정: 주 시작 ' + pol.weekStarts + ' 상품군 · 주간 지출한도 ' + fmtYen_(pol.weekSpend) +
-    ' · 상품군 판돈 ' + fmtYen_(pol.famPot) + ' · 시드 주문율 ' + (pol.q0 * 100).toFixed(1) + '%',
-    ui_().ButtonSet.OK);
 }
