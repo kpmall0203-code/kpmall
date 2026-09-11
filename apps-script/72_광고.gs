@@ -601,19 +601,26 @@ function adsPickText_() {
  * 적어둔 목록이 있으면 그것이 우선, 없으면 판매량 상위 N개.
  */
 function adsKeepSkus_() {
+  var keep = null;
   var list = adsSkuList_();
   if (list.length) {
-    var m = {};
-    for (var i = 0; i < list.length; i++) m[String(list[i]).trim()] = true;
-    return m;
+    keep = {};
+    for (var i = 0; i < list.length; i++) keep[String(list[i]).trim()] = true;
+  } else {
+    var topN = adsTopN_();
+    if (topN <= 0) return null;
+    var top = topSkusByQty_(topN);
+    if (!top || !top.length) return null;       // 판매 자료가 없으면 못 고른다 — 전부 받는다
+    keep = {};
+    for (var t = 0; t < top.length; t++) keep[top[t]] = true;
   }
-  var topN = adsTopN_();
-  if (topN <= 0) return null;
-  var top = topSkusByQty_(topN);
-  if (!top || !top.length) return null;         // 판매 자료가 없으면 못 고른다 — 전부 받는다
-  var k = {};
-  for (var t = 0; t < top.length; t++) k[top[t]] = true;
-  return k;
+  // 신규가 EXPAND 로 넘긴 SKU 는 상위 N 에 안 들어도 남긴다 — 안 남기면 넘긴 상품을
+  // EXPAND 의 후보 찾기가 못 본다 (78 naHandedSkus_). 새 파일이 없으면 빈 목록이다
+  try {
+    var handed = naHandedSkus_();
+    for (var h in handed) keep[h] = true;
+  } catch (eH) {}
+  return keep;
 }
 
 function parseAdsReport_(text) {

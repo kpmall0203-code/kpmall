@@ -144,10 +144,10 @@ var NA_CFG_DEFAULTS = [
   ['신규 · 판정 유지 주문', 2, '이만큼 성숙 주문이 있고 이익이 양수면 수익운영'],
   ['신규 · 인계 클릭', 50, '이만큼 성숙 클릭이 쌓이고'],
   ['신규 · 인계 주문', 3, '이만큼 성숙 주문이 있고 이익이 양수면 확대(EXPAND)에 넘긴다'],
-  ['신규 · 인계 켜기', 'FALSE',
-   'TRUE 면 근거가 쌓인 SKU 의 소유권을 EXPAND 로 넘긴다. ⚠ EXPAND 쪽이 KP NEW 캠페인을 ' +
-   '제 것으로 알아보고 광고실적에 그 SKU 를 남기는 받을 준비가 아직 없다 — 그 전에 켜면 ' +
-   '넘긴 SKU 를 아무도 안 본다. 준비될 때까지 FALSE 로 두고 수익운영에 머문다']
+  ['신규 · 인계 켜기', 'TRUE',
+   'TRUE 면 근거가 쌓인 SKU(성숙 클릭 ≥ 인계 클릭 · 주문 ≥ 인계 주문 · 이익 > 0)의 소유권을 ' +
+   'EXPAND 로 넘긴다. 넘긴 뒤에는 EXPAND 의 사다리·승격·손실한도가 이어받고 신규는 손대지 않는다. ' +
+   'EXPAND 가 모의운영이면 넘기지 않고 수익운영에 머문다. FALSE 면 근거가 쌓여도 수익운영에 머문다']
 ];
 
 /** 새 파일을 연다. ID 가 없으면 무엇을 해야 하는지 말한다 */
@@ -196,6 +196,7 @@ function naSheet_(name, header) {
  */
 function naMigrate_() {
   var n = 0;
+  try { naCfgFill_(); } catch (e0) {}                     // 새로 생긴 설정 항목을 시트에 보인다
   var specs = [[NA_SHEET_ITEM, NA_ITEM_HEADER, NA_ITEM_ID_COLS],
                [NA_SHEET_FAM, NA_FAM_HEADER, []]];
   for (var i = 0; i < specs.length; i++) {
@@ -319,7 +320,7 @@ function naPolicy_() {
     keepOrders: Math.round(num('신규 · 판정 유지 주문', 2)),
     handClicks: Math.round(num('신규 · 인계 클릭', 50)),
     handOrders: Math.round(num('신규 · 인계 주문', 3)),
-    handover: String(c['신규 · 인계 켜기']).trim().toUpperCase() === 'TRUE'
+    handover: String(c['신규 · 인계 켜기']).trim().toUpperCase() !== 'FALSE'
   };
   // 최대 유효입찰은 비우면 광고기준의 확대 값을 따른다 — 두 프로그램이 같은 천장을 쓴다
   var mb = Number(c['신규 · 최대 유효입찰(JPY)']);
@@ -344,6 +345,31 @@ function naGateText_(pol) {
            '   실제로 시작하려면 설정에서 "자동운영" 으로 바꾸세요.\n\n';
   }
   return '';
+}
+
+/**
+ * EXPAND 로 넘긴 SKU 들 — [상품통합] 의 [소유] 가 EXPAND 인 줄.
+ *
+ * 72_광고 가 광고실적에 남길 SKU 를 고를 때 이것을 더한다. 광고실적은 지출 상위 N 개만
+ * 남기므로 갓 넘긴 상품은 거기 안 든다 — 그러면 EXPAND 의 ① 후보 찾기가 그 SKU 를
+ * 아예 못 본다. 넘겼는데 아무도 안 보는 구멍이 여기서 막힌다 (2026-09-11).
+ * @return {Object} {SKU: true}
+ */
+function naHandedSkus_() {
+  var out = {};
+  try {
+    var sh = naSS_().getSheetByName(NA_SHEET_ITEM);
+    if (!sh || sh.getLastRow() < 2) return out;
+    var n = sh.getLastRow() - 1;
+    var sk = sh.getRange(2, NA_I_SKU + 1, n, 1).getValues();
+    var ow = sh.getRange(2, NA_I_OWNER + 1, n, 1).getValues();
+    for (var i = 0; i < n; i++) {
+      if (String(ow[i][0] || '').trim() !== 'EXPAND') continue;
+      var k = String(sk[i][0] || '').trim();
+      if (k) out[k] = true;
+    }
+  } catch (e) {}
+  return out;
 }
 
 /** 상품군키 — SKU 끝의 "-숫자" 를 뗀다 (옵션은 대개 수량 배수다) */
