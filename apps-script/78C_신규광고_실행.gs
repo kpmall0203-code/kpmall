@@ -44,6 +44,14 @@ var NAR_NO_POT = 'FAMILY_BUDGET_EXHAUSTED';
 var NA_MAX_PASSES = 8;                   // 한 번 눌렀을 때 도는 최대 바퀴 수
 var NA_TAIL_QUOTA = 0.10;                // 시작 슬롯의 이만큼은 G×q 하위에도 준다
 
+/**
+ * 정기 작업: 매일 11시 — 배분대로 시작한다.
+ * 모드가 모의운영이면 계획만 적는다. 사람이 안 눌러도 아마존에 안 간다.
+ */
+function scheduledNewAdsStart() {
+  withLock_('신규 상품 광고 시작', function () { naRunStep_({ quiet: true }); });
+}
+
 /** 메뉴 ②: 실행하기 */
 function naRun() {
   if (!adBusyGuard_('② 신규 상품 광고 실행')) return;

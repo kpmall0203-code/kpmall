@@ -53,7 +53,13 @@ var AD_AUTOMATIONS = [
   { name: '광고 · 확대 시험 주기', handler: 'scheduledAdExpandCycle', hour: 8,
     why: '운영 기간이 끝난 시험을 되돌리고, 성숙한 시험을 판정한다 (값을 내리는 쪽이라 저절로 한다)' },
   { name: '광고 · 확대·멈춤 후보 다시 세우기', handler: 'scheduledAdCandidates', hour: 9, weekly: true,
-    why: '어디에 더 쓸지 · 어디서 새는지. 적기만 하고 아무것도 바꾸지 않는다' }
+    why: '어디에 더 쓸지 · 어디서 새는지. 적기만 하고 아무것도 바꾸지 않는다' },
+  { name: '신규 · 광고할 물건 가져오기', handler: 'scheduledNewAdsImport', hour: 10,
+    why: '소싱 시트에 오른 새 SKU 를 읽어 상품군·마진·시작 입찰을 셈한다. 돈은 안 쓴다' },
+  { name: '신규 · 배분대로 시작', handler: 'scheduledNewAdsStart', hour: 11,
+    why: '주간 한도 안에서 새 상품군의 광고를 만든다 (모드가 자동운영일 때만 보낸다)' },
+  { name: '신규 · 매일 주기', handler: 'scheduledNewAdsCycle', hour: 12,
+    why: '보호 → 다시 시도 → 탐색 조정 → 판정 → EXPAND 인계' }
 ];
 
 /**

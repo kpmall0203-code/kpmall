@@ -27,6 +27,11 @@
  * (같은 자리에서 매번 끊기지 않는다).
  */
 
+/** 정기 작업: 매일 10시 — 새 SKU 를 읽어 셈한다. 돈이 나가지 않으므로 조건 없이 돈다 */
+function scheduledNewAdsImport() {
+  withLock_('신규 상품 광고 가져오기', function () { naImportRun_({ quiet: true }); });
+}
+
 /** 메뉴 ①: 광고할 물건 가져오기 */
 function naImport() {
   if (!adBusyGuard_('① 광고할 물건 가져오기')) return;

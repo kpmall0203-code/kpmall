@@ -115,6 +115,7 @@ function buildPriceMenu_() {
       .addSubMenu(ui.createMenu('🆕 신규 상품 — 새로 등록한 것을 광고에')
         .addItem('① 광고할 물건 가져오기 (읽고 셈하기 · 돈 안 나감)', 'naImport')
         .addItem('② 배분대로 광고 시작 (모드가 자동운영이면 돈이 나갑니다)', 'naRun')
+        .addItem('③ 매일 주기 지금 한 번 (보호 · 판정 · 인계)', 'naCycle')
         .addSeparator()
         .addItem('처음 설치 (새 파일에 표 만들기)', 'setupNewAds'))
       .addSubMenu(ui.createMenu('🔎 검색어 — 매주')

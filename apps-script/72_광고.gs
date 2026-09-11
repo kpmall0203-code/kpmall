@@ -452,12 +452,17 @@ function adsReportStep_(interactive) {
   var rows = parsed.rows;
   if (rows.length) writeAdsRows_(rows, from, to);
   writeAdsDays_(parsed.days, from, to);
+  // 신규(트랙 N) 줄은 새 파일에 따로 적는다 — 여기서 실패해도 수집 전체를 죽이지 않는다
+  var naN = 0;
+  try { naN = naPerfWrite_(parsed.na, from, to); }
+  catch (eNA) { log_('newads', 'WARN', '신규 실적을 못 적었습니다: ' + String(eNA).substring(0, 150)); }
 
   queue.shift();
   props.setProperty(PROP_ADS_QUEUE, JSON.stringify(queue));
   props.deleteProperty(PROP_ADS_REPORT);
 
   var msg = from + '~' + to + ' — ' + rows.length + '행' +
+            (naN ? ' · 신규 ' + naN + '행' : '') +
             (queue.length ? ' · 남은 구간 ' + queue.length : ' · 완료');
   log_('ads', 'INFO', '광고비 — ' + msg);
   toast_(msg);
@@ -616,14 +621,18 @@ function parseAdsReport_(text) {
   try { arr = JSON.parse(text); } catch (e) {
     throw new Error('광고 리포트를 읽지 못했습니다: ' + String(text).substring(0, 120));
   }
-  if (!arr || !arr.length) return { rows: [], days: [], nAll: 0, nTrack: 0 };
+  if (!arr || !arr.length) return { rows: [], days: [], na: [], nAll: 0, nTrack: 0 };
   var now = new Date();
 
   // 낱개로 남길 SKU. 광고한 SKU를 전부 날짜×캠페인으로 쌓으면 통합문서 셀 한도
   // (1,000만)를 금방 넘긴다 — 실제로 넘겼다. 볼 것은 상위 몇 개뿐이다.
   var keepSku = adsKeepSkus_();
+  // 신규(트랙 N) 캠페인 줄은 상위 N 에 안 들어도 전부 남긴다 — 새 파일에 적으므로
+  // 이 통합문서의 셀 한도와 상관없고, 없으면 신규 프로그램이 판정을 못 한다 (78D)
+  var ourNew = null;
+  try { ourNew = naOurCampaigns_(); } catch (eN) { ourNew = null; }
 
-  var out = [], day = {}, allSku = {}, trackSku = {};
+  var out = [], day = {}, allSku = {}, trackSku = {}, naOut = [];
   for (var i = 0; i < arr.length; i++) {
     var r = arr[i];
     var d = String(r.date || '').substring(0, 10);
@@ -641,6 +650,11 @@ function parseAdsReport_(text) {
     day[d].im += im; day[d].ck += ck; day[d].od += od;
     allSku[sku] = true;
 
+    if (ourNew && naIsOurs_(ourNew, r.campaignName, r.campaignId)) {
+      naOut.push([d, sku, String(r.advertisedAsin || ''),
+                  String(r.campaignName || r.campaignId || ''), cost, sales, im, ck, od]);
+    }
+
     if (keepSku && !keepSku[sku]) continue;
     trackSku[sku] = true;
     out.push([d, sku, String(r.advertisedAsin || ''),
@@ -655,7 +669,7 @@ function parseAdsReport_(text) {
                countKeys_(trackSku), countKeys_(allSku)]);
   }
   days.sort(function (a, b) { return a[0] < b[0] ? -1 : 1; });
-  return { rows: out, days: days,
+  return { rows: out, days: days, na: naOut,
            nAll: countKeys_(allSku), nTrack: countKeys_(trackSku) };
 }
 
