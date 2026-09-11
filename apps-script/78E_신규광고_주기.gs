@@ -80,7 +80,7 @@ function naCycle() {
  */
 function naCycleRun_(opts) {
   var out = { blocked: '', pol: null, live: 0, guard: 0, guardWhy: '', retried: 0, gaveUp: 0,
-              raised: 0, lowRel: 0, profit: 0, watch: 0, stopped: 0, handed: 0, resumed: 0,
+              raised: 0, lowRel: 0, profit: 0, watch: 0, stopped: 0, handed: 0, resumed: 0, stoppedOld: 0,
               sent: false, sentStop: 0, sentResume: 0, sentBid: 0, left: 0, perfLast: '', matureTo: '' };
   var t0 = Date.now();
   var pol = naPolicy_();
@@ -197,11 +197,21 @@ function naCycleRun_(opts) {
     out.sentBid = naSendBids_(bidJobs, rows);
   }
 
+  // 같은 SKU 가 옛 그룹에도 켜져 있으면 멈춘다 — ② 가 6분에 밀려 건너뛰었을 수 있다.
+  // 싼 검사가 앞에 있어(상품광고목록 스냅샷) 할 일이 없으면 아마존을 부르지 않는다
+  if (pol.canAuto) {
+    try {
+      var so2 = adPromoteStopOld_({ quiet: true, track: NA_TRACK });
+      out.stoppedOld = so2.paused || 0;
+    } catch (eS) { log_('newads', 'WARN', '옛 광고 멈추기 건너뜀: ' + String(eS).substring(0, 120)); }
+  }
+
   if (rows.length) ish.getRange(2, 1, rows.length, NA_ITEM_HEADER.length).setValues(rows);
   if (fams.length) fsh.getRange(2, 1, fams.length, NA_FAM_HEADER.length).setValues(fams);
   log_('newads', 'INFO', '매일 주기 — 도는 것 ' + out.live + ' · 보호 ' + out.guard +
        ' · 중단 ' + out.stopped + ' · 수익 ' + out.profit + ' · 관찰 ' + out.watch +
        ' · 인계 ' + out.handed + ' · 인상 ' + out.raised + ' · 재개 ' + out.resumed +
+       (out.stoppedOld ? ' · 옛광고멈춤 ' + out.stoppedOld : '') +
        (out.sent ? ' · 보냄(멈춤 ' + out.sentStop + '/재개 ' + out.sentResume + '/입찰 ' + out.sentBid + ')' : ' · 모의') +
        (out.left ? ' · 남음 ' + out.left : ''));
   return out;

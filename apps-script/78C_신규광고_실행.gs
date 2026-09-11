@@ -41,6 +41,22 @@ var NA_BUDGET_MIN = 100;                 // 아마존 최소 일예산
 var NAR_POOL_WAIT = 'POOL_WAIT';         // 풀 캠페인이 아직 안 만들어졌다
 var NAR_WEEK_SPEND = 'WEEKLY_SPEND_CAP';
 var NAR_NO_POT = 'FAMILY_BUDGET_EXHAUSTED';
+/**
+ * 한 번 도는 데 쓸 수 있는 시간. 구글은 6분(360초)에서 스크립트를 죽인다.
+ *
+ * ② 는 [계획 넣기 → 72J 로 만들기 → 결과 거두기] 를 여러 바퀴 돈다. 그런데 72J 의
+ * 한 바퀴는 제 부드러운 마감(ADS_SOFT_MS, 기본 4분)까지 혼자 쓴다 — 그것이 유일하게
+ * 도는 걸음일 때를 전제한 값이다. 그대로 두 바퀴만 돌아도 8분이라 죽는다.
+ * 실제로 2026-09-12 에 '최대 실행 시간 초과' 가 났다.
+ *
+ * 그래서 바퀴마다 72J 에 시간 조각만 떼어 주고(ADS_SOFT_MS 를 잠깐 바꾼다 — 72L·72N·72R
+ * 이 쓰는 것과 같은 방식), 남은 시간이 한 조각도 안 되면 그 자리에서 멈춘다.
+ * 멈춰도 잃는 것이 없다: 72J 는 만들 때마다 계획 표에 ID 를 적고, 못 끝내면 1분 뒤
+ * 이어실행 트리거를 걸어 두며, 다음 ② 가 맨 먼저 그 결과를 [상품통합] 으로 옮긴다.
+ */
+var NA_RUN_MS = 270 * 1000;              // 이 시간이 지나면 새 바퀴를 시작하지 않는다
+var NA_EXEC_SLICE_MS = 70 * 1000;        // 한 바퀴에 72J 가 쓸 수 있는 시간
+var NA_TAIL_MS = 30 * 1000;              // 저장·뒷정리에 남겨 두는 시간
 var NA_MAX_PASSES = 8;                   // 한 번 눌렀을 때 도는 최대 바퀴 수
 var NA_TAIL_QUOTA = 0.10;                // 시작 슬롯의 이만큼은 G×q 하위에도 준다
 
@@ -51,14 +67,27 @@ var NA_TAIL_QUOTA = 0.10;                // 시작 슬롯의 이만큼은 G×q �
 function scheduledNewAdsStart() {
   return adSchedRun_('scheduledNewAdsStart', '신규 시작', function () {
     var r = withLock_('신규 상품 광고 시작', function () { return naRunStep_({ quiet: true }); });
-    return r.ran ? '완료' : ADSPEND_PENDING;          // 잠금이 바쁘면 3분 뒤 다시
+    if (!r.ran) return ADSPEND_PENDING;               // 잠금이 바쁘면 3분 뒤 다시
+    // 시간이 다 돼 남겼으면 3분 뒤에 이어서 돈다 — 72J 의 이어실행은 만들기만 잇고,
+    // 계획 넣기와 [상품통합] 옮겨 적기는 이쪽이 해야 한다
+    return (r.value && r.value.timeUp) ? ADSPEND_PENDING : '완료';
   });
 }
 
 /** 메뉴 ②: 실행하기 */
 function naRun() {
   if (!adBusyGuard_('② 신규 상품 광고 실행')) return;
-  var r = naRunStep_({ quiet: false });
+  // 잠금을 쥐고 돈다 — 우리가 걸어 둔 이어실행 트리거(1분 뒤)가 도중에 끼어들면
+  // 같은 계획 줄을 둘이 만들려 든다. 트리거 쪽은 잠금에 걸리면 1분 뒤로 미룬다
+  var lr = withLock_('② 신규 상품 광고 실행', function () { return naRunStep_({ quiet: false }); });
+  if (!lr.ran) {
+    ui_().alert('② 실행하기 — 지금은 안 됩니다',
+      '다른 걸음이 돌고 있습니다 (캠페인 만들기 이어실행일 수 있습니다).\n' +
+      '1~2분 뒤에 다시 누르세요. [가격관리 → 지금 무엇이 도는가] 에서 볼 수 있습니다.',
+      ui_().ButtonSet.OK);
+    return;
+  }
+  var r = lr.value;
   if (r.blocked) { ui_().alert('② 실행하기', r.blocked, ui_().ButtonSet.OK); return; }
   var pol = r.pol;
   ui_().alert(r.made ? '② 실행하기 — 시작했습니다' : '② 실행하기',
@@ -85,7 +114,14 @@ function naRun() {
         (r.stopped ? '옛 광고 ' + r.stopped + '개를 멈췄습니다 (사람이 tiktok 에도 넣어 둔 것)\n' : '') +
         '\n지금부터 이 상품군들에 광고비가 나갑니다.\n'
       : naGateText_(pol) + '계획만 적었습니다 — 아마존에 아무것도 보내지 않았습니다.\n') +
-    (r.left ? '\n⚠ 시간이 다 돼 남겼습니다 — 다시 누르면 이어 갑니다.\n' : ''),
+    (r.timeUp
+      ? '\n⏳ 시간(6분)이 다 돼 ' + (r.pend || r.left || 0) + '줄을 남겼습니다.\n' +
+        '   1분 뒤 저절로 이어서 만듭니다 — 창을 닫아도 됩니다.\n' +
+        '   [상품통합] 의 상태는 다음 ② (매일 11시 또는 손으로) 가 맞춰 적습니다.\n'
+      : r.stuck
+        ? '\n⛔ ' + r.stuck + '줄이 나아가지 않아 그만뒀습니다 — 같은 실패를 되풀이하지 않게.\n' +
+          '   [' + SHEET_ADPLAN + '] 의 [결과] 칸에 사유가 있습니다. 고친 뒤 다시 누르세요.\n'
+        : (r.left ? '\n⚠ 남긴 것 ' + r.left + '개 — 다시 누르면 이어 갑니다.\n' : '')),
     ui_().ButtonSet.OK);
 }
 
@@ -98,6 +134,7 @@ function naRunStep_(opts) {
   var out = { blocked: '', pol: null, synced: 0, weekStarts: 0, weekSpend: 0, pending: 0,
               slots: 0, cand: 0, planned: 0, pools: 0, newPools: 0, waits: 0, approved: 0,
               daily: 0, pot: 0, made: false, ok: 0, fail: 0, pend: 0, stopped: 0, left: 0, why: '',
+              timeUp: false, stuck: 0,
               poolNames: {}, passes: 0 };
   var t0 = Date.now();
   var pol = naPolicy_();
@@ -149,6 +186,8 @@ function naRunStep_(opts) {
   // 그래서 [넣기 → 만들기 → 결과 거두기] 를 시간이 남는 한 되돌린다.
   var passes = 0;
   while (passes < NA_MAX_PASSES) {
+    // 새 바퀴를 시작할 시간이 남았나 (첫 바퀴는 언제나 돈다 — 계획은 적어야 한다)
+    if (passes > 0 && Date.now() - t0 > NA_RUN_MS) { out.timeUp = true; break; }
     passes++;
     var cand = naCandidates_(rows, fams, famAt, plan, today);
     if (passes === 1) out.cand = cand.length;
@@ -182,29 +221,56 @@ function naRunStep_(opts) {
     // '그때 본 그 계획을 만들라' 는 뜻이다. 안 그러면 그 줄들은 영영 안 만들어진다
     var approved = pol.canAuto ? naApprovePending_(plan) : 0;
     out.approved += approved;
-    if (!pol.canAuto || !(w.planned || approved)) break;
+    /**
+     * 이미 승인돼 있고 아직 안 만들어진 줄이 있으면 그것만으로도 보낸다.
+     *
+     * 전에는 '이번 바퀴에 새로 적은 줄' 이나 '이번에 승인한 줄' 이 있을 때만 72J 를 불렀다.
+     * 그래서 앞 실행이 6분에 죽거나 중단 규칙에 걸려 승인된 채 남은 줄들은, ② 를 다시
+     * 눌러도 계획도 승인도 새로 생기지 않아 영영 만들어지지 않았다 — 실제로 42줄이 그렇게
+     * 멈춰 있었고 로그에는 '계획 0줄 · 대기 47 · 모의' 로 찍혔다 (2026-09-12).
+     */
+    var pendN = naPendingCount_(plan);
+    if (!pol.canAuto || !(w.planned || approved || pendN)) break;
 
+    // 72J 에 떼어 줄 시간. 저장·뒷정리 몫을 남기고, 그마저 모자라면 시작하지 않는다
+    var okBefore = out.ok;
+    var slice = Math.min(NA_EXEC_SLICE_MS, NA_RUN_MS - (Date.now() - t0) - NA_TAIL_MS);
+    if (slice < 20 * 1000) { out.timeUp = true; break; }
+    var savedSoft = ADS_SOFT_MS, timeUpInExec = false;
     // 표와 트랙 울타리를 속성에 적고 되돌리지 않는다 — 6분에 끊기면 이어실행 트리거가
     // 그 속성을 보고 이어받는다. 다른 시작점(사람의 [승인분 만들기]·승격·키우기)은 제 울타리를 스스로 적는다
     try {
+      ADS_SOFT_MS = slice;
       adPlanOnlySet_(SHEET_ADPLAN);
       adPlanTrackSet_(NA_TRACK);                           // 우리 줄만 — 승격(X) 줄은 승격 주기가 맡는다
       var msg = adPlanExecStep_(false);
       out.made = true;
       var m1 = /성공 (\d+)/.exec(String(msg)); if (m1) out.ok += Number(m1[1]);
       var m2 = /실패 (\d+)/.exec(String(msg)); if (m2) out.fail += Number(m2[1]);
+      // 72J 가 제 조각을 다 쓰고 남겼으면 이어실행 트리거를 걸어 뒀다 — 우리도 여기서 멈춘다
+      if (/남음 \d+/.test(String(msg))) timeUpInExec = true;
     } catch (e) {
+      ADS_SOFT_MS = savedSoft;
       log_('newads', 'ERROR', '② 캠페인 생성 실패: ' + String(e).substring(0, 200));
       out.why = (out.why ? out.why + ' · ' : '') + '캠페인 생성에서 막혔습니다: ' + String(e).substring(0, 120);
       break;
     }
+    ADS_SOFT_MS = savedSoft;
     // 만든 결과를 거둔다 — 캠페인ID·광고그룹ID 가 이때 생긴다
     plan = naPlanRead_();
     out.synced += naSyncFromPlan_(rows, fams, famAt, plan, today);
     // 실제로 만들어진 그룹 수에 맞춰 풀 일예산을 올린다 (실패한 줄 몫은 안 준다)
     try { naPoolBudgetSync_(plan); } catch (eB) { log_('newads', 'WARN', '일예산 맞추기 건너뜀: ' + String(eB).substring(0, 120)); }
+    // 바퀴마다 저장한다 — 6분에 죽어도 이 바퀴까지는 남는다
+    naSaveBoth_(ish, rows, fsh, fams);
+    if (timeUpInExec) { out.timeUp = true; break; }
+    // 나아간 것이 없으면 그만둔다 — 같은 실패를 여덟 바퀴 되풀이하지 않게
+    // (72J 는 잇달아 다섯 실패하면 그 바퀴를 멈춘다. 그것을 우리가 다시 부르면 안 된다)
+    if (out.ok === okBefore && !w.planned) {
+      out.stuck = naPendingCount_(plan);
+      break;
+    }
     if (!out.waits || !out.slots) break;                   // 더 넣을 것이 없다
-    if (Date.now() - t0 > NA_SOFT_MS) { out.left += out.waits; break; }
   }
   out.pools = 0;
   for (var pn in out.poolNames) out.pools++;
@@ -224,23 +290,43 @@ function naRunStep_(opts) {
     if (!plan.rows[q2].ok && !adIsGivenUp_(plan.rows[q2].res)) out.pend++;
   }
 
-  // 같은 SKU 가 옛 그룹에도 켜져 있으면 멈춘다 (사람이 tiktok 에 넣어 둔 것)
-  if (out.made) {
+  // 같은 SKU 가 옛 그룹에도 켜져 있으면 멈춘다 (사람이 tiktok 에 넣어 둔 것).
+  // 시간이 없으면 건너뛴다 — 매일 주기(78E)가 같은 뒷정리를 한다
+  if (out.made && Date.now() - t0 < NA_RUN_MS) {
+    var savedSoft2 = ADS_SOFT_MS;
     try {
+      ADS_SOFT_MS = Math.max(10 * 1000, NA_RUN_MS + NA_TAIL_MS - (Date.now() - t0));
       var so = adPromoteStopOld_({ quiet: true, track: NA_TRACK });
       out.stopped = so.paused || 0;
     } catch (e2) { log_('newads', 'WARN', '옛 광고 멈추기 건너뜀: ' + String(e2).substring(0, 120)); }
+    ADS_SOFT_MS = savedSoft2;
   }
 
   naSaveBoth_(ish, rows, fsh, fams);
   log_('newads', 'INFO', '② 실행 — 바퀴 ' + passes + ' · 계획 ' + out.planned + '줄 · 캠페인 ' +
        out.pools + '(새 ' + out.newPools + ') · 대기 ' + out.waits +
        (out.made ? ' · 만듦 ' + out.ok + (out.fail ? '/실패 ' + out.fail : '') : ' · 모의') +
+       (out.timeUp ? ' · 시간 다 됨(이어감)' : '') +
+       (out.stuck ? ' · 막힘 ' + out.stuck : '') +
        ' · 이번주 ' + out.weekStarts + '/' + pol.weekStarts);
   return out;
 
   /** 바퀴마다 풀을 다시 읽는다 — 방금 만든 캠페인ID 가 들어와야 이어 채운다 */
   function pools_() { return naPools_(plan); }
+}
+
+/**
+ * 승인돼 있고 아직 안 만들어진 트랙 N 줄 수. 그만둔 줄은 세지 않는다 —
+ * 사람이 [결과] 를 비워야 다시 시도한다.
+ */
+function naPendingCount_(plan) {
+  var n = 0;
+  for (var i = 0; i < plan.rows.length; i++) {
+    var r = plan.rows[i];
+    if (r.ok || adIsGivenUp_(r.res)) continue;
+    if (r.v[AP_APPROVE - 1] === true) n++;
+  }
+  return n;
 }
 
 /** 계획 표의 트랙 N 줄 */
