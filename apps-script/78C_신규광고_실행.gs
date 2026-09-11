@@ -76,7 +76,12 @@ function naRun() {
     (r.waits ? '⏳ ' + r.waits + '개는 풀 캠페인이 만들어진 뒤 다음 바퀴에 들어갑니다 (' + NAR_POOL_WAIT + ')\n\n' : '') +
     (r.why ? '⛔ ' + r.why + '\n\n' : '') +
     (r.made
-      ? '아마존에 보냈습니다 — 성공 ' + r.ok + (r.fail ? ' · 실패 ' + r.fail : '') + '\n' +
+      ? '아마존에 보냈습니다 — 성공 ' + r.ok + (r.fail ? ' · 실패 ' + r.fail : '') +
+        (r.pend ? ' · 아직 안 보낸 줄 ' + r.pend : '') + '\n' +
+        (r.fail || r.pend
+          ? '   ⚠ [' + SHEET_ADPLAN + '] 의 [결과] 칸을 보세요. 잇달아 ' + ADEXEC_ABORT_AFTER +
+            '줄 실패하면 그 바퀴를 멈춥니다 — 고친 뒤 ② 를 다시 누르면 실패한 줄부터 잇습니다.\n'
+          : '') +
         (r.stopped ? '옛 광고 ' + r.stopped + '개를 멈췄습니다 (사람이 tiktok 에도 넣어 둔 것)\n' : '') +
         '\n지금부터 이 상품군들에 광고비가 나갑니다.\n'
       : naGateText_(pol) + '계획만 적었습니다 — 아마존에 아무것도 보내지 않았습니다.\n') +
@@ -92,7 +97,7 @@ function naRunStep_(opts) {
   var quiet = !!(opts && opts.quiet);
   var out = { blocked: '', pol: null, synced: 0, weekStarts: 0, weekSpend: 0, pending: 0,
               slots: 0, cand: 0, planned: 0, pools: 0, newPools: 0, waits: 0, approved: 0,
-              daily: 0, pot: 0, made: false, ok: 0, fail: 0, stopped: 0, left: 0, why: '',
+              daily: 0, pot: 0, made: false, ok: 0, fail: 0, pend: 0, stopped: 0, left: 0, why: '',
               poolNames: {}, passes: 0 };
   var t0 = Date.now();
   var pol = naPolicy_();
@@ -168,7 +173,7 @@ function naRunStep_(opts) {
       }
     }
     out.planned += w.planned; out.newPools += w.newPools;
-    out.waits = w.waits; out.daily += w.daily; out.left += w.left;
+    out.waits = w.waits; out.left += w.left;
     for (var s2 = 0; s2 < w.pot.length; s2++) out.pot += w.pot[s2];
     for (var nm in w.names) out.poolNames[nm] = 1;
 
@@ -196,12 +201,28 @@ function naRunStep_(opts) {
     // 만든 결과를 거둔다 — 캠페인ID·광고그룹ID 가 이때 생긴다
     plan = naPlanRead_();
     out.synced += naSyncFromPlan_(rows, fams, famAt, plan, today);
+    // 실제로 만들어진 그룹 수에 맞춰 풀 일예산을 올린다 (실패한 줄 몫은 안 준다)
+    try { naPoolBudgetSync_(plan); } catch (eB) { log_('newads', 'WARN', '일예산 맞추기 건너뜀: ' + String(eB).substring(0, 120)); }
     if (!out.waits || !out.slots) break;                   // 더 넣을 것이 없다
     if (Date.now() - t0 > NA_SOFT_MS) { out.left += out.waits; break; }
   }
   out.pools = 0;
   for (var pn in out.poolNames) out.pools++;
   out.passes = passes;
+  // 알림에 적을 일예산 합 — 실제로 만들어진 캠페인의 값만 (계획한 것이 아니라)
+  out.daily = 0;
+  var seenCid = {};
+  for (var d2 = 0; d2 < plan.rows.length; d2++) {
+    var pr = plan.rows[d2];
+    if (!pr.ok || !pr.cid || seenCid[pr.cid]) continue;
+    seenCid[pr.cid] = 1;
+    out.daily += Number(pr.v[AP_DAILY - 1]) || 0;
+  }
+  // 계획에 있고 아직 안 만들어진 줄 (실패했거나 중단에 걸려 손도 못 댄 것)
+  out.pend = 0;
+  for (var q2 = 0; q2 < plan.rows.length; q2++) {
+    if (!plan.rows[q2].ok && !adIsGivenUp_(plan.rows[q2].res)) out.pend++;
+  }
 
   // 같은 SKU 가 옛 그룹에도 켜져 있으면 멈춘다 (사람이 tiktok 에 넣어 둔 것)
   if (out.made) {
@@ -507,8 +528,10 @@ function naPlanWrite_(pick, pools, pol, plan, today, t0, rows) {
     row[ADPLAN_HEADER.length - 1] = NA_TRACK;
 
     target.used++; target.bids.push(c.bid);
-    var budget = naBudgetFor_(target.bids);
-    row[AP_DAILY - 1] = budget;
+    // 캠페인을 만들 때 들어가는 일예산은 '이 한 그룹치' 로 둔다 (최소 ¥100).
+    // 스물 그룹치를 미리 넣으면, 뒤 열아홉 줄이 실패했을 때 한 그룹이 스물치 예산을
+    // 하루에 태울 수 있다. 실제로 만들어진 그룹 수에 맞춰 exec 뒤에 올린다 (naPoolBudgetSync_)
+    row[AP_DAILY - 1] = naBudgetFor_([c.bid]);
     touched[target.name] = target;
     add.push(row);
     out.planned++;
@@ -521,13 +544,7 @@ function naPlanWrite_(pick, pools, pol, plan, today, t0, rows) {
     rows[c.i][NA_I_NEXT] = today;
   }
   if (!add.length) return out;
-
-  // 같은 풀에 여러 줄을 넣었으면 일예산을 마지막 값(= 그 풀의 총합)으로 맞춘다
-  for (var a = 0; a < add.length; a++) {
-    var t = touched[String(add[a][AP_NAME - 1])];
-    if (t) add[a][AP_DAILY - 1] = naBudgetFor_(t.bids);
-  }
-  for (var nm in touched) { out.pools++; out.names[nm] = 1; out.daily += naBudgetFor_(touched[nm].bids); }
+  for (var nm in touched) { out.pools++; out.names[nm] = 1; }
 
   var sh = plan.sh;
   var at = Math.max(sh.getLastRow(), 1) + 1;
@@ -540,9 +557,6 @@ function naPlanWrite_(pick, pools, pol, plan, today, t0, rows) {
   sh.getRange(at, AP_GID, add.length, 1).setNumberFormat('@');
   sh.getRange(at, AP_ADIDS, add.length, 1).setNumberFormat('@');
 
-  // 이미 있는 풀에 그룹을 더했으면 그 캠페인의 일예산도 올린다 —
-  // 안 올리면 스무 그룹이 한 그룹치 예산을 나눠 쓴다
-  if (pol.canAuto) naPoolBudgetSync_(touched);
   return out;
 }
 
@@ -578,27 +592,54 @@ function naSetWait_(rows, c, alloc, state, why, today) {
 }
 
 /**
- * 이미 있는 풀 캠페인의 일예산을 지금 그룹 수에 맞게 올린다.
- * 내리지는 않는다 — 사람이 손으로 올려 둔 것을 우리가 깎지 않는다.
+ * 풀 캠페인의 일예산을 **실제로 만들어진 그룹** 에 맞춘다.
+ *
+ * 계획에 넣은 스물 줄 가운데 몇이 실패할 수 있다 (자격·이름 충돌). 계획한 수로 예산을
+ * 잡아 두면 살아남은 한 그룹이 스물치 예산을 하루에 태운다. 그래서 exec 뒤에, 성공해
+ * gid 를 받은 줄만 세어 올린다.
+ *
+ * 올린 값은 그 줄들의 [일예산] 칸에 되적는다 — 다음 바퀴에 "이미 이만큼 올렸다" 를 알아
+ * 같은 PUT 을 되풀이하지 않게. 내리지는 않는다 (사람이 손으로 올려 둔 것을 깎지 않는다).
+ * @param {Object} plan naPlanRead_() 결과 (exec 뒤에 다시 읽은 것)
+ * @return {number} 바꾼 캠페인 수
  */
-function naPoolBudgetSync_(touched) {
-  var token;
-  try { token = adsToken_(); } catch (e) { return 0; }
-  var n = 0;
-  for (var nm in touched) {
-    var t = touched[nm];
-    if (!t.cid || t.fresh) continue;                 // 새 풀은 만들 때 예산이 들어간다
-    var want = naBudgetFor_(t.bids);
+function naPoolBudgetSync_(plan) {
+  var pools = {};
+  for (var i = 0; i < plan.rows.length; i++) {
+    var r = plan.rows[i];
+    if (!r.cid) continue;                                     // 아직 캠페인이 없는 줄은 만들 때 정한다
+    var p = pools[r.cid] || (pools[r.cid] = { name: r.name, bids: [], have: 0, rows: [] });
+    // 보낸 값은 이 풀의 모든 줄에 되적혀 있다 — 실패한 줄의 값도 아마존에 갔을 수 있다
+    p.have = Math.max(p.have, Number(r.v[AP_DAILY - 1]) || 0);
+    p.rows.push(r);
+    if (r.ok && r.gid) p.bids.push(Number(r.v[AP_BID - 1]) || 0);   // 실제로 만들어진 그룹만 센다
+  }
+  var token = null, n = 0;
+  for (var cid in pools) {
+    var q = pools[cid];
+    var want = naBudgetFor_(q.bids);
+    // 올리기도 내리기도 한다. 내리는 쪽이 중요하다 — 스물 줄을 계획했다가 열아홉이 실패하면
+    // 살아남은 한 그룹이 스물치 예산을 하루에 태운다 (2026-09-12 에 실제로 그렇게 됐다).
+    // 사람이 손으로 올려 둔 값을 깎는 걱정은 없다: 이 값은 우리가 보낸 값과만 견준다
+    if (want === q.have) continue;
+    if (!token) { try { token = adsToken_(); } catch (e) { return n; } }
     try {
-      var r = adsApiRetry_(token, 'put', '/sp/campaigns',
-        { campaigns: [{ campaignId: t.cid, budget: { budget: want, budgetType: 'DAILY' } }] },
+      var res = adsApiRetry_(token, 'put', '/sp/campaigns',
+        { campaigns: [{ campaignId: String(cid), budget: { budget: want, budgetType: 'DAILY' } }] },
         ADSW_CT_CAMPAIGN, ADSW_CT_CAMPAIGN);
-      if (adsCreated_(r, 'campaigns', 'campaignId').ok) {
-        n++;
-        log_('newads', 'INFO', '풀 일예산 ' + nm + ' → ' + fmtYen_(want) + ' (그룹 ' + t.used + ')');
+      if (!adsCreated_(res, 'campaigns', 'campaignId').ok) {
+        log_('newads', 'WARN', '풀 일예산 못 바꿨습니다 ' + q.name); continue;
       }
+      n++;
+      for (var k = 0; k < q.rows.length; k++) {
+        q.rows[k].v[AP_DAILY - 1] = want;
+        plan.sh.getRange(q.rows[k].at, AP_DAILY).setValue(want);
+      }
+      log_('newads', 'INFO', '풀 일예산 ' + q.name + ' ' + fmtYen_(q.have) +
+           (want > q.have ? ' ↑ ' : ' ↓ ') + fmtYen_(want) +
+           ' (만들어진 그룹 ' + q.bids.length + ' / 계획 ' + q.rows.length + ')');
     } catch (e2) {
-      log_('newads', 'WARN', '풀 일예산 못 바꿨습니다 ' + nm + ': ' + String(e2).substring(0, 120));
+      log_('newads', 'WARN', '풀 일예산 못 바꿨습니다 ' + q.name + ': ' + String(e2).substring(0, 120));
     }
   }
   return n;

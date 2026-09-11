@@ -262,16 +262,34 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
     }
     // ② 광고그룹 — 자동 캠페인은 여기 기본입찰을 겨냥 넷이 물려받는다
     if (!gid) {
+      /**
+       * 광고그룹 이름은 그 캠페인 안에서 겹칠 수 없다 (아마존 duplicateValueError).
+       *
+       * 지금까지는 캠페인 하나에 그룹 하나였으므로 캠페인 이름을 그대로 썼다.
+       * 신규(트랙 N)는 한 캠페인에 그룹을 스물까지 담으므로 — 그룹마다 SKU 가 하나라
+       * 입찰을 따로 걸어야 한다 — 둘째 줄부터 같은 이름으로 부딪힌다.
+       * 실제로 2026-09-12 에 KP NEW B4-1 의 둘째 그룹부터 다섯 줄이 잇달아 실패하고
+       * 그 다음 41줄이 중단 규칙에 걸려 멈췄다.
+       *
+       * 그래서 '이미 있는 캠페인에 그룹을 더하는 줄' 만 계획ID 를 뒤에 붙인다 (N7 → "… N7").
+       * 캠페인을 방금 만든 줄은 그 캠페인의 첫 그룹이라 이름이 비어 있다 — 옛 트랙의
+       * 이름이 바뀌지 않게 그대로 둔다. 그룹 이름을 맞대어 찾는 코드는 없다 (gid 로 찾는다).
+       */
+      var gname = name;
+      if (!madeCamp) {
+        var tag = String(row[0] || '').trim() || adShortHash_(skuTxt);
+        gname = adAsciiName_(name + ' ' + tag, name).substring(0, 240);
+      }
       var gres = adsApiRetry_(token, 'post', '/sp/adGroups', { adGroups: [{
-        campaignId: cid, name: name, state: state, defaultBid: bid
+        campaignId: cid, name: gname, state: state, defaultBid: bid
       }] }, ADSW_CT_ADGROUP, ADSW_CT_ADGROUP);
       var g = adsCreated_(gres, 'adGroups', 'adGroupId');
       if (!g.ok) return fail('광고그룹 — ' + g.msg);
       gid = g.ids[0]; madeGroup = true;
       sh.getRange(rowNo, AP_GID).setNumberFormat('@').setValue(gid);
-      log.push(adLogRow_({ at: now, kind: '광고그룹', camp: name, group: name,
+      log.push(adLogRow_({ at: now, kind: '광고그룹', camp: name, group: gname,
         sku: skuTxt, asin: asinTxt, item: '기본입찰', to: bid,
-        sum: '기본입찰 ¥' + bid + ' · ' + name +
+        sum: '기본입찰 ¥' + bid + ' · ' + gname +
              (manual ? ' (키워드에 값이 없을 때만 쓰는 받침)' : ' (자동 겨냥 넷이 물려받음)'),
         why: manual ? '수동은 키워드마다 값을 따로 부른다 — 이 값은 받침이다'
                     : '겨냥 넷이 이 값을 물려받는다', cid: cid, gid: gid }));
