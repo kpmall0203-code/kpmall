@@ -44,9 +44,9 @@ var AD_AUTOMATIONS = [
     why: '얼마 썼나 — 여력 계산의 바탕' },
   { name: '광고 · 구조 수집', handler: 'scheduledAdStructure', hour: 4,
     why: '지금 입찰이 얼마인가 — 무엇을 바꿀지 · 바뀌었는지의 바탕' },
-  { name: '광고 · 트랙 B 한 바퀴', handler: 'scheduledAdGrowCycle', hour: 5,
+  { name: '광고 · 새 상품 키우기 한 바퀴', handler: 'scheduledAdGrowCycle', hour: 5,
     why: '계산 → 상태 점검 → 작업 계획 → 자동운영인 것만 보내기' },
-  { name: '광고 · 트랙 B 자동 진행', handler: 'scheduledAdAdvance', hour: 6,
+  { name: '광고 · 새 상품 키우기 자동 진행', handler: 'scheduledAdAdvance', hour: 6,
     why: '기준키워드 고르기 → 갈아타기 → 만들기 → 겨냥 → 켜기' },
   { name: '광고 · 작업 검증', handler: 'scheduledAdVerify', hour: 7,
     why: '보낸 것이 실제로 그렇게 됐나' },
@@ -179,7 +179,7 @@ function scheduledAdStructure() {
 function scheduledAdGrowCycle() {
   // quiet — 묻지 않고 보낸다. 승낙은 광고운영정책 표에 이미 있다 (자동운영 + 한도 + 승인).
   // 정책이 그렇지 않은 대상의 작업은 애초에 '모의' 라 여기서도 안 나간다.
-  return adSchedRun_('scheduledAdGrowCycle', '트랙 B 한 바퀴',
+  return adSchedRun_('scheduledAdGrowCycle', '새 상품 키우기 한 바퀴',
                      function () { return runAdGrowCycle({ quiet: true }); });
 }
 
@@ -239,6 +239,11 @@ function scheduledAdUnits() {
  */
 function scheduledAdCandidates() {
   return adSchedRun_('scheduledAdCandidates', '확대·멈춤 후보', function () {
+    // SKU 채산성(광고재배분)은 옛 트랙 A 의 첫 걸음이었지만 검색어 판정(72L)이 손익분기 기준으로
+    // 여전히 읽는다. 단추를 뺐으니 여기서 주 1회 새로 센다 — API 를 안 부르고 시트만 읽는다.
+    // 판매실적이 비면 던지므로 후보 세우기까지 막지 않게 따로 감싼다
+    try { analyzeAdReallocation(); }
+    catch (eR) { log_('ads', 'WARN', '광고재배분 계산 건너뜀: ' + String(eR).substring(0, 120)); }
     buildAdExpandCandidates();
     buildAdStopCandidates();
     return '완료';

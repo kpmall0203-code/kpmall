@@ -39,8 +39,7 @@ function onOpen() {
 function buildPriceMenu_() {
   var ui = ui_();
   ui.createMenu('가격관리')
-    .addItem('📊 광고 운영 현황 — 돈이 어디로 나가나 · 다음에 뭘 하나', 'showAdDashboard')
-    .addItem('🚦 광고 관제 — 뭐가 켜져 있고 얼마 쓰나', 'refreshAdWatch')
+    .addItem('📊 광고 운영 현황 — 돈이 어디로 나가나 · 관제 요약 · 다음에 뭘 하나', 'showAdDashboard')
     .addItem('지금 무엇이 도는가 · 멈추기', 'collectStatus')
     .addItem('현재 상태 · 다음 할 일', 'showStatus')
     .addItem('📖 설명서', 'showManual')
@@ -62,36 +61,32 @@ function buildPriceMenu_() {
     /**
      * 광고 메뉴는 '무엇을 하려는가' 와 '얼마나 자주' 로 묶는다.
      *
-     * 트랙 B 는 걸음이 여덟이었다. 순서대로 무조건 같이 도는 것(계산→상태→계획→실행)은
+     * 새 상품 키우기는 걸음이 여덟이었다. 순서대로 무조건 같이 도는 것(계산→상태→계획→실행)은
      * [한 바퀴] 하나로, 한 줄에서 서로 배타적인 것(자동 겨냥 / 수동 키워드)은
      * [겨냥 맞추기] 하나로 합쳤다. 옛 [주간 판정] 은 없앴다 — 그 일은 상태 점검·
      * 작업 계획·관제가 나눠 한다. API 를 읽는 걸음(원장 수집·검증)만 따로 남겼다.
      */
     .addSubMenu(ui.createMenu('📣 광고')
       /**
-       * 트랙 B 는 단추가 셋이다.
+       * 광고 프로그램은 셋이고, 셋이 한 줄로 이어진다:
        *
-       * 그전에는 여덟이었다 — 계획에 넣기 · 만들기 · 겨냥 맞추기 · 켜기 · 갈아타기 ·
-       * 한 바퀴 · 검증 · 자동 진행. 그런데 그것들은 사람이 정할 일이 아니라
-       * "자동으로 돌린다" 고 정한 순간 당연히 따라오는 일이다. 사람이 정하는 것은
-       * 무엇을 키울지(①)와 얼마까지 쓸지(②) 둘뿐이고, ③ 은 그 둘을 밀어 넣는 손잡이다.
+       *   🆕 신규 상품     새로 등록된 것 전부에 싸게 근거를 만든다 (판돈 안에서 "팔리나" 만 본다)
+       *   🔁 기존 광고     근거 있는 상품의 수익을 키운다 — 멈춤·감액·증액 사다리·승격
+       *   🌱 새 상품 키우기 사람이 고른 몇 개에 일부러 손해를 보며 순위를 산다
+       *
+       * 신규가 "팔린다" 를 증명하면 기존 광고에 넘긴다 (인계). 옛 트랙 A(재배분 → 계획 →
+       * 전부 승인 → 생성 → 입찰 반영)는 이 셋이 대신하므로 단추를 뺐다 — 함수는 남아 있고
+       * 다른 프로그램(검색어 판정·승격)이 그 표를 읽는다. [더 보기] 에 손잡이가 있다.
        */
-      .addSubMenu(ui.createMenu('🌱 트랙 B — 새 상품 키우기')
-        .addItem('① 키울 상품 등록 (SKU 붙여넣기 → 표에 마진율 적기)', 'addAdGrowSku')
-        .addItem('② 값 확인하고 승인 (마진율 · 전환율예측 · 주간허용손해)', 'openAdGrowInputs')
-        .addItem('③ 시작 — 지금 한 번 돌리고 매일 저절로 돌게', 'startAdGrow')
+      .addItem('⛔ 전부 멈추기 (비상 — 승인과 무관하게 다 끕니다)', 'pauseAllCampaigns')
+      .addItem('⚙ 광고 기준 설정 (마진율 · 한도 · 모드 — 세 프로그램이 함께 읽는다)', 'setupAdBasis')
+      .addSeparator()
+      .addSubMenu(ui.createMenu('🆕 신규 상품 — 새로 등록한 것을 광고에')
+        .addItem('① 광고할 물건 가져오기 (읽고 셈하기 · 돈 안 나감)', 'naImport')
+        .addItem('② 배분대로 광고 시작 (모드가 자동운영이면 돈이 나갑니다)', 'naRun')
+        .addItem('③ 매일 주기 지금 한 번 (보호 · 판정 · 인계)', 'naCycle')
         .addSeparator()
-        .addItem('지금 어떻게 돌고 있나 (운영 현황)', 'showAdDashboard')
-        .addItem('사람이 정해야 할 것 (요청함)', 'showAdInbox')
-        .addSeparator()
-        .addSubMenu(ui.createMenu('손으로 한 걸음씩 (평소엔 볼 일 없음)')
-          .addItem('한 바퀴 — 계산 · 상태 · 작업 계획 · 실행', 'runAdGrowCycle')
-          .addItem('자동 진행 — 키워드 · 갈아타기 · 만들기 · 켜기', 'advanceAdGrow')
-          .addItem('작업 검증 (구조 수집 뒤)', 'verifyAdJobs')
-          .addItem('지출 원장 수집', 'fetchAdSpendDaily')
-          .addSeparator()
-          .addItem('⏰ 지금 무엇이 자동으로 도나', 'showAdTriggers')
-          .addItem('⏰ 자동으로 도는 것 멈추기', 'stopAdGrowTriggers')))
+        .addItem('처음 설치 (새 파일에 표 만들기)', 'setupNewAds'))
       /**
        * 기존 광고는 단추가 둘이다: ① 후보 찾기·확인 → ② 시작.
        * 멈춤·감액·증액 시험·대조군·되돌림·판정·채택·다음 계단이 전부 그 뒤에 숨는다.
@@ -101,7 +96,6 @@ function buildPriceMenu_() {
         .addItem('① 후보 찾기·확인 (마진율 적기 → 판정 보고 승인)', 'buildAdExpandCandidates')
         .addItem('② 시작 — 승인분 보내고 매일 저절로 돌게', 'startAdActions')
         .addSeparator()
-        .addItem('지금 어떻게 돌고 있나 (운영 현황)', 'showAdDashboard')
         .addSubMenu(ui.createMenu('손으로 한 걸음씩 (평소엔 볼 일 없음)')
           .addItem('시험 계획 표만 세우기', 'planAdExpandTests')
           .addItem('승인분 시험만 시작', 'startAdExpandTests')
@@ -112,34 +106,44 @@ function buildPriceMenu_() {
           .addItem('승격 뒷정리 — 옮긴 상품을 옛 그룹에서 멈추기', 'promoteStopOldMenu')
           .addItem('멈춤 후보 표 (자세히)', 'buildAdStopCandidates')
           .addItem('멈춤 후보 표의 승인분만 멈추기', 'applyAdStopApproved')))
-      .addSubMenu(ui.createMenu('🆕 신규 상품 — 새로 등록한 것을 광고에')
-        .addItem('① 광고할 물건 가져오기 (읽고 셈하기 · 돈 안 나감)', 'naImport')
-        .addItem('② 배분대로 광고 시작 (모드가 자동운영이면 돈이 나갑니다)', 'naRun')
-        .addItem('③ 매일 주기 지금 한 번 (보호 · 판정 · 인계)', 'naCycle')
+      /**
+       * 새 상품 키우기는 단추가 셋이다. 사람이 정하는 것은 무엇을 키울지(①)와
+       * 얼마까지 쓸지(②) 둘뿐이고, ③ 은 그 둘을 밀어 넣는 손잡이다.
+       */
+      .addSubMenu(ui.createMenu('🌱 새 상품 키우기 — 골라서 순위 사기')
+        .addItem('① 키울 상품 등록 (SKU 붙여넣기 → 표에 마진율 적기)', 'addAdGrowSku')
+        .addItem('② 값 확인하고 승인 (마진율 · 전환율예측 · 주간허용손해)', 'openAdGrowInputs')
+        .addItem('③ 시작 — 지금 한 번 돌리고 매일 저절로 돌게', 'startAdGrow')
         .addSeparator()
-        .addItem('처음 설치 (새 파일에 표 만들기)', 'setupNewAds'))
-      .addSubMenu(ui.createMenu('🔎 검색어 — 매주')
-        .addItem('① 검색어 수집', 'fetchAdSearchTerms')
-        .addItem('② 검색어 판정 다시 계산', 'rollupAdTerms')
-        .addItem('③ 승격 캠페인 계획 (판 말을 제 캠페인으로)', 'planAdPromote')
-        .addItem('④ 검색어 판정 승인', 'approveAdTerms')
-        .addItem('⑤ 검색어 승인분 반영 (키워드 올림·막음)', 'applyAdTerms'))
-      .addSubMenu(ui.createMenu('🔀 스위치')
-        .addItem('켜기 — 승인 ✓ 만', 'enableApprovedCampaigns')
-        .addItem('승인대로 맞추기 — 미승인은 끔', 'syncCampaignsToApproval')
-        .addItem('관제 표에서 체크한 캠페인 멈춤', 'pauseCheckedInWatch')
-        .addItem('전부 멈추기', 'pauseAllCampaigns'))
-      .addSubMenu(ui.createMenu('🏗 트랙 A — 처음 한 번 · 새 상품이 올 때')
-        .addItem('⓪ 운영 정책 만들기 · 정비 (한도 · 모드 · 승인)', 'setupAdPolicy')
-        .addItem('① 광고 기준 설정 (마진율 · 목표 ACOS · 한도)', 'setupAdBasis')
-        .addItem('② 광고 재배분 계산 (SKU 채산성)', 'analyzeAdReallocation')
-        .addItem('③ 캠페인 생성 계획', 'planAdCampaigns')
-        .addItem('④ 계획 전부 승인 (주의: 전 줄 체크)', 'approveAllPlan')
-        .addItem('⑤ 승인분 캠페인 생성', 'executeAdPlan')
+        .addItem('사람이 정해야 할 것 (요청함)', 'showAdInbox')
+        .addSubMenu(ui.createMenu('손으로 한 걸음씩 (평소엔 볼 일 없음)')
+          .addItem('한 바퀴 — 계산 · 상태 · 작업 계획 · 실행', 'runAdGrowCycle')
+          .addItem('자동 진행 — 키워드 · 갈아타기 · 만들기 · 켜기', 'advanceAdGrow')
+          .addItem('작업 검증 (구조 수집 뒤)', 'verifyAdJobs')
+          .addSeparator()
+          .addItem('⏰ 지금 무엇이 자동으로 도나', 'showAdTriggers')
+          .addItem('⏰ 자동으로 도는 것 멈추기', 'stopAdGrowTriggers')))
+      .addSeparator()
+      /**
+       * 더 보기 — 자동이 대신하는 것들의 손잡이. 평소엔 열 일이 없다.
+       *   관제      매일 08시 저절로 돈다. [운영 현황] 이 그 요약을 보여 준다
+       *   검색어    수집·판정은 매주 저절로 돈다 (새 상품 키우기의 기준키워드가 여기서 나온다).
+       *             승격·승인·반영은 사람이 손으로 키워드를 올리고 막는 옛 방식 — 어느 자동도 안 쓴다
+       *   옛 트랙 A 계획 표의 승인분 만들기(검색어 승격 줄이 이것을 쓴다) · 입찰 반영 · 정책 표
+       */
+      .addSubMenu(ui.createMenu('더 보기 (손으로 · 옛 방식)')
+        .addItem('🚦 관제 새로 받기 — 아마존에 지금 상태를 물어봄 (매일 08시 자동)', 'refreshAdWatch')
+        .addItem('관제 표에서 [멈춤] 체크한 캠페인 멈추기', 'pauseCheckedInWatch')
         .addSeparator()
-        .addItem('승인분 입찰 반영', 'applyApprovedBids'))
-      .addSubMenu(ui.createMenu('더 보기')
-        .addItem('요청함 — 사람이 정해야 하는 것', 'showAdInbox')
+        .addSubMenu(ui.createMenu('🔎 검색어 손으로 (승격 · 승인 · 반영)')
+          .addItem('검색어 판정 다시 계산 (수집은 매주 자동)', 'rollupAdTerms')
+          .addItem('승격 캠페인 계획 (판 말을 제 수동 캠페인으로)', 'planAdPromote')
+          .addItem('검색어 판정 승인', 'approveAdTerms')
+          .addItem('검색어 승인분 반영 (키워드 올림 · 막음)', 'applyAdTerms'))
+        .addItem('계획 표의 승인분 만들기 (검색어 승격 줄 등)', 'executeAdPlan')
+        .addItem('승인분 입찰 반영 (광고재배분 표의 [승인])', 'applyApprovedBids')
+        .addItem('운영 정책 표 정비 (한도 · 모드 · 승인)', 'setupAdPolicy')
+        .addSeparator()
         .addItem('캠페인 점검 · 정리 후보', 'reviewAdCampaigns')
         .addItem('승인한 캠페인 보관 (되돌릴 수 없음)', 'archiveApprovedCampaigns')
         .addItem('⚠ KP 캠페인 전부 보관 · 표 초기화 (되돌릴 수 없음)', 'resetKpCampaigns')
@@ -178,7 +182,9 @@ function buildPriceMenu_() {
         .addItem('상품광고 목록 수집 (SKU 하나하나의 광고ID)', 'fetchAdProductAds')
         .addItem('지출 원장 수집 (캠페인 일별)', 'fetchAdSpendDaily')
         .addItem('SKU별 광고비 수집 (기간 · SKU 골라서)', 'fetchAdsSpend')
-        .addItem('키워드 실적 수집 (주 단위)', 'fetchAdKeywords'))
+        .addItem('키워드 실적 수집 (주 단위)', 'fetchAdKeywords')
+        .addItem('검색어 수집 (자동 캠페인이 산 말 · 주 1회 자동)', 'fetchAdSearchTerms')
+        .addItem('SKU 채산성 계산 (광고재배분 — 검색어 판정의 기준 · 주 1회 자동)', 'analyzeAdReallocation'))
       .addSeparator()
       .addItem('판매실적 수집 (기간 합계)', 'fetchSalesReport')
       .addItem('일별 SKU 판매 수집', 'fetchSalesDaily')

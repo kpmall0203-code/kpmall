@@ -147,7 +147,7 @@ function dataNeeds_() {
         return n ? { ok: true, why: n.toLocaleString() + '개 SKU' } : { ok: false, why: '계산 안 함' };
       },
       cost: '1~2분. 판매실적·마진율로 계산만 합니다 (API 안 부름)',
-      collect: 'analyzeAdReallocation', slow: false, menu: '📣 광고 → ② 광고 재배분 계산'
+      collect: 'analyzeAdReallocation', slow: false, menu: '🔄 데이터 갱신 → 광고 자료 낱개로 → SKU 채산성 계산'
     },
 
     adterm: {
@@ -159,7 +159,7 @@ function dataNeeds_() {
         return n ? { ok: true, why: n.toLocaleString() + '줄' } : { ok: false, why: '없음' };
       },
       cost: '한 주에 1~2분 · 1만 줄 안팎',
-      collect: 'fetchAdSearchTerms', slow: true, menu: '📣 광고 → 검색어 수집'
+      collect: 'fetchAdSearchTerms', slow: true, menu: '🔄 데이터 갱신 → 광고 자료 낱개로 → 검색어 수집'
     }
   };
 }

@@ -54,7 +54,7 @@ var ASV_STOP_EV = '멈춤 · 기대값';
 var ASV_WATCH = '더 봄';
 var ASV_KEEP = '팔림';
 var ASV_NOHANDLE = '손잡이 없음';
-var ASV_GROW = '트랙 B (건드리지 않음)';
+var ASV_GROW = '새 상품 키우기 (건드리지 않음)';
 
 var ADSTOP_MIN_CLICKS = 30;           // 이보다 적으면 아무 말도 안 한다
 var ADSTOP_MIN_COST = 100;            // 이보다 적게 쓴 것은 굳이 줄 세우지 않는다
@@ -274,7 +274,7 @@ function adStopNotes_(sh) {
       ASV_WATCH + ' = 표본이 얇거나, 밑지지만 멈출 근거까지는 아님\n' +
       ASV_KEEP + ' = 본전을 넘겨 팔고 있음\n' +
       ASV_NOHANDLE + ' = 광고ID 를 몰라 손댈 수 없음 (목록 수집 필요)\n' +
-      ASV_GROW + ' = 트랙 B 가 키우는 중 — 일부러 손해 보는 자리라 뺍니다',
+      ASV_GROW + ' = 새 상품 키우기가 키우는 중 — 일부러 손해 보는 자리라 뺍니다',
     '켜진 광고': '이 SKU 의 상품광고 중 지금 켜져 있는 것의 수. 멈추면 이만큼이 꺼집니다.',
     '승인': '켜면 [③ 승인분 멈추기] 때 이 줄이 나갑니다 (판정이 멈춤인 줄만).\n' +
       '멈춰도 되돌릴 수 있습니다 — 아마존 화면에서 그 상품광고를 다시 켜면 됩니다.',
@@ -318,7 +318,7 @@ function adStopVerdict_(a, m, price, u, isGrow) {
   var v, why;
   if (isGrow) {
     v = ASV_GROW;
-    why = '트랙 B 가 키우는 중입니다 — 일부러 손해를 보며 사는 자리라 여기서 멈추지 않습니다';
+    why = '새 상품 키우기가 키우는 중입니다 — 일부러 손해를 보며 사는 자리라 여기서 멈추지 않습니다';
   } else if (!u || !u.on) {
     v = ASV_NOHANDLE;
     why = u ? '이 SKU 의 광고가 이미 다 멈춰 있습니다'

@@ -22,13 +22,14 @@ var DASH_HEADER = ['구분', '항목', '값', '무엇을 뜻하나'];
 
 /** 원장에서 기간 합계를 트랙별로 가른다 */
 function dashSpendSplit_(led, from, to, ownById) {
-  var out = { A: 0, B: 0, 밖: 0, total: 0, camps: {} };
+  var out = { A: 0, B: 0, N: 0, 밖: 0, total: 0, camps: {} };
   for (var i = 0; i < led.rows.length; i++) {
     var r = led.rows[i];
     if (from && r.d < from) continue;
     if (to && r.d > to) continue;
     var own = ownById[r.cid];
-    var key = own ? (own.track === 'B' ? 'B' : 'A') : '밖';
+    // B = 새 상품 키우기 · N = 신규 상품 · 나머지(A·X·M) = 기존 광고
+    var key = own ? (own.track === 'B' ? 'B' : (own.track === 'N' ? 'N' : 'A')) : '밖';
     out[key] += r.cost;
     out.total += r.cost;
     out.camps[r.cid] = true;
@@ -83,8 +84,9 @@ function showAdDashboard() {
   }
   for (var w = 0; w < wins.length; w++) {
     var sp = dashSpendSplit_(led, wins[w][1], wins[w][2], ownById);
-    add('지출 · ' + wins[w][0], '트랙 A (관리)', fmtYen_(sp.A) + dashPct_(sp.A, sp.total), '');
-    add('지출 · ' + wins[w][0], '트랙 B (관리)', fmtYen_(sp.B) + dashPct_(sp.B, sp.total), '');
+    add('지출 · ' + wins[w][0], '🔁 기존 광고 (확대·승격)', fmtYen_(sp.A) + dashPct_(sp.A, sp.total), '');
+    add('지출 · ' + wins[w][0], '🆕 신규 상품', fmtYen_(sp.N) + dashPct_(sp.N, sp.total), '');
+    add('지출 · ' + wins[w][0], '🌱 새 상품 키우기', fmtYen_(sp.B) + dashPct_(sp.B, sp.total), '');
     add('지출 · ' + wins[w][0], '관리 밖 (기존 광고)',
         fmtYen_(sp['밖']) + dashPct_(sp['밖'], sp.total),
         '우리가 만들지 않은 옛 캠페인. 지금 한도가 덮지 않습니다.');
@@ -93,7 +95,7 @@ function showAdDashboard() {
 
   // ── 한도 ────────────────────────────────────────────
   var wkNow = dashSpendSplit_(led, wkFrom, today, ownById);
-  var covered = wkNow.A + wkNow.B;
+  var covered = wkNow.A + wkNow.B + wkNow.N;
   add('한도', '한도가 덮는 범위', fmtYen_(covered) + ' / ' + fmtYen_(wkNow.total) +
       dashPct_(covered, wkNow.total),
       '이번 주 계정 전체 지출 중 정책 한도가 걸린 몫. 나머지는 옛 캠페인이라 ' +
@@ -111,14 +113,42 @@ function showAdDashboard() {
             : '지금은 아무것도 자동으로 바뀌지 않습니다 (전부 모의운영 또는 미확정).');
 
   var polA = adPolicyFor_(pol, 'A', '전체');
-  add('한도', '트랙 A 주간 지출한도',
+  add('한도', '기존 광고 주간 지출한도 (운영정책 표)',
       polA && polA.weekSpend > 0 ? fmtYen_(polA.weekSpend) : '안 정함',
       polA && polA.weekSpend > 0
-        ? '이번 주 트랙 A 지출 ' + fmtYen_(wkNow.A) + dashPct_(wkNow.A, polA.weekSpend)
+        ? '이번 주 기존 광고 지출 ' + fmtYen_(wkNow.A) + dashPct_(wkNow.A, polA.weekSpend)
         : '광고운영정책 표에서 정하세요. 주간 한도가 비면 무제한이 아니라 "멈춤" 입니다 ' +
           '(누적 한도는 비워도 됩니다 — 그때는 주간과 기간이 총량을 가둡니다).');
 
-  // ── 트랙 B 상품별 ───────────────────────────────────
+  // ── 관제 요약 — 매일 08시 도는 관제 표의 첫 줄과 판정 수. 여기서 API 를 부르지 않는다 ──
+  var wsh = ss_().getSheetByName(SHEET_ADWATCH);
+  var watchAge = -1, watchBanner = '';
+  if (wsh && wsh.getLastRow() > ADWATCH_ROW_HEADER) {
+    watchBanner = String(wsh.getRange(1, 1).getValue() || '');
+    var wn = wsh.getLastRow() - ADWATCH_ROW_HEADER;
+    var wv = wsh.getRange(ADWATCH_ROW_HEADER + 1, 1, wn, ADWATCH_HEADER.length).getValues();
+    var verd = {}, onN = 0, lastAt = '';
+    for (var wi = 0; wi < wv.length; wi++) {
+      if (!String(wv[wi][0] || '').trim()) continue;
+      var vd = String(wv[wi][AW_VERDICT] || '(없음)');
+      verd[vd] = (verd[vd] || 0) + 1;
+      if (String(wv[wi][AW_STATE]) === 'ENABLED') onN++;
+      var at = wv[wi][ADWATCH_HEADER.length - 1];
+      var atY = at instanceof Date ? ymd_(at) : String(at || '').substring(0, 10);
+      if (atY > lastAt) lastAt = atY;
+    }
+    watchAge = lastAt ? daysBetween_(lastAt, today) : -1;
+    add('관제', '마지막 확인', lastAt || '(없음)',
+        watchAge > 1 ? '⚠ ' + watchAge + '일 전입니다 — 매일 08시 자동으로 돕니다. 지금 보려면 [📣 광고 → 더 보기 → 관제 새로 받기]'
+                     : '아마존이 말하는 지금 상태 · 승인 · 최근 7일 광고비를 캠페인마다 적은 표입니다 (' + SHEET_ADWATCH + ' 탭)');
+    add('관제', '우리 캠페인', wv.length + '개 · 켜짐 ' + onN, watchBanner.substring(0, 160));
+    add('관제', '판정', Object.keys(verd).map(function (k) { return k + ' ' + verd[k]; }).join(' · '),
+        '한도를 넘긴 것 · 승인 없이 켜진 것은 관제가 멈추고 메일합니다. [멈춤] 을 체크해 여러 개를 한 번에 끌 수도 있습니다');
+  } else {
+    add('관제', '관제 표', '(없음)', '[📣 광고 → 더 보기 → 관제 새로 받기] 를 한 번 누르면 생기고, 그 뒤 매일 08시 저절로 돕니다');
+  }
+
+  // ── 새 상품 키우기 상품별 ───────────────────────────
   var gsh = ss_().getSheetByName(SHEET_ADGROW);
   var stage = {}, nB = 0;
   if (gsh && gsh.getLastRow() > 1) {
@@ -132,18 +162,18 @@ function showAdDashboard() {
       var st = String(cellOf_(gv[g], gmap, '단계', '(점검 안 함)'));
       stage[st] = (stage[st] || 0) + 1;
       var bp = adPolicyFor_(pol, 'B', sku);
-      add('트랙 B · ' + sku, st,
+      add('🌱 키우기 · ' + sku, st,
           '주간 ' + cellOf_(gv[g], gmap, '주간지출(JPY)', 0) +
           '엔 · 위험손실 ' + cellOf_(gv[g], gmap, '주간위험손실(JPY)', 0) +
           '엔 · 여력 ' + cellOf_(gv[g], gmap, '주간여력(JPY)', '?'),
           String(cellOf_(gv[g], gmap, '다음 행동', '')).substring(0, 160));
       if (bp && !bp.ready) {
-        add('트랙 B · ' + sku, '정책 미확정', bp.miss.join(' · '),
+        add('🌱 키우기 · ' + sku, '정책 미확정', bp.miss.join(' · '),
             '이 다섯 칸이 차야 이 상품이 움직입니다.');
       }
     }
   }
-  add('트랙 B', '상품 수', nB + '개',
+  add('🌱 키우기', '상품 수', nB + '개',
       Object.keys(stage).map(function (k) { return k + ' ' + stage[k]; }).join(' · '));
 
   // ── 요청함 ──────────────────────────────────────────
@@ -185,8 +215,9 @@ function showAdDashboard() {
   ui_().alert('광고 운영 현황',
     (led.has ? '지출 자료 ' + led.last + ' 까지 (' + lag + '일 전)'
              : '⛔ 지출 원장이 비어 있습니다') + '\n\n' +
-    '이번 주 — 트랙 A ' + fmtYen_(wkNow.A) + ' · 트랙 B ' + fmtYen_(wkNow.B) +
+    '이번 주 — 기존 광고 ' + fmtYen_(wkNow.A) + ' · 신규 ' + fmtYen_(wkNow.N) + ' · 키우기 ' + fmtYen_(wkNow.B) +
     ' · 관리 밖 ' + fmtYen_(wkNow['밖']) + '\n' +
+    (watchAge >= 0 ? '관제 마지막 확인 ' + (watchAge ? watchAge + '일 전' : '오늘') + '\n' : '관제 표 없음\n') +
     '한도가 덮는 몫 ' + fmtYen_(covered) + ' / ' + fmtYen_(wkNow.total) +
     dashPct_(covered, wkNow.total) + '\n\n' +
     '자동운영 정책 ' + nAuto + '개 · 미확정 ' + nMiss + '개 · 열린 요청 ' + openN + '건\n\n' +
