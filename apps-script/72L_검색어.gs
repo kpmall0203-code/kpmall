@@ -425,7 +425,8 @@ function adTermStep_(interactive) {
   if (queue[0] === ADTERM_ROLLUP) {
     var r = adTermRollup_();
     queue.shift();
-    props.setProperty(PROP_ADTERM_QUEUE, JSON.stringify(queue));
+    if (queue.length) props.setProperty(PROP_ADTERM_QUEUE, JSON.stringify(queue));
+    else props.deleteProperty(PROP_ADTERM_QUEUE);      // 빈 큐가 남으면 다음 주 걸음이 건너뛴다
     adTermScheduleContinue_(false);
     showSheet_(SHEET_ADTERM);
     log_('ads', 'INFO', '검색어 판정 — ' + r.msg);
@@ -471,7 +472,8 @@ function adTermStep_(interactive) {
   var n = adTermRawAppend_(rows, from, to);
 
   queue.shift();
-  props.setProperty(PROP_ADTERM_QUEUE, JSON.stringify(queue));
+  if (queue.length) props.setProperty(PROP_ADTERM_QUEUE, JSON.stringify(queue));
+  else props.deleteProperty(PROP_ADTERM_QUEUE);
   props.deleteProperty(PROP_ADTERM_REPORT);
 
   var left = queue.length - 1;          // 마지막 ROLLUP 은 주가 아니다

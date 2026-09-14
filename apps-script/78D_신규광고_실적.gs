@@ -91,6 +91,57 @@ function naPerfWrite_(rows, from, to) {
 }
 
 /**
+ * 매일 주기 앞에서 최근 며칠을 다시 받는다 (트랙 N 줄만 새 파일에 적는다).
+ *
+ * 주 1회 SKU별 광고비 수집이 같은 줄을 적지만 그것만으로는 '최근 3 완료일 노출' 을
+ * 사흘마다 보는 탐색 조정이 일주일씩 늦는다. 리포트는 SKU별 광고비와 같은 것을
+ * 짧은 기간으로 청구하고, 운영 시트의 광고실적·광고캠페인일별에는 적지 않는다 —
+ * 그쪽은 주 1회 수집이 맡는다 (같은 돈을 두 번 세지 않는다).
+ *
+ * 리포트가 아직이면 {pending:true} 를 돌려주고 번호를 속성에 남긴다 — 다음 호출이
+ * 같은 리포트를 이어받는다. 남은 번호가 오늘 것이 아니면 버리고 새로 청구한다.
+ * @return {{pending:boolean, n:number, from:string, to:string}}
+ */
+var NA_PERF_FETCH_DAYS = 10;                 // 저노출(최근 3 완료일) + 보고 지연 2일에 넉넉히
+var PROP_NA_PERF_REPORT = 'NA_PERF_REPORT';  // 'reportId|from|to'
+var NA_PERF_WAIT_MS = 90 * 1000;
+
+function naPerfFetch_() {
+  var props = PropertiesService.getScriptProperties();
+  var token = adsToken_();
+  var to = ymd_(new Date()), from = addDays_(to, -(NA_PERF_FETCH_DAYS - 1));
+  var saved = String(props.getProperty(PROP_NA_PERF_REPORT) || '').split('|');
+  var reportId = saved[0] || '';
+  if (reportId && saved[2] !== to) { reportId = ''; props.deleteProperty(PROP_NA_PERF_REPORT); }
+  if (!reportId) {
+    var created = adsCreateReport_(token, from, to);
+    reportId = created.reportId;
+    if (!reportId) throw new Error('신규 실적 리포트 번호를 못 받았습니다: ' + JSON.stringify(created).substring(0, 200));
+    props.setProperty(PROP_NA_PERF_REPORT, reportId + '|' + from + '|' + to);
+    log_('newads', 'INFO', '신규 실적 리포트 생성 ' + reportId + ' (' + from + '~' + to + ')');
+  }
+  var t0 = Date.now(), url = '';
+  while (Date.now() - t0 < NA_PERF_WAIT_MS) {
+    var info = adsApi_(token, 'get', '/reporting/reports/' + reportId);
+    var st = String(info.status || '').toUpperCase();
+    if (st === 'COMPLETED' || st === 'SUCCESS') { url = info.url; break; }
+    if (st === 'FAILURE' || st === 'CANCELLED') {
+      props.deleteProperty(PROP_NA_PERF_REPORT);
+      throw new Error('신규 실적 리포트 실패: ' + st + (info.failureReason ? ' ' + info.failureReason : ''));
+    }
+    Utilities.sleep(15000);
+  }
+  if (!url) return { pending: true, n: 0, from: from, to: to };
+  var blob = UrlFetchApp.fetch(url, { muteHttpExceptions: true }).getBlob();
+  var text = Utilities.ungzip(blob.setContentType('application/x-gzip')).getDataAsString('UTF-8');
+  var parsed = parseAdsReport_(text);
+  var n = naPerfWrite_(parsed.na, from, to);
+  props.deleteProperty(PROP_NA_PERF_REPORT);
+  if (!n) log_('newads', 'INFO', '신규 실적 — 받은 줄 없음 (' + from + '~' + to + ')');
+  return { pending: false, n: n, from: from, to: to };
+}
+
+/**
  * 신규광고일별 → SKU 별 합계. 성숙한 것과 전부를 따로 센다 —
  * 판정은 성숙한 것만 본다. 아직 안 익은 매출로 '벌고 있다' 고 하지 않는다.
  * @return {{bySku:Object, last:string, has:boolean}}

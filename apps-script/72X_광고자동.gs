@@ -108,6 +108,12 @@ function adSchedRetry_(handler) {
   return true;
 }
 
+/** 이 걸음이 오늘 아직 더 기다려 볼 수 있나 (adSchedRetry_ 가 한도를 넘기 전) */
+function adSchedTriesLeft_(handler) {
+  var n = Number(PropertiesService.getScriptProperties().getProperty(ADSCHED_RETRY_PROP + handler)) || 0;
+  return n < ADSCHED_RETRY_MAX;
+}
+
 function adSchedClear_(handler) {
   PropertiesService.getScriptProperties().deleteProperty(ADSCHED_RETRY_PROP + handler);
 }
@@ -153,7 +159,7 @@ function adSchedRun_(handler, label, fn) {
 function scheduledAdTerms() {
   return adSchedRun_('scheduledAdTerms', '검색어 수집·판정', function () {
     var props = PropertiesService.getScriptProperties();
-    if (props.getProperty(PROP_ADTERM_QUEUE)) {   // 지난번이 안 끝났으면 이어받는다
+    if (adQueueLen_(PROP_ADTERM_QUEUE) > 0) {     // 지난번이 안 끝났으면 이어받는다
       adTermStepLocked_(false);
       return '이어받음';
     }
@@ -203,7 +209,7 @@ function scheduledAdVerify() {
 function scheduledAdsSpend() {
   return adSchedRun_('scheduledAdsSpend', 'SKU별 광고비 수집', function () {
     var props = PropertiesService.getScriptProperties();
-    if (props.getProperty(PROP_ADS_QUEUE)) return adsReportStep_(false);   // 지난번 이어받기
+    if (adQueueLen_(PROP_ADS_QUEUE) > 0) return adsReportStep_(false);     // 지난번 이어받기
     var to = ymd_(new Date());
     props.setProperty(PROP_ADS_QUEUE,
                       JSON.stringify(adsWindows_(addDays_(to, -(adsAutoDays_() - 1)), to)));

@@ -278,6 +278,14 @@ function testCampaignToggle() {
  * 남은 구간이 있으면 이어받을지 묻는다.
  * @return {boolean} true = 이어받아서 이미 처리했음 (호출한 쪽은 그냥 return)
  */
+/** 속성에 든 큐의 길이 — 없거나 '[]' 면 0 (문자열이 있다는 것만으로 '도는 중' 이라 보지 않는다) */
+function adQueueLen_(queueKey) {
+  try {
+    var q = JSON.parse(PropertiesService.getScriptProperties().getProperty(queueKey) || 'null');
+    return (q && q.length) || 0;
+  } catch (e) { return 0; }
+}
+
 function adResumeIfQueued_(label, queueKey, stepFn) {
   var q = JSON.parse(PropertiesService.getScriptProperties().getProperty(queueKey) || 'null');
   if (!q || !q.length) return false;

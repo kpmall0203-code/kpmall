@@ -458,7 +458,9 @@ function adsReportStep_(interactive) {
   catch (eNA) { log_('newads', 'WARN', '신규 실적을 못 적었습니다: ' + String(eNA).substring(0, 150)); }
 
   queue.shift();
-  props.setProperty(PROP_ADS_QUEUE, JSON.stringify(queue));
+  // 빈 큐는 지운다 — '[]' 가 남으면 다음 주 걸음이 '이어받기' 로 알고 아무것도 안 받는다
+  if (queue.length) props.setProperty(PROP_ADS_QUEUE, JSON.stringify(queue));
+  else props.deleteProperty(PROP_ADS_QUEUE);
   props.deleteProperty(PROP_ADS_REPORT);
 
   var msg = from + '~' + to + ' — ' + rows.length + '행' +

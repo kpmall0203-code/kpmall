@@ -47,6 +47,15 @@ var NA_RETRY_UNTIL_D = 21;               // 언제까지 다시 (1~2주 걸린�
 /** 정기 작업: 매일 주기 */
 function scheduledNewAdsCycle() {
   return adSchedRun_('scheduledNewAdsCycle', '신규 매일 주기', function () {
+    // 실적부터 — 어제까지의 노출·클릭이 있어야 저노출 올리기와 판정이 제 값을 본다.
+    // 주 1회 SKU별 광고비 수집만으로는 사흘마다 보는 탐색 조정이 일주일씩 늦는다.
+    var f = null;
+    try { f = naPerfFetch_(); }
+    catch (eP) { log_('newads', 'WARN', '신규 실적 수집 실패 — 있는 자료로 주기를 돕니다: ' + String(eP).substring(0, 150)); }
+    if (f && f.pending) {
+      if (adSchedTriesLeft_('scheduledNewAdsCycle')) return ADSPEND_PENDING;   // 3분 뒤 다시
+      log_('newads', 'WARN', '신규 실적 리포트가 계속 아직입니다 — 있는 자료로 주기를 돕니다');
+    }
     var r = withLock_('신규 상품 광고 주기', function () { return naCycleRun_({ quiet: true }); });
     return r.ran ? '완료' : ADSPEND_PENDING;          // 잠금이 바쁘면 3분 뒤 다시
   });
@@ -212,7 +221,8 @@ function naCycleRun_(opts) {
        ' · 중단 ' + out.stopped + ' · 수익 ' + out.profit + ' · 관찰 ' + out.watch +
        ' · 인계 ' + out.handed + ' · 인상 ' + out.raised + ' · 재개 ' + out.resumed +
        (out.stoppedOld ? ' · 옛광고멈춤 ' + out.stoppedOld : '') +
-       (out.sent ? ' · 보냄(멈춤 ' + out.sentStop + '/재개 ' + out.sentResume + '/입찰 ' + out.sentBid + ')' : ' · 모의') +
+       (out.sent ? ' · 보냄(멈춤 ' + out.sentStop + '/재개 ' + out.sentResume + '/입찰 ' + out.sentBid + ')'
+                 : (pol.canAuto ? ' · 보낼 것 없음' : ' · 모의')) +
        (out.left ? ' · 남음 ' + out.left : ''));
   return out;
 }
