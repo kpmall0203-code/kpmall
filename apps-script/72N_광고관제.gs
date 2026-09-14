@@ -292,6 +292,10 @@ function scheduledAdWatch() {
       if (r && r.pending) {
         // 리포트가 늦다 — 10분 뒤 한 번 더
         ScriptApp.newTrigger(ADWATCH_HANDLER + 'Retry').timeBased().after(10 * 60 * 1000).create();
+      } else {
+        // 관제가 끝났으면 프로그램별 광고비·매출·TACOS 표와 그래프도 오늘 것으로 (72V)
+        try { adStatBuild_({ quiet: true }); }
+        catch (eS) { log_('ads', 'WARN', '광고통계 갱신 실패: ' + String(eS).substring(0, 150)); }
       }
     } catch (e) {
       log_('ads', 'ERROR', '광고 관제 실패: ' + String(e));

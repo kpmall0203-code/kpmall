@@ -52,7 +52,7 @@ function tabModes_() {
      * 어느 탭이 무엇인지는 [탭 안내] 가 한 줄씩 적어 준다.
      */
     { key: 'adsB', name: '🌱 광고 · 새 상품 키우기 (골라서 순위 사기)',
-      tabs: [SHEET_DASH, SHEET_ADGROW, SHEET_POLICY, SHEET_JOB, SHEET_INBOX,
+      tabs: [SHEET_DASH, SHEET_ADCHART, SHEET_ADGROW, SHEET_POLICY, SHEET_JOB, SHEET_INBOX,
              SHEET_ADPLAN_GROW, SHEET_SPENDDAY, SHEET_ADWATCH, SHEET_ADTERM, SHEET_ADLOG] },
 
     { key: 'adsA', name: '🔁 광고 · 기존 광고 — 멈춤·감액·증액 (주 1회 승인)',
@@ -300,6 +300,10 @@ function tabGuideRows_() {
   return [
     [C, SHEET_DASH, '지금 돈이 어디로 나가는지 한 장 — 기존 광고·신규·키우기·관리 밖을 갈라서, 관제 요약과 다음 할 일까지',
      TAB_WHO_PROG, '아침에 한 번'],
+    [C, SHEET_ADCHART, '프로그램별(신규·기존·키우기·전체) 광고비 얼마 써서 얼마 벌었나 — 최근 7일·30일·이번 달 요약과 날짜별 그래프. 매일 08시 관제 뒤 갱신',
+     TAB_WHO_PROG, '보고 싶을 때'],
+    [C, SHEET_ADSTAT, '그래프의 숫자 — 날짜 × 프로그램의 광고비·광고매출·매출·ACOS·TACOS·TACOS 7일',
+     TAB_WHO_PROG, '거의 안 봄'],
     [B, SHEET_ADGROW, '새 상품 키우기의 본표 한 장. 값·한도·승인·단계·다음 행동이 한 줄에 다 있다. ' +
      '사람이 적을 것은 셋뿐 — 마진율 · ' + AG_CVR_NAME + ' · 주간허용손해 (추천값을 채워 준다)',
      TAB_WHO_BOTH, '매일 (단계와 다음 행동만 봐도 된다)'],

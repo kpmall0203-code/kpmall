@@ -40,6 +40,7 @@ function buildPriceMenu_() {
   var ui = ui_();
   ui.createMenu('가격관리')
     .addItem('📊 광고 운영 현황 — 돈이 어디로 나가나 · 관제 요약 · 다음에 뭘 하나', 'showAdDashboard')
+    .addItem('📈 광고 그래프 — 프로그램별 광고비 · 매출 · TACOS (매일 08시 자동)', 'showAdCharts')
     .addItem('지금 무엇이 도는가 · 멈추기', 'collectStatus')
     .addItem('현재 상태 · 다음 할 일', 'showStatus')
     .addItem('📖 설명서', 'showManual')

@@ -175,7 +175,14 @@ function scheduledAdTerms() {
 }
 
 function scheduledAdSpend() {
-  return adSchedRun_('scheduledAdSpend', '지출 원장 수집', fetchAdSpendDaily);
+  return adSchedRun_('scheduledAdSpend', '지출 원장 수집', function () {
+    var r = fetchAdSpendDaily();
+    if (r === ADSPEND_PENDING) return r;
+    // 원장이 왔으면 빠진 날의 SKU별 하루치 판매도 걸어 둔다 — 광고통계의 매출·TACOS (72V)
+    try { log_('sales', 'INFO', '판매 하루치 자동 — ' + salesDailyAuto_()); }
+    catch (eS) { log_('sales', 'WARN', '판매 하루치 자동 실패: ' + String(eS).substring(0, 150)); }
+    return r;
+  });
 }
 
 function scheduledAdStructure() {
