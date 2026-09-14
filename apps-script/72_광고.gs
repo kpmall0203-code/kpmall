@@ -380,8 +380,17 @@ function fetchAdsSpend() {
   if (ok !== ui_().Button.YES) return;
 
   props.setProperty(PROP_ADS_QUEUE, JSON.stringify(wins));
-  toast_('광고비 수집 시작 — 구간 ' + wins.length + '개');
-  adsReportStep_(true);
+  props.deleteProperty(PROP_ADS_REPORT);
+  // 여기서 직접 받지 않는다 — 대화 상자가 열려 있는 시간도 실행 시간(6분)에 들어가서,
+  // 리포트를 기다리다 창을 띄우면 그 창을 보는 동안 '최대 실행 시간 초과' 가 난다.
+  // 1분 뒤 트리거가 구간 하나씩 이어받는다 (continueAdsReport). 진행은 로그·토스트로.
+  adsScheduleContinue_(true);
+  ui_().alert('광고비 수집 — 걸어 두었습니다',
+    range.from + ' ~ ' + range.to + ' · ' + adsPickText_() + '\n' +
+    '구간 ' + wins.length + '개를 1분 뒤부터 뒤에서 차례로 받습니다 (구간마다 2분 내외).\n\n' +
+    '이 창은 닫아도 됩니다. 끝나면 [로그] 에 "광고비 — … 완료" 가 남고,\n' +
+    '도는 중인지는 [지금 무엇이 도는가 · 멈추기] 에서 볼 수 있습니다.',
+    ui_().ButtonSet.OK);
 }
 
 function adsWindows_(from, to) {
