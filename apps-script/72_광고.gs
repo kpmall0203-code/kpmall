@@ -344,8 +344,9 @@ function fetchAdsSpend() {
 
   // 광고한 SKU를 전부 날짜×캠페인으로 쌓으면 셀 한도(1,000만)를 넘긴다 — 실제로 넘겼다.
   var pn = ui_().prompt('광고비 수집 — 어떤 SKU를 받을까요',
-    'SKU를 직접 적거나, 판매량 상위 몇 위까지 받을지 숫자로 적으세요.\n\n' +
-    '  100                 판매량 상위 100개\n' +
+    'SKU를 직접 적거나, 광고비 상위 몇 위까지 받을지 숫자로 적으세요.\n' +
+    '(구간마다 그 구간의 광고비로 순위를 매깁니다 — 돈 쓴 SKU 가 먼저다)\n\n' +
+    '  100                 광고비 상위 100개\n' +
     '  50                  상위 50개\n' +
     '  A-123, B-456        적어준 SKU만 (쉼표·줄바꿈으로 구분)\n' +
     '  0                   전부  ⚠ 셀 한도를 넘길 수 있습니다\n\n' +
@@ -595,14 +596,22 @@ function adsPickText_() {
            (list.length > 5 ? ' 외 ' + (list.length - 5) + '개' : '');
   }
   var n = adsTopN_();
-  return n ? '판매량 상위 ' + n + '개' : '광고한 SKU 전부';
+  return n ? '광고비 상위 ' + n + '개' : '광고한 SKU 전부';
 }
 
 /**
  * 낱개로 남길 SKU 집합. null 이면 거르지 않는다.
  * 적어둔 목록이 있으면 그것이 우선, 없으면 판매량 상위 N개.
  */
-function adsKeepSkus_() {
+/**
+ * 낱개로 남길 SKU.
+ *
+ * 상위 N 은 '광고비' 순이다 — 판매량 순이면 정작 멈춤 후보(돈은 썼는데 안 팔린 것)가
+ * 표에 안 들어온다. 순위는 이번 리포트 구간 안의 광고비로 매긴다 — 리포트 자체에
+ * 광고비가 있으니 판매실적이 없어도 되고, 구간마다 그때 돈 쓴 SKU 가 남는다.
+ * @param {Array} arr 리포트 줄 (없으면 순위를 못 매기니 전부)
+ */
+function adsKeepSkus_(arr) {
   var keep = null;
   var list = adsSkuList_();
   if (list.length) {
@@ -610,9 +619,13 @@ function adsKeepSkus_() {
     for (var i = 0; i < list.length; i++) keep[String(list[i]).trim()] = true;
   } else {
     var topN = adsTopN_();
-    if (topN <= 0) return null;
-    var top = topSkusByQty_(topN);
-    if (!top || !top.length) return null;       // 판매 자료가 없으면 못 고른다 — 전부 받는다
+    if (topN <= 0 || !arr || !arr.length) return null;
+    var cost = {};
+    for (var a = 0; a < arr.length; a++) {
+      var s0 = String(arr[a].advertisedSku || '').trim();
+      if (s0) cost[s0] = (cost[s0] || 0) + (Number(arr[a].cost) || 0);
+    }
+    var top = Object.keys(cost).sort(function (x, y) { return cost[y] - cost[x]; }).slice(0, topN);
     keep = {};
     for (var t = 0; t < top.length; t++) keep[top[t]] = true;
   }
@@ -635,7 +648,7 @@ function parseAdsReport_(text) {
 
   // 낱개로 남길 SKU. 광고한 SKU를 전부 날짜×캠페인으로 쌓으면 통합문서 셀 한도
   // (1,000만)를 금방 넘긴다 — 실제로 넘겼다. 볼 것은 상위 몇 개뿐이다.
-  var keepSku = adsKeepSkus_();
+  var keepSku = adsKeepSkus_(arr);
   // 신규(트랙 N) 캠페인 줄은 상위 N 에 안 들어도 전부 남긴다 — 새 파일에 적으므로
   // 이 통합문서의 셀 한도와 상관없고, 없으면 신규 프로그램이 판정을 못 한다 (78D)
   var ourNew = null;

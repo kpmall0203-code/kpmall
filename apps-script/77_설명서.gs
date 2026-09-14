@@ -278,7 +278,7 @@ function manualRows_() {
       '광고를 손으로 바꿨으면 다시 받으세요.',
       '광고 API', MAN_MED, SHEET_ADSTRUCT + ' · ' + SHEET_ADGRP + ' · ' + SHEET_ADPROD);
   row('광고', '📥 자료 받기 → 광고비 수집 (SKU 골라서)',
-      '기간과 대상을 물어봅니다 — 판매량 상위 몇 개, 또는 SKU를 직접 적어도 됩니다. ' +
+      '기간과 대상을 물어봅니다 — 광고비 상위 몇 개(구간마다 그 구간의 광고비 순), 또는 SKU를 직접 적어도 됩니다. ' +
       '거른 SKU도 하루 합계는 ' + SHEET_ADSDAY + '에 남아 계정 전체 TACOS는 맞습니다. ' +
       '전부 받으면 셀 한도(1,000만)를 넘깁니다.',
       '광고 API 자격증명 (SP-API와 별도)', MAN_SLOW,
