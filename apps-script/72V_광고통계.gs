@@ -29,7 +29,10 @@ var ADSTAT_PROGS = [
   { key: 'B', label: '🌱 키우기' },
   { key: 'T', label: '전체' }
 ];
-var ADSTAT_COLS = ['광고비', '광고매출', '매출', 'ACOS%', 'TACOS%', 'TACOS 7일%'];
+var ADSTAT_COLS = ['광고비', '광고매출', '매출', 'ACOS%', 'TACOS%', 'TACOS 7일%', '클릭', '광고주문'];
+var ADSTAT_PROG_SHEETS = { N: '📈 신규', A: '📈 기존', B: '📈 키우기' };   // 프로그램마다 따로 보는 탭
+var ADSTAT_CAMP_HEADER = ['캠페인 (최근 30일)', '광고비', '광고매출', 'ACOS%', '클릭', '광고주문', '날 수'];
+var ADSTAT_CAMP_MAX = 40;
 var ADSTAT_NC = ADSTAT_COLS.length;
 var ADSTAT_HEADER = (function () {
   var h = ['날짜'];
@@ -129,7 +132,7 @@ function adStatBuild_(opts) {
   var byDay = {}, today = ymd_(new Date());
   var blank = function () {
     var o = {};
-    for (var p = 0; p < ADSTAT_PROGS.length; p++) o[ADSTAT_PROGS[p].key] = { cost: 0, ads: 0, ord: 0, rev: 0, camps: {} };
+    for (var p = 0; p < ADSTAT_PROGS.length; p++) o[ADSTAT_PROGS[p].key] = { cost: 0, ads: 0, ord: 0, ck: 0, rev: 0, camps: {} };
     return o;
   };
   for (var r = 0; r < led.rows.length; r++) {
@@ -137,8 +140,8 @@ function adStatBuild_(opts) {
     var o = byDay[x.d] || (byDay[x.d] = blank());
     var own = ownById[x.cid];
     var key = own ? adStatProgOfTrack_(own.track) : 'A';
-    o[key].cost += x.cost; o[key].ads += x.sales; o[key].ord += x.ord; o[key].camps[x.cid] = true;
-    o.T.cost += x.cost; o.T.ads += x.sales; o.T.ord += x.ord; o.T.camps[x.cid] = true;
+    o[key].cost += x.cost; o[key].ads += x.sales; o[key].ord += x.ord; o[key].ck += x.ck || 0; o[key].camps[x.cid] = true;
+    o.T.cost += x.cost; o.T.ads += x.sales; o.T.ord += x.ord; o.T.ck += x.ck || 0; o.T.camps[x.cid] = true;
   }
   var days = Object.keys(byDay).sort();
   for (var d = 0; d < days.length; d++) {
@@ -173,7 +176,7 @@ function adStatBuild_(opts) {
                ok.hasSales ? Math.round(g.rev) : '',
                adStatPct_(g.cost, g.ads),
                ok.hasSales ? adStatPct_(g.cost, g.rev) : '',
-               n ? adStatPct_(rc, rr) : '');
+               n ? adStatPct_(rc, rr) : '', g.ck, g.ord);
     }
     row.push(adSpendMature_(dk, today) ? '성숙' : '잠정', ok.hasSales ? '있음' : '');
     rows.push(row);
@@ -186,6 +189,7 @@ function adStatBuild_(opts) {
       for (var p2 = 0; p2 < ADSTAT_PROGS.length; p2++) {
         sh.getRange(2, adStatCol_(p2, 0) + 1, rows.length, 3).setNumberFormat('#,##0');
         sh.getRange(2, adStatCol_(p2, 3) + 1, rows.length, 3).setNumberFormat('0.0');
+        sh.getRange(2, adStatCol_(p2, 6) + 1, rows.length, 2).setNumberFormat('#,##0');
       }
     }
     sh.setFrozenColumns(1);
@@ -215,11 +219,117 @@ function adStatBuild_(opts) {
                     so, countKeys_(cps), nd]);
     }
   }
-  adStatCharts_(sh, rows.length, out);
+  // 프로그램 안에서 캠페인별로 — 최근 30일
+  out.camps = { N: [], A: [], B: [] };
+  var c30 = {}, from30 = wins[1][1];
+  for (var r2 = 0; r2 < led.rows.length; r2++) {
+    var x2 = led.rows[r2];
+    if (x2.d < from30 || x2.d > last) continue;
+    var own2 = ownById[x2.cid];
+    var key2 = own2 ? adStatProgOfTrack_(own2.track) : 'A';
+    var cc = c30[x2.cid] || (c30[x2.cid] = { key: key2, name: x2.name || (own2 && own2.name) || x2.cid,
+                                              cost: 0, ads: 0, ck: 0, ord: 0, days: {} });
+    cc.cost += x2.cost; cc.ads += x2.sales; cc.ck += x2.ck; cc.ord += x2.ord; cc.days[x2.d] = true;
+  }
+  for (var cid in c30) {
+    var e = c30[cid];
+    out.camps[e.key].push([e.name, Math.round(e.cost), Math.round(e.ads), adStatPct_(e.cost, e.ads),
+                           e.ck, e.ord, countKeys_(e.days)]);
+  }
+  for (var kk in out.camps) out.camps[kk].sort(function (a, b) { return b[1] - a[1]; });
+
+  // 그래프 탭은 하나씩 따로 시도한다 — 큰 통합문서에서는 시트 서비스가 이따금 '타임아웃' 을
+  // 던진다 (실측 2026-09-14). 한 탭이 실패해도 표와 나머지 탭은 남기고, 한 번은 바로 다시 해 본다.
+  SpreadsheetApp.flush();
+  out.failed = [];
+  adStatTry_(SHEET_ADCHART, out, function () { adStatCharts_(sh, rows.length, out); });
+  for (var p4 = 0; p4 < ADSTAT_PROGS.length; p4++) {
+    var key4 = ADSTAT_PROGS[p4].key;
+    if (!ADSTAT_PROG_SHEETS[key4]) continue;
+    (function (pi) { adStatTry_(ADSTAT_PROG_SHEETS[key4], out, function () { adStatProgTab_(sh, rows.length, out, pi); }); })(p4);
+  }
   log_('ads', 'INFO', '광고통계 — ' + rows.length + '일 (~' + led.last + ') · 매출 자료 ' + out.salesDays + '일' +
-       (out.salesLast ? ' (~' + out.salesLast + ')' : ''));
+       (out.salesLast ? ' (~' + out.salesLast + ')' : '') +
+       (out.failed.length ? ' · 못 만든 탭 ' + out.failed.join(', ') : ''));
   if (!quiet) toast_('광고통계 ' + rows.length + '일 · 그래프 갱신');
   return out;
+}
+
+/** 탭 하나 만들기를 두 번까지 — 시트 서비스 타임아웃은 대개 곧 풀린다 */
+function adStatTry_(label, out, fn) {
+  for (var t = 0; t < 2; t++) {
+    try { fn(); SpreadsheetApp.flush(); return true; }
+    catch (e) {
+      log_('ads', 'WARN', '광고통계 — ' + label + ' 탭 ' + (t ? '두 번째도 ' : '') + '실패: ' + String(e).substring(0, 150));
+      if (t) { out.failed.push(label); return false; }
+      Utilities.sleep(4000);
+    }
+  }
+}
+
+/** 그래프 하나를 탭에 앉힌다 — 만들다 죽어도 표는 남게 */
+function adStatPutChart_(csh, chart, row, colNo) {
+  try {
+    csh.insertChart(chart.setPosition(row, colNo, 0, 0).setOption('width', 620).setOption('height', 300).build());
+  } catch (e) { log_('ads', 'WARN', '그래프 생성 실패: ' + String(e).substring(0, 120)); }
+}
+
+/** 프로그램 하나만 따로 — 요약 · 캠페인별 표 왼쪽, 그래프 오른쪽 */
+function adStatProgTab_(ssh, n, st, pIdx) {
+  var prog = ADSTAT_PROGS[pIdx], key = prog.key;
+  var csh = ensureSheet_(ADSTAT_PROG_SHEETS[key], ADSTAT_SUM_HEADER);
+  var charts = csh.getCharts();
+  for (var i = 0; i < charts.length; i++) csh.removeChart(charts[i]);
+  csh.clear();
+  var W = ADSTAT_SUM_HEADER.length;
+  var pad = function (arr) { while (arr.length < W) arr.push(''); return arr; };
+  var rows = [
+    pad([prog.label + ' — 광고비 얼마 써서 얼마 벌었나']),
+    pad(['자료 기준', '원장 ~' + st.last + ' · 매출(하루치) ' + (st.salesLast ? '~' + st.salesLast + ' · ' + st.salesDays + '일' : '아직 없음')]),
+    pad(['읽는 법', 'ACOS = 광고비÷광고매출 · TACOS = 광고비÷매출(이 프로그램이 광고하는 SKU 의 전체 판매) · 최근 14일 광고매출은 잠정']),
+    ADSTAT_SUM_HEADER.slice()
+  ];
+  for (var s = 0; s < st.sum.length; s++) if (st.sum[s][1] === prog.label) rows.push(st.sum[s].slice());
+  var sumN = rows.length - 4;
+  rows.push(pad(['']));
+  var campHdrRow = rows.length + 1;
+  rows.push(pad(ADSTAT_CAMP_HEADER.slice()));
+  var camps = (st.camps && st.camps[key]) || [];
+  for (var c = 0; c < camps.length && c < ADSTAT_CAMP_MAX; c++) rows.push(pad(camps[c].slice()));
+  if (!camps.length) rows.push(pad(['(최근 30일에 이 프로그램의 지출이 없습니다)']));
+  csh.getRange(1, 1, rows.length, W).setValues(rows);
+  csh.getRange(1, 1).setFontWeight('bold').setFontSize(14);
+  csh.getRange(4, 1, 1, W).setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
+  csh.getRange(campHdrRow, 1, 1, W).setFontWeight('bold').setBackground('#1a1a2e').setFontColor('#ffffff');
+  if (sumN) { csh.getRange(5, 3, sumN, 3).setNumberFormat('#,##0'); csh.getRange(5, 6, sumN, 2).setNumberFormat('0.0'); }
+  if (camps.length) {
+    var cn = Math.min(camps.length, ADSTAT_CAMP_MAX);
+    csh.getRange(campHdrRow + 1, 2, cn, 2).setNumberFormat('#,##0');
+    csh.getRange(campHdrRow + 1, 4, cn, 1).setNumberFormat('0.0');
+  }
+  try { csh.setColumnWidth(1, 260); csh.setColumnWidth(2, 110); } catch (eW) {}
+  if (!n) return;
+
+  var col = function (cIdx) { return ssh.getRange(1, adStatCol_(pIdx, cIdx) + 1, n + 1, 1); };
+  var dateCol = ssh.getRange(1, 1, n + 1, 1);
+  var C = W + 2;                                  // 그래프는 표 오른쪽
+  adStatPutChart_(csh, csh.newChart().asComboChart()
+    .addRange(dateCol).addRange(col(0)).addRange(col(1)).addRange(col(5)).setNumHeaders(1)
+    .setOption('title', prog.label + ' — 하루 광고비 · 광고매출 · TACOS 7일')
+    .setOption('series', { 0: { type: 'bars', targetAxisIndex: 0 }, 1: { type: 'line', targetAxisIndex: 0 },
+                           2: { type: 'line', targetAxisIndex: 1, lineDashStyle: [4, 4] } })
+    .setOption('vAxes', { 0: { title: 'JPY' }, 1: { title: 'TACOS %' } })
+    .setOption('legend', { position: 'top' }), 1, C);
+  adStatPutChart_(csh, csh.newChart().asLineChart()
+    .addRange(dateCol).addRange(col(3)).addRange(col(4)).addRange(col(5)).setNumHeaders(1)
+    .setOption('title', prog.label + ' — ACOS · TACOS · TACOS 7일 (%)')
+    .setOption('legend', { position: 'top' }), 17, C);
+  adStatPutChart_(csh, csh.newChart().asComboChart()
+    .addRange(dateCol).addRange(col(6)).addRange(col(7)).setNumHeaders(1)
+    .setOption('title', prog.label + ' — 하루 클릭 · 광고주문')
+    .setOption('series', { 0: { type: 'bars', targetAxisIndex: 0 }, 1: { type: 'line', targetAxisIndex: 1 } })
+    .setOption('vAxes', { 0: { title: '클릭' }, 1: { title: '주문' } })
+    .setOption('legend', { position: 'top' }), 33, C);
 }
 
 /** 그래프 탭 — 요약 표 위, 그래프 아래. 그래프는 광고통계 탭의 열을 그대로 본다 */
@@ -256,10 +366,7 @@ function adStatCharts_(ssh, n, st) {
   var anchor = top.length + 2;
   var col = function (pIdx, cIdx) { return ssh.getRange(1, adStatCol_(pIdx, cIdx) + 1, n + 1, 1); };
   var dateCol = ssh.getRange(1, 1, n + 1, 1);
-  var put = function (chart, row, c) {
-    try { csh.insertChart(chart.setPosition(row, c, 0, 0).setOption('width', 620).setOption('height', 300).build()); }
-    catch (e) { log_('ads', 'WARN', '그래프 생성 실패: ' + String(e).substring(0, 120)); }
-  };
+  var put = function (chart, row, c) { adStatPutChart_(csh, chart, row, c); };
   // ① 프로그램마다 — 광고비(막대) · 광고매출(선) · TACOS 7일(오른쪽 축)
   for (var p = 0; p < ADSTAT_PROGS.length; p++) {
     var ch = csh.newChart().asComboChart()
@@ -304,7 +411,9 @@ function showAdCharts() {
     '최근 7일 (원장 ~' + r.last + ')\n' + lines.join('\n') + '\n\n' +
     '표 ' + r.days + '일 · 매출 자료 ' + r.salesDays + '일' +
     (r.salesDays ? '' : ' — 매출·TACOS 는 매일 03시 하루치 판매가 쌓이면 채워집니다') + '\n' +
-    '그래프는 ' + SHEET_ADCHART + ' 탭 아래쪽, 날짜별 숫자는 ' + SHEET_ADSTAT + ' 탭.\n' +
+    (r.failed && r.failed.length ? '⚠ 시트 서비스가 느려 못 만든 탭: ' + r.failed.join(', ') + ' — 잠시 뒤 다시 누르면 됩니다.\n' : '') +
+    '넷을 견주는 그래프는 ' + SHEET_ADCHART + ' 탭, 하나씩 따로는 ' + ADSTAT_PROG_SHEETS.N + ' · ' +
+    ADSTAT_PROG_SHEETS.A + ' · ' + ADSTAT_PROG_SHEETS.B + ' 탭(캠페인별 30일 표 포함), 날짜별 숫자는 ' + SHEET_ADSTAT + ' 탭.\n' +
     (kicked ? '판매 하루치: ' + kicked + ' (받히면 다음 갱신 때 매출·TACOS 가 찹니다)' : ''),
     ui_().ButtonSet.OK);
 }

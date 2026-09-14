@@ -163,7 +163,7 @@ function adSpendRead_() {
     var d = v[i][0] instanceof Date ? ymd_(v[i][0]) : String(v[i][0] || '').substring(0, 10);
     var cid = String(v[i][1] || '').trim();
     if (!d || !cid) continue;
-    out.rows.push({ d: d, cid: cid, im: Number(v[i][3]) || 0, ck: Number(v[i][4]) || 0,
+    out.rows.push({ d: d, cid: cid, name: String(v[i][2] || ''), im: Number(v[i][3]) || 0, ck: Number(v[i][4]) || 0,
                     cost: Number(v[i][5]) || 0, sales: Number(v[i][6]) || 0,
                     ord: Number(v[i][7]) || 0,
                     mature: String(v[i][9]) === '성숙' });
