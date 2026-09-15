@@ -13,8 +13,11 @@
  * 그래도 모델은 가끔 빠뜨리므로, 번역이 끝난 뒤 코드로 한 번 더 확인한다.
  * 원문에 있는 '2 이상의 수량' 이 번역문에 없으면 뒤에 붙인다.
  *
- * 1개(1個·1袋…)는 붙이지 않는다 — 없어도 뜻이 같고, 오히려 이름만 길어진다.
+ * 1個·1袋 처럼 하나짜리도 남긴다 — 원문이 적어 둔 수량은 그대로 지킨다.
  * 이미 번역문에 그 숫자가 있으면 건드리지 않는다.
+ *
+ * 다만 '1袋で約2L分'(한 봉지로 2L), '1袋100g'(한 봉지가 100g) 처럼 하나짜리가
+ * 수량이 아니라 설명인 자리가 있다. 뒤에 오는 글자로 가려낸다 (아래 descOnly_).
  */
 
 // 일본어 수량 단위 → 한국어 · 영문.
@@ -30,9 +33,29 @@ var QTY_UNITS = [
 ];
 
 /**
+ * 수량이 아니라 설명인 자리인가 — 바로 뒤에 오는 글자로 가려낸다.
+ *
+ *   ○○ 1本おまけ          덤으로 주는 것이지 이 상품의 개수가 아니다 (개수와 무관하게 제외)
+ *   1袋で約2L分            '한 봉지로 2L' — 쓰는 법 설명
+ *   1袋100g、3〜4人前      '한 봉지가 100g' — 단위당 규격
+ *   1箱 10カプセル         '한 상자에 10캡슐' — 뒤의 숫자가 진짜 수량이다
+ *
+ * 뒤에 숫자가 오는 경우는 하나짜리(1個·1袋…)에만 적용한다.
+ * 2 이상은 '2個1080円' 처럼 값이 뒤따르는 것이 보통이라 수량으로 본다.
+ */
+function descOnly_(n, after) {
+  var s = String(after || '');
+  if (/^[ 　]*おまけ/.test(s)) return true;
+  if (n !== 1) return false;
+  return /^[ 　]*(で|は|につき|あたり|当たり|[0-9０-９])/.test(s);
+}
+
+/**
  * 원문에서 살려야 할 수량 표기를 뽑는다.
  *
- * @return {Array} [{num:'6', ko:'6개', en:'6ea'}, ...] — 나온 순서, 2 이상만
+ * 1個·1袋 처럼 하나짜리도 뽑는다 — 원문이 적어 둔 것은 그대로 남긴다.
+ *
+ * @return {Array} [{num:'6', ko:'6개', en:'6ea'}, ...] — 나온 순서
  */
 function qtyTokens_(src) {
   var s = String(src == null ? '' : src);
@@ -47,12 +70,13 @@ function qtyTokens_(src) {
   var m;
   while ((m = re.exec(s)) !== null) {
     var n = parseInt(m[2], 10);
-    if (!(n >= 2)) continue;              // 1개는 붙이지 않는다
+    if (!(n >= 1)) continue;
     var ko = '', en = '';
     for (var i = 0; i < QTY_UNITS.length; i++) {
       if (QTY_UNITS[i][0] === m[3]) { ko = QTY_UNITS[i][1]; en = QTY_UNITS[i][2]; break; }
     }
     if (!ko) continue;
+    if (descOnly_(n, s.slice(re.lastIndex))) continue;
     var koText = String(n) + ko;
     var enText = (en === 'ea') ? String(n) + en : String(n) + ' ' + en;
     // 'N個セット' 는 '3개 세트' 로
