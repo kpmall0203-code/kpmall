@@ -88,7 +88,7 @@ function naCycle() {
  * @return {Object}
  */
 function naCycleRun_(opts) {
-  var out = { blocked: '', pol: null, live: 0, guard: 0, guardWhy: '', retried: 0, gaveUp: 0,
+  var out = { blocked: '', pol: null, live: 0, guard: 0, guardWhy: '', retried: 0, gaveUp: 0, caughtUp: 0, potUp: 0,
               raised: 0, lowRel: 0, profit: 0, watch: 0, stopped: 0, handed: 0, resumed: 0, stoppedOld: 0,
               sent: false, sentStop: 0, sentResume: 0, sentBid: 0, left: 0, perfLast: '', matureTo: '' };
   var t0 = Date.now();
@@ -127,6 +127,11 @@ function naCycleRun_(opts) {
   naPotUpdate_(rows, fams, famAt, perf, ctx);
 
   var stopIds = [], bidJobs = [], resumeIds = [];
+  // 설정이 바뀌면 도는 것도 따라간다 — 판돈은 키우고, 허용 입찰을 다시 셈해 시작 입찰이
+  // 그 아래면 올린다. 없으면 설정을 올려도 새로 시작하는 것에만 걸리고 도는 117개는 옛 값에 남는다
+  var cu = naPolicyCatchUp_(rows, work, fams, famAt, pol, today);
+  for (var cj = 0; cj < cu.jobs.length; cj++) bidJobs.push(cu.jobs[cj]);
+  out.caughtUp = cu.jobs.length; out.potUp = cu.potUp;
   for (var w = 0; w < work.length; w++) {
     if (Date.now() - t0 > NA_SOFT_MS) { out.left = work.length - w; break; }
     var ri = work[w];
@@ -220,10 +225,47 @@ function naCycleRun_(opts) {
   log_('newads', 'INFO', '매일 주기 — 도는 것 ' + out.live + ' · 보호 ' + out.guard +
        ' · 중단 ' + out.stopped + ' · 수익 ' + out.profit + ' · 관찰 ' + out.watch +
        ' · 인계 ' + out.handed + ' · 인상 ' + out.raised + ' · 재개 ' + out.resumed +
+       (out.caughtUp || out.potUp ? ' · 설정 따라잡기(입찰 ' + out.caughtUp + '/판돈 ' + out.potUp + ')' : '') +
        (out.stoppedOld ? ' · 옛광고멈춤 ' + out.stoppedOld : '') +
        (out.sent ? ' · 보냄(멈춤 ' + out.sentStop + '/재개 ' + out.sentResume + '/입찰 ' + out.sentBid + ')'
                  : (pol.canAuto ? ' · 보낼 것 없음' : ' · 모의')) +
        (out.left ? ' · 남음 ' + out.left : ''));
+  return out;
+}
+
+/**
+ * 설정 따라잡기. 도는 줄(소액운영·관찰·수익운영)마다
+ *   허용 = min(최대 유효입찰, G × q × 이익보존계수) 를 다시 셈해 적고,
+ *   목표 = 허용 × 시작 비율 (아마존 최소 입찰 이상) 보다 지금 입찰이 낮으면 목표까지 올린다.
+ * 상품군 판돈은 min(상한, 대표 G × 탐색배수) 가 지금 값보다 크면 키운다 (줄이지는 않는다 —
+ * 도는 상품군의 판돈을 줄이면 이미 쓴 돈 때문에 곧바로 멈춘다).
+ * 올린 줄은 [다음평가일] 을 사흘 뒤로 — 탐색 조정이 같은 날 또 올리지 않게.
+ * @return {{jobs:Array, potUp:number}}
+ */
+function naPolicyCatchUp_(rows, work, fams, famAt, pol, today) {
+  var out = { jobs: [], potUp: 0 };
+  for (var w = 0; w < work.length; w++) {
+    var r = rows[work[w]];
+    var st = String(r[NA_I_STATE] || '');
+    if (st !== NAS_PROBE && st !== NAS_WATCH && st !== NAS_PROFIT) continue;
+    var G = Number(r[NA_I_G]) || 0, q = (Number(r[NA_I_Q]) || 0) / 100;
+    if (!(G > 0 && q > 0)) continue;
+    var fam = fams[famAt[String(r[NA_I_FAM] || '').trim()]];
+    if (fam && String(r[NA_I_REP]) === 'O') {
+      var pot = Math.min(pol.famPot, Math.round(G * pol.famMult));
+      if (pot > (Number(fam[NA_F_POT]) || 0)) { fam[NA_F_POT] = pot; out.potUp++; }
+    }
+    var cap = G * q * pol.beta;
+    if (pol.maxBid > 0) cap = Math.min(cap, pol.maxBid);
+    cap = Math.round(cap * 100) / 100;
+    if (Number(r[NA_I_CAP]) !== cap) r[NA_I_CAP] = cap;
+    var target = Math.max(NA_MIN_BID, Math.floor(cap * pol.startFrac * 100) / 100);
+    var bid = Number(r[NA_I_BID]) || 0;
+    if (!String(r[NA_I_GID] || '').trim() || bid + 0.005 >= target) continue;
+    out.jobs.push({ gid: String(r[NA_I_GID] || ''), to: target, sku: String(r[NA_I_SKU] || '').trim(), ri: work[w] });
+    r[NA_I_WHY] = '설정 따라잡기 — 입찰 ¥' + bid + ' → ¥' + target + ' (허용 ¥' + cap + ' × 시작 비율 ' + pol.startFrac + ')';
+    r[NA_I_NEXT] = naPlusDays_(today, NA_RAISE_EVERY_D);
+  }
   return out;
 }
 
