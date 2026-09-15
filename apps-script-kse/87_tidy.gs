@@ -50,6 +50,9 @@ function 빈행_제거() {
       : '지울 빈 행이 없습니다.');
 }
 
+// 번역이 들어가는 시트 — 상품명 칸이 있는 곳
+var TRANSLATE_SHEETS = [SHEET_ORDERS, SHEET_ERROR, SHEET_PICK, SHEET_SHIP];
+
 // ── 번역 채우기 ─────────────────────────────────────────────────────────
 //
 // 구글 번역이 간헐적으로 실패해 한국어가 안 붙는 행이 생긴다.
@@ -133,10 +136,91 @@ function 번역_채우기_(name) {
   return { rows: fixedRows, lines: fixedLines };
 }
 
+// ── 수량 표기 되살리기 ──────────────────────────────────────────────────
+//
+// 번역이 상품명 뒤쪽의 수량·세트를 빠뜨린 행을 고친다 ('… 50g' → '… 50g 6개').
+// 새로 번역하지 않고 원문과 견줘 빠진 것만 붙이므로 AI 를 부르지 않는다 (73_qty.gs).
+
+/** 시트 하나의 수량 표기를 되살린다 */
+function 수량표기_보정_(name) {
+  var sh = SpreadsheetApp.getActive().getSheetByName(name);
+  if (!sh || sh.getLastRow() < 2) return { rows: 0, lines: 0 };
+
+  var sep = getConfig().상품명구분자;
+  var sepStr = (sep === undefined || sep === null) ? ' / ' : String(sep);
+  var n = sh.getLastRow() - 1;
+  var rng = sh.getRange(2, 1, n, COL_COUNT);
+  var vals = rng.getValues();
+  var fixedRows = 0, fixedLines = 0, touched = false;
+
+  for (var i = 0; i < n; i++) {
+    var v = vals[i];
+    var srcs = String(v[COL.TITLE_EN - 1] || '').split('\n');
+    var kses = String(v[COL.TITLE_KSE - 1] || '').split('\n');
+    if (!String(v[COL.TITLE_EN - 1] || '').trim()) continue;
+
+    var g = null;
+    var raw = String(v[COL.RAW - 1] || '');
+    if (raw) { try { g = JSON.parse(raw); } catch (e) { g = null; } }
+
+    var rowFixed = false;
+    for (var j = 0; j < srcs.length; j++) {
+      var src = String(srcs[j] || '').trim();
+      var kse = String(kses[j] || '').trim();
+      if (!src || !kse) continue;
+
+      // KSE상품명은 '한국어 + 구분자 + 원문' 이다. 뒤의 원문을 떼고 한국어만 본다.
+      var tail = sepStr + sanitize_(src);
+      if (kse.length <= tail.length || kse.slice(-tail.length) !== tail) continue;
+      var ko = kse.slice(0, kse.length - tail.length);
+
+      var koFix = keepQty_(src, ko, 'ko');
+      if (koFix === ko) continue;
+
+      kses[j] = kseTitle_(koFix, src, sep);
+      if (g && g.items && g.items[j]) {
+        g.items[j].titleKo = koFix;
+        if (g.items[j].titleEng) {
+          g.items[j].titleEng = keepQty_(src, g.items[j].titleEng, 'en');
+        }
+      }
+      fixedLines++;
+      rowFixed = true;
+    }
+
+    if (rowFixed) {
+      v[COL.TITLE_KSE - 1] = kses.join('\n');
+      if (g) v[COL.RAW - 1] = JSON.stringify(g);
+      fixedRows++;
+      touched = true;
+    }
+  }
+
+  if (touched) {
+    rng.setValues(vals);
+    SpreadsheetApp.flush();
+  }
+  return { rows: fixedRows, lines: fixedLines };
+}
+
+function 수량표기_보정() {
+  var out = [];
+  var lines = 0;
+  TRANSLATE_SHEETS.forEach(function (name) {
+    var r = 수량표기_보정_(name);
+    lines += r.lines;
+    if (r.lines) out.push('  ' + name + ' — ' + r.rows + '행 / ' + r.lines + '개 상품명');
+  });
+  if (lines) log_('정리', '수량 표기 되살리기 ' + lines + '개 상품명');
+  SpreadsheetApp.getUi().alert(
+    lines ? '번역에서 빠져 있던 수량 표기 ' + lines + '개를 되살렸습니다.\n\n' + out.join('\n')
+      : '수량 표기가 빠진 상품명이 없습니다.');
+}
+
 function 번역_채우기() {
   var out = [];
   var lines = 0;
-  [SHEET_ORDERS, SHEET_ERROR, SHEET_PICK, SHEET_SHIP].forEach(function (name) {
+  TRANSLATE_SHEETS.forEach(function (name) {
     var r = 번역_채우기_(name);
     lines += r.lines;
     if (r.lines) out.push('  ' + name + ' — ' + r.rows + '행 / ' + r.lines + '개 상품명');
@@ -162,10 +246,14 @@ function 전체_정리() {
   msg.push('번호 서식 — ' + zeros + '칸 되돌림');
 
   var lines = 0;
-  [SHEET_ORDERS, SHEET_ERROR, SHEET_PICK, SHEET_SHIP].forEach(function (name) {
+  TRANSLATE_SHEETS.forEach(function (name) {
     lines += 번역_채우기_(name).lines;
   });
   msg.push('번역 채우기 — ' + lines + '개 상품명');
+
+  var qty = 0;
+  TRANSLATE_SHEETS.forEach(function (name) { qty += 수량표기_보정_(name).lines; });
+  msg.push('수량 표기 되살리기 — ' + qty + '개 상품명');
 
   msg.push('[' + SHEET_ORDERS + '] 정렬 — ' + 주문_정렬_() + '행 (같은 상품끼리)');
   msg.push('[' + SHEET_ERROR + '] 정렬 — ' + 오류확인_정렬_() + '행 (오류 유형별)');

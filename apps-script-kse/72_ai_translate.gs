@@ -42,18 +42,22 @@ function titlePrompt_() {
     '- 브랜드명은 한국에서 쓰는 표기를 씁니다 (TAMBURINS → 탬버린즈, ' +
     'ROUND LAB → 라운드랩, VitaHEIM → 비타하임). 모르는 브랜드는 원문을 그대로 둡니다.\n' +
     '- 용량·수량·개수는 반드시 살립니다 (50ml, 30粒, 5個 → 5개, ×2 → 2개).\n' +
+    '- **맨 뒤에 붙은 수량·세트를 특히 빠뜨리지 마십시오.** 상품명 끝의 「6個」「3個セット」' +
+    '「10箱」 은 몇 개들이로 파는지를 말하는 자리라, 빠지면 통관 수량이 틀어집니다. ' +
+    '앞의 용량과 뒤의 개수가 둘 다 있으면 둘 다 적습니다 (5g×10個入り … 6個 → 5g 10개입 6개).\n' +
     '- 일본어 상품명에 오타가 있어도 (ランンドリーユー) 뜻이 통하게 옮깁니다.\n' +
     '- **모르는 상품명을 비슷한 유명 상품으로 바꾸지 않습니다.** 가타카나 상품명은 소리대로 옮깁니다 ' +
     '(ビチョビ → 비쵸비. 오리온 과자라고 초코송이로 바꾸면 틀립니다).\n' +
     '- 항목에 terms 가 있으면 그 원문은 **반드시** 적힌 ko / en 표기로 옮깁니다 (사람이 정한 사전입니다).\n' +
     '- [並行輸入品] 같은 유통 표시는 뺍니다. 광고 문구도 뺍니다.\n' +
-    '- 40자 안쪽으로 짧게. 문장이 아니라 품목명입니다.\n\n' +
+    '- 60자 안쪽. 문장이 아니라 품목명입니다. 길이를 맞추려고 수량·세트를 버리지 않습니다 — ' +
+    '버릴 것은 광고 문구와 유통 표시입니다.\n\n' +
     '■ en — 통관용 영문명\n' +
     '- **영문·숫자·공백과 . _ - + ( ) / & % , : # 만** 씁니다. ' +
     '한글·한자·가나를 절대 넣지 않고, 대괄호 [ ] 와 따옴표도 쓰지 않습니다.\n' +
     '- 품목을 알 수 있는 일반명으로 씁니다 (Perfume 11ml, Vitamin C Tablets 20ea).\n' +
     '- 브랜드는 로마자 표기를 씁니다 (탬버린즈 → TAMBURINS).\n' +
-    '- 40자 안쪽.\n\n' +
+    '- 60자 안쪽. 수량은 한국어와 같게 적습니다 (6ea, 3 boxes set).\n\n' +
     '■ 보기\n' +
     '입력: TAMBURINS タンバリンズ パフューム サマーテイルズ 11ml｜韓国コスメ [並行輸入品]\n' +
     '  ko: 탬버린즈 퍼퓸 서머테일즈 11ml\n' +
@@ -64,6 +68,12 @@ function titlePrompt_() {
     '입력: ランンドリーユー ソフトボディグローブ クリーン 23ml 5個 [並行輸入品]\n' +
     '  ko: 런드리유 소프트 바디글러브 클린 23ml 5개\n' +
     '  en: Laundry You Soft Body Glove Clean 23ml 5ea\n' +
+    '입력: オットゥギ ジンラーメン スティック 辛口 5g×10個入り 50g ラーメン 6個 [並行輸入品]\n' +
+    '  ko: 오뚜기 진라면 스틱 매운맛 5g 10개입 50g 6개\n' +
+    '  en: Ottogi Jin Ramen Stick Hot 5g 10ea 50g 6ea\n' +
+    '입력: クリスタルライト ピンクレモネード 82g(13.6g×6袋) 3個セット｜粉末ドリンク [並行輸入品]\n' +
+    '  ko: 크리스탈라이트 핑크레모네이드 82g 13.6g 6포 3개 세트\n' +
+    '  en: Crystal Light Pink Lemonade 82g 13.6g 6packs 3ea set\n' +
     '입력: ビチョビ125g2箱 5個お菓子小包装 韓国ビスケット クッキー オリオン 韓国お土産  (terms: ビチョビ → 비쵸비 / Bichobi)\n' +
     '  ko: 오리온 비쵸비 125g 2박스 5개입 과자\n' +
     '  en: Orion Bichobi Biscuit 125g 2 Boxes 5ea\n\n' +
@@ -174,7 +184,11 @@ function translateMany_(texts, cfg) {
         if (!r || !r.ko) return;
         // 통관영문명은 영문·숫자만 받는다 — 안 되는 글자만 떼어낸다
         var en = isAsciiSafe_(r.en) ? r.en : asciiClean_(r.en);
-        map[item.text] = { ko: String(r.ko), en: en };
+        // 모델이 뒤쪽 수량을 빠뜨렸으면 되살린다 (73_qty.gs)
+        map[item.text] = {
+          ko: keepQty_(item.text, String(r.ko), 'ko'),
+          en: keepQty_(item.text, en, 'en')
+        };
         _trCache['ai ' + item.text] = map[item.text];
         aiCount++;
       });
@@ -196,6 +210,7 @@ function translateMany_(texts, cfg) {
     if (Date.now() - t0 > budget) { skipped++; return; }
     var tr = translateTitle_(s);
     if (tr.ko) {
+      tr = { ko: keepQty_(s, tr.ko, 'ko'), en: keepQty_(s, tr.en, 'en') };
       map[s] = tr;
       _trCache['ai ' + s] = tr;
       gCount++;
@@ -220,7 +235,8 @@ function 번역_테스트() {
     'VitaHEIM ビタハイム マルチビタミン 発泡ビタミン（オレンジ味）20錠入り',
     'ランンドリーユー ソフトボディグローブ クリーン 23ml 5個 [並行輸入品]',
     'ROUND LAB 1025 独島アンプル/低分子/保湿アンプル 45g クリア',
-    'オレオ ホットク味 300g(50g×6袋) 韓国お菓子 BTSデザインパッケージ'
+    'オレオ ホットク味 300g(50g×6袋) 韓国お菓子 BTSデザインパッケージ',
+    'オットゥギ ジンラーメン スティック 辛口 5g×10個入り 50g ラーメン 6個 [並行輸入品]'
   ];
 
   _trCache = {};
