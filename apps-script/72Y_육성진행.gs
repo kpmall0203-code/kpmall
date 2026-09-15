@@ -211,9 +211,17 @@ function openAdGrowInputs() {
   }
   if (dirty) sh.getRange(2, 1, v.length, width).setValues(v);
 
+  // 손익분기CPA · CPC상한 · 시작입찰 · 주간광고비도 여기서 바로 낸다 — 승인하기 전에
+  // "이 값이면 얼마를 부르고 한 주에 얼마를 쓰나" 를 표에서 보게. 시트만 읽는 계산이다.
+  var calc = null;
+  try { calc = adGrowCalcAll_(true); }
+  catch (eC) { log_('ads', 'WARN', '키우기 계산 실패: ' + String(eC).substring(0, 120)); }
+
   showSheet_(SHEET_ADGROW);
   ui_().alert('② 값 확인하고 승인',
     '반드시 볼 것은 셋입니다 — 마진율 · ' + AG_CVR_NAME + ' · 주간허용손해.\n' +
+    (calc ? '그 셋으로 손익분기CPA · CPC상한 · 시작입찰 · 주간광고비를 냈습니다 — 준비됨 ' + calc.ok +
+            (calc.bad ? ' · 값이 모자란 줄 ' + calc.bad + ' (사유 칸 참고)' : '') + '.\n' : '') +
     '나머지는 기본값이 있습니다 (손해배수 ' + ADGROW_MULT_DEFAULT + ' · 최대 기간 ' +
     ADGROW_MAXDAYS_DEFAULT + '일 · 누적 한도 없음).\n\n' +
     (filled.length ? '빈칸에 추천값을 채웠습니다 (근거는 [사유] 칸):\n   ' +

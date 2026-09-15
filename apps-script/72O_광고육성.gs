@@ -382,10 +382,13 @@ function adGrowCalcAll_(quiet) {
     // 이미 돌고 있는 줄은 상태 점검이 [단계]를 쓴다. 아직 안 만든 줄만 여기서 적는다
     if (!String(v[i][AG_RESULT]).trim()) {
       v[i][AG_VERDICT] = '준비됨';
+      // 추천값 근거(마진율 출처 등)는 승인 전에 봐야 하는 말이라 뒤에 남긴다
+      var prevWhy = String(v[i][AG_WHY] || '');
       v[i][AG_WHY] = '입찰 ¥' + c.bid + ' (상한 ¥' + (Math.round(c.cap * 10) / 10) +
                      ' × 손해배수 ' + (Number(v[i][AG_MULT]) || ADGROW_MULT_DEFAULT) + ') · ' +
                      '주간 ¥' + c.weekly.toLocaleString() + ' 써서 ¥' +
-                     Number(v[i][AG_LOSS]).toLocaleString() + ' 를 잃는다';
+                     Number(v[i][AG_LOSS]).toLocaleString() + ' 를 잃는다' +
+                     (/^추천값/.test(prevWhy) ? ' | ' + prevWhy : '');
     }
   }
   sh.getRange(2, 1, v.length, ADGROW_HEADER.length).setValues(v);
