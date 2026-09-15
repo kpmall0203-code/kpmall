@@ -150,9 +150,10 @@ function nameRuleDefect_(text) {
     return '상호로 보이는 낱말 (' + org.words.join(', ') + ')';
   }
   // 한자·가나 기관 키워드 (株式会社, ○○病院, ○○ストア …)
-  var cjkOrg = findOrgSpans_(tr);
-  if (cjkOrg.length) {
-    return '기관·법인명 (' + cjkOrg.map(function (x) { return x.word; }).join(', ') + ')';
+  // [주소낱말] 에서 '애매' 로 둔 낱말은 여기서 확정하지 않고 AI 판단으로 넘긴다
+  var cjkOrg = findOrgHit_(tr);
+  if (cjkOrg && cjkOrg.level === LV_NO) {
+    return '기관·법인명 (' + cjkOrg.words.join(', ') + ')';
   }
 
   // 로마자 이름은 풀네임이어야 한다

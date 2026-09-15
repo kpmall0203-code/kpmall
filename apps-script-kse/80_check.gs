@@ -16,6 +16,10 @@ var LV_MAYBE = '애매';
 // ── 기관·법인 키워드 ────────────────────────────────────────────────────
 // 개인 수취인이 아니라 회사·관공서·학교 등으로 보이는 주소를 걸러낸다.
 // 부분일치로 본다 ('店' 하나로 支店·本店·商店·○○店 을 모두 잡는다).
+//
+// 아래 세 목록은 [주소낱말] 시트를 처음 만들 때 부어 넣는 기본값이다.
+// 시트가 생긴 뒤로는 시트가 원본이므로, 낱말을 더하거나 뺄 때 여기를 고치지 않는다
+// (메뉴: 설정 > 주소 낱말 목록 열기). 자세한 것은 86_addrword.gs.
 var ORG_KEYWORDS = [
   // 회사·법인
   '株式会社', '(株)', '㈱', '有限会社', '合同会社', '合名会社', '合資会社',
@@ -81,12 +85,13 @@ var NAME_ORG_WEAK = [
 function nameOrgWords_(text) {
   var t = String(text || '').toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim();
   if (!t) return null;
+  var list = addrWords_();
   var words = t.split(' ');
   var strong = [], weak = [];
   words.forEach(function (w) {
     if (!w) return;
-    if (NAME_ORG_WORDS.indexOf(w) >= 0 && strong.indexOf(w) < 0) strong.push(w);
-    else if (NAME_ORG_WEAK.indexOf(w) >= 0 && weak.indexOf(w) < 0) weak.push(w);
+    if (list.nameNo.indexOf(w) >= 0 && strong.indexOf(w) < 0) strong.push(w);
+    else if (list.nameMaybe.indexOf(w) >= 0 && weak.indexOf(w) < 0) weak.push(w);
   });
   if (strong.length) return { level: LV_NO, words: strong };
   // 약한 낱말만으로는, 두 개 이상 겹칠 때만 의심한다 (THE PACIFIC ROOM 류)
@@ -94,17 +99,21 @@ function nameOrgWords_(text) {
   return null;
 }
 
-function orgKeywords_() {
-  var extra = String(getConfig().기관키워드_추가 || '')
-    .split(',').map(function (s) { return s.trim(); })
-    .filter(function (s) { return s; });
-  return ORG_KEYWORDS.concat(extra);
-}
-
-/** 문자열에서 기관 키워드가 나타나는 구간을 찾는다 → [{start, len, word}] */
-function findOrgSpans_(text) {
-  // 구간 찾기는 83_ban.js 의 findSpans_ 와 같은 규칙을 쓴다
-  return findSpans_(text, orgKeywords_());
+/**
+ * 문자열에서 기관·법인 낱말을 찾는다 → {level, spans, words} 또는 null
+ *
+ * 낱말과 판정은 [주소낱말] 시트에서 온다. 확정('아님') 낱말을 먼저 보고,
+ * 없으면 애매 낱말을 본다 — 확정이 하나라도 걸리면 그것이 사유다.
+ * 구간 찾기는 83_ban.gs 의 findSpans_ 와 같은 규칙을 쓴다.
+ */
+function findOrgHit_(text) {
+  var list = addrWords_();
+  var word = function (x) { return x.word; };
+  var no = findSpans_(text, list.orgNo);
+  if (no.length) return { level: LV_NO, spans: no, words: no.map(word) };
+  var maybe = findSpans_(text, list.orgMaybe);
+  if (maybe.length) return { level: LV_MAYBE, spans: maybe, words: maybe.map(word) };
+  return null;
 }
 
 // ── 전화번호 규칙 ───────────────────────────────────────────────────────
@@ -236,7 +245,7 @@ function 검사_수집_(rows, opts, cfg, nameRows) {
 
   // ── 주소: 배송대행지 → 기관·법인 키워드 ──────────────────────────────
   if (opts.addr) {
-    var fwWords = forwardWords_(cfg);
+    var fwWords = forwardWords_();
     rows.forEach(function (r) {
       var addr = String(r.v[COL.ADDRESS - 1]);
       var recv = String(r.v[COL.RECEIVER - 1]);
@@ -249,15 +258,15 @@ function 검사_수집_(rows, opts, cfg, nameRows) {
         counts.addr++;
         return;
       }
-      var spans = findOrgSpans_(addr);
-      var nameSpans = findOrgSpans_(recv);
-      if (spans.length) {
-        add(r.row, COL.ADDRESS, LV_NO,
-          '기관·법인 주소 (' + spans.map(function (x) { return x.word; }).join(',') + ')', spans);
+      var orgAddr = findOrgHit_(addr);
+      var orgName = orgAddr ? null : findOrgHit_(recv);
+      if (orgAddr) {
+        add(r.row, COL.ADDRESS, orgAddr.level,
+          '기관·법인 주소 (' + orgAddr.words.join(',') + ')', orgAddr.spans);
         counts.addr++;
-      } else if (nameSpans.length) {
-        add(r.row, COL.RECEIVER, LV_NO,
-          '기관·법인명 (' + nameSpans.map(function (x) { return x.word; }).join(',') + ')', nameSpans);
+      } else if (orgName) {
+        add(r.row, COL.RECEIVER, orgName.level,
+          '기관·법인명 (' + orgName.words.join(',') + ')', orgName.spans);
         counts.addr++;
       }
     });

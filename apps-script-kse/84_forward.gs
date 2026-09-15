@@ -12,6 +12,9 @@
  * 반대로 회사 주소여도 배송대행지가 아닐 수 있다.
  */
 
+// 아래 두 목록은 [주소낱말] 시트를 처음 만들 때 부어 넣는 기본값이다.
+// 시트가 생긴 뒤로는 시트가 원본이다 (메뉴: 설정 > 주소 낱말 목록 열기).
+
 // 상호·서비스명이 드러나는 것 — 확정해서 뺀다
 var FORWARD_STRONG = [
   '転送コム', 'tenso', 'Tenso', 'TENSO',
@@ -35,15 +38,10 @@ var FORWARD_WEAK = [
   'c/o', 'C/O', 'care of', '転送', '転居'
 ];
 
-/** [설정] 의 추가 낱말까지 합친 목록 */
-function forwardWords_(cfg) {
-  var extra = String((cfg || getConfig()).배송대행지_추가 || '')
-    .split(',').map(function (s) { return s.trim(); })
-    .filter(function (s) { return s; });
-  return {
-    strong: FORWARD_STRONG.concat(extra),
-    weak: FORWARD_WEAK
-  };
+/** [주소낱말] 시트의 배송대행지 낱말 ([설정] 의 추가분까지 합쳐서 온다) */
+function forwardWords_() {
+  var list = addrWords_();
+  return { strong: list.fwdStrong, weak: list.fwdWeak };
 }
 
 /**
