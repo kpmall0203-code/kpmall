@@ -43,7 +43,7 @@ var ADSTAT_HEADER = (function () {
   return h;
 })();
 var ADSTAT_ROLL_DAYS = 7;
-var ADSTAT_SUM_HEADER = ['구간', '프로그램', '광고비', '광고매출', '매출', 'ACOS%', 'TACOS%', '광고주문', '캠페인 수', '매출 자료 있는 날'];
+var ADSTAT_SUM_HEADER = ['구간', '프로그램', '광고비', '광고매출', '매출 (자료 있는 날만)', 'ACOS%', 'TACOS% (그 날들만)', '광고주문', '캠페인 수', '매출 자료 있는 날'];
 
 /** 계획 표의 [트랙] → 프로그램 키 */
 function adStatProgOfTrack_(track) {

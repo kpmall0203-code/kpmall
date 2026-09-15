@@ -86,6 +86,7 @@ function buildPriceMenu_() {
         .addItem('① 광고할 물건 가져오기 (읽고 셈하기 · 돈 안 나감)', 'naImport')
         .addItem('② 배분대로 광고 시작 (모드가 자동운영이면 돈이 나갑니다)', 'naRun')
         .addItem('③ 매일 주기 지금 한 번 (보호 · 판정 · 인계)', 'naCycle')
+        .addItem('④ 아마존이 내보내고 있나 — 서빙 상태 점검 (읽기만)', 'naServingCheck')
         .addSeparator()
         .addItem('⏰ 정기 작업 걸기 — 광고 걸음 13개를 매일 시각에 (한 번만)', 'setupAdGrowTriggers')
         .addItem('처음 설치 (새 파일에 표 만들기)', 'setupNewAds'))
