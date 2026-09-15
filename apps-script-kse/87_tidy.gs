@@ -140,6 +140,11 @@ function 번역_채우기_(name) {
 //
 // 번역이 상품명 뒤쪽의 수량·세트를 빠뜨린 행을 고친다 ('… 50g' → '… 50g 6개').
 // 새로 번역하지 않고 원문과 견줘 빠진 것만 붙이므로 AI 를 부르지 않는다 (73_qty.gs).
+//
+// 이 시트의 한국어 상품명을 보고 실제로 물건을 담으므로, 수량은 사람이 따로 눌러서
+// 채우는 것이 아니라 늘 들어 있어야 한다. 그래서 메뉴에 두지 않고
+// 자료를 올릴 때마다 저절로 돈다 (40_merge.gs 끝). 새로 번역되는 상품명은
+// 번역 단계에서 이미 붙으므로(72_ai_translate.gs), 이것은 예전 행과 손댄 행을 위한 것이다.
 
 /** 시트 하나의 수량 표기를 되살린다 */
 function 수량표기_보정_(name) {
@@ -203,18 +208,15 @@ function 수량표기_보정_(name) {
   return { rows: fixedRows, lines: fixedLines };
 }
 
-function 수량표기_보정() {
-  var out = [];
+/**
+ * 모든 시트의 수량 표기를 맞춘다 — 사람이 부르는 것이 아니라 자료를 올릴 때 저절로 돈다.
+ * @return {number} 손본 상품명 수
+ */
+function 수량표기_보정_모두_() {
   var lines = 0;
-  TRANSLATE_SHEETS.forEach(function (name) {
-    var r = 수량표기_보정_(name);
-    lines += r.lines;
-    if (r.lines) out.push('  ' + name + ' — ' + r.rows + '행 / ' + r.lines + '개 상품명');
-  });
-  if (lines) log_('정리', '수량 표기 되살리기 ' + lines + '개 상품명');
-  SpreadsheetApp.getUi().alert(
-    lines ? '번역에서 빠져 있던 수량 표기 ' + lines + '개를 되살렸습니다.\n\n' + out.join('\n')
-      : '수량 표기가 빠진 상품명이 없습니다.');
+  TRANSLATE_SHEETS.forEach(function (name) { lines += 수량표기_보정_(name).lines; });
+  if (lines) log_('상품명번역', '수량 표기 되살리기 ' + lines + '개 상품명');
+  return lines;
 }
 
 function 번역_채우기() {
@@ -250,10 +252,6 @@ function 전체_정리() {
     lines += 번역_채우기_(name).lines;
   });
   msg.push('번역 채우기 — ' + lines + '개 상품명');
-
-  var qty = 0;
-  TRANSLATE_SHEETS.forEach(function (name) { qty += 수량표기_보정_(name).lines; });
-  msg.push('수량 표기 되살리기 — ' + qty + '개 상품명');
 
   msg.push('[' + SHEET_ORDERS + '] 정렬 — ' + 주문_정렬_() + '행 (같은 상품끼리)');
   msg.push('[' + SHEET_ERROR + '] 정렬 — ' + 오류확인_정렬_() + '행 (오류 유형별)');

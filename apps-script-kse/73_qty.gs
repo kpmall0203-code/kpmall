@@ -88,6 +88,37 @@ function qtyTokens_(src) {
   return out;
 }
 
+// 용량·부피 단위 — 한국어 표기는 원문 그대로 쓴다 (g, ml 은 번역할 것이 없다)
+var SIZE_RE = /(\d+(?:[.,]\d+)?)[ 　]*(kg|mg|g|ml|mL|L|ℓ|cc|oz)(?![A-Za-z])/g;
+
+/**
+ * 용량이 통째로 빠진 번역을 메운다.
+ *
+ * 한국어 상품명을 보고 물건을 담으므로 '300g' 인지 '50g' 인지가 수량만큼 중요하다.
+ * 번역에 용량이 하나도 없는데 원문에는 있을 때만 앞쪽 하나를 붙인다 —
+ * 번역에 용량이 이미 있으면 (0.5oz/15ml 처럼 같은 값을 두 단위로 적은 것 등)
+ * 건드리지 않는다. 덜 붙이는 쪽이 안전하다.
+ */
+function keepSize_(src, text) {
+  var t = String(text == null ? '' : text).trim();
+  if (!t) return t;
+  SIZE_RE.lastIndex = 0;
+  if (SIZE_RE.test(t)) return t;            // 번역에 용량이 이미 있다
+
+  var s = String(src == null ? '' : src);
+  try { s = s.normalize('NFKC'); } catch (e) { /* 그대로 */ }
+  s = s.replace(/[\[【(（][^\[\]【】()（）]*?(並行輸入品?|輸入)[^\[\]【】()（）]*?[\]】)）]/g, ' ');
+
+  SIZE_RE.lastIndex = 0;
+  var m;
+  while ((m = SIZE_RE.exec(s)) !== null) {
+    // '2L分'(2리터 분량) 처럼 쓰는 법을 말하는 자리는 뺀다
+    if (/^[ 　]*(分|相当|につき|あたり|当たり)/.test(s.slice(SIZE_RE.lastIndex))) continue;
+    return t + ' ' + m[1] + m[2];
+  }
+  return t;
+}
+
 /**
  * 번역문에 원문의 수량이 남아 있는지 보고, 빠졌으면 뒤에 붙인다.
  *
@@ -99,6 +130,7 @@ function qtyTokens_(src) {
 function keepQty_(src, text, lang) {
   var t = String(text == null ? '' : text).trim();
   if (!t) return t;
+  t = keepSize_(src, t);                    // 용량이 통째로 빠졌으면 먼저 메운다
   var toks = qtyTokens_(src);
   if (!toks.length) return t;
 

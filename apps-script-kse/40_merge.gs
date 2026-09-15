@@ -436,6 +436,10 @@ function mergeReports_(ord, prc, names) {
   if (esh) markBizRows_(esh, eStart, toError);
   if (psh) markBizRows_(psh, pStart, toPick);
 
+  // 한국어 상품명을 보고 물건을 담으므로 수량 표기는 늘 들어 있어야 한다.
+  // 새로 번역된 것은 이미 붙어 있고, 예전 행·손댄 행을 여기서 맞춘다 (87_tidy.gs).
+  수량표기_보정_모두_();
+
   // 같은 오류끼리 모아 본다
   오류확인_정렬_();
 
