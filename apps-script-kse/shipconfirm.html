@@ -1,0 +1,110 @@
+<style>
+  body { font: 13px/1.7 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 16px; }
+  .box { border: 1px solid #e0e0e0; border-radius: 8px; padding: 14px; background: #fafafa; }
+  .n { font-size: 22px; font-weight: 700; color: #202124; }
+  .sub { color: #555; margin-top: 4px; }
+  .name { color: #555; word-break: break-all; margin-top: 6px; font-size: 12px; }
+  .row { margin-top: 16px; display: flex; gap: 8px; align-items: center; }
+  button, a.btn { font: inherit; padding: 8px 18px; border-radius: 4px; border: 1px solid #dadce0;
+                  background: #fff; cursor: pointer; text-decoration: none; color: #202124; display: inline-block; }
+  .primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  .msg { margin-top: 14px; white-space: pre-wrap; }
+  .err { color: #c5221f; }
+  .hint { color: #777; font-size: 12px; margin-top: 12px; }
+  .warn { color: #b06000; font-size: 12px; margin-top: 8px; }
+  table { border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+  td { padding: 1px 8px 1px 0; color: #555; }
+  td.k { color: #888; }
+</style>
+
+<div id="loading">발송확인 파일을 만드는 중…</div>
+
+<div id="ready" style="display:none">
+  <div class="box">
+    <div class="n"><span id="cnt"></span>행</div>
+    <div class="sub">박스 <span id="boxes"></span>건 → 주문상품 단위로 펼침</div>
+    <table>
+      <tr><td class="k">tracking-number</td><td id="track"></td></tr>
+      <tr><td class="k">carrier-code</td><td id="carrier"></td></tr>
+      <tr><td class="k">ship-method</td><td id="method"></td></tr>
+      <tr><td class="k">ship-date</td><td id="sdate"></td></tr>
+    </table>
+    <div class="name" id="fname"></div>
+  </div>
+
+  <div class="row">
+    <a id="dl" class="btn primary" download>내려받기</a>
+    <button onclick="google.script.host.close()">닫기</button>
+  </div>
+
+  <div class="hint">
+    셀러센트럴 <b>注文 &gt; 出荷通知の一括アップロード</b> 에 올리시면 됩니다.<br>
+    추적번호는 <b>KSE 접수번호(K…)</b> 를 넣습니다 — 일본 국내 배송사와 국내 송장번호는
+    쓰지 않습니다.<br>
+    <b>합배송이 있으면 KSE 파일을 그대로 올리면 안 됩니다</b> — KSE 파일에는 대표주문번호만
+    있어서 함께 묶인 나머지 주문이 발송 처리되지 않습니다. 이 파일은 한 박스의 접수번호를
+    묶인 주문마다 한 줄씩 다시 붙여 줍니다.<br>
+    아마존이 <code>carrier-code</code> 를 거부하면 [설정]에서 <b>아마존_배송사코드</b>를
+    <code>Other</code>, <b>아마존_배송사명</b>을 <code>KSE</code> 로 바꾸세요.
+  </div>
+  <div id="notes" class="warn" style="display:none"></div>
+</div>
+
+<div id="msg" class="msg"></div>
+
+<script>
+  function fail(m) {
+    document.getElementById('loading').style.display = 'none';
+    var msg = document.getElementById('msg');
+    msg.className = 'msg err';
+    msg.textContent = m;
+  }
+
+  google.script.run
+    .withSuccessHandler(function (res) {
+      if (!res || !res.count) { fail(res && res.message ? res.message : '내려받을 주문이 없습니다.'); return; }
+
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('ready').style.display = '';
+      document.getElementById('cnt').textContent = res.count;
+      document.getElementById('boxes').textContent = res.boxes +
+        (res.merged ? ' (합배송 ' + res.merged + ')' : '');
+      document.getElementById('track').textContent =
+        res.trackName + (res.sample ? '  (예: ' + res.sample + ')' : '');
+      document.getElementById('carrier').textContent =
+        res.carrier + (res.carrierName ? '  / carrier-name ' + res.carrierName : '');
+      document.getElementById('method').textContent = res.method;
+      document.getElementById('sdate').textContent = res.shipDate;
+      document.getElementById('fname').textContent = res.name;
+
+      var w = [];
+      if (res.noInvoice) {
+        w.push(res.trackName + '가 없는 주문 ' + res.noInvoice + '건은 넣지 않았습니다 — ' +
+          (res.trackName === 'KSE접수번호' ? '② KSE 배송등록' : '점검 > 배송상태 새로고침') +
+          ' 뒤 다시 만드세요.');
+      }
+      if (res.noItemId) {
+        w.push('order-item-id 가 빈 줄 ' + res.noItemId + '건이 있습니다 (손으로 옮긴 행). ' +
+          '아마존은 이 값을 요구하므로 그 줄은 업로드에서 거부될 수 있습니다.');
+      }
+      if (w.length) {
+        var el = document.getElementById('notes');
+        el.style.display = '';
+        el.textContent = w.join('\n');
+      }
+
+      var bin = atob(res.base64);
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+
+      var a = document.getElementById('dl');
+      a.href = URL.createObjectURL(new Blob([bytes], { type: 'text/plain' }));
+      a.setAttribute('download', res.name);
+      a.addEventListener('click', function () {
+        a.className = 'btn';
+        a.textContent = '다시 내려받기';
+      });
+    })
+    .withFailureHandler(function (err) { fail('실패: ' + err.message); })
+    .prepareShipConfirm();
+</script>

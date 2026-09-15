@@ -1,0 +1,201 @@
+<style>
+  body { font: 13px/1.7 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 16px; }
+  h3 { margin: 0 0 4px; font-size: 14px; }
+  .lead { color: #555; margin-bottom: 12px; }
+  .list { border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; }
+  label { display: flex; gap: 10px; align-items: flex-start; padding: 9px 12px;
+          border-bottom: 1px solid #f1f3f4; cursor: pointer; }
+  label:last-child { border-bottom: 0; }
+  label:hover { background: #f8f9fa; }
+  label.off { opacity: .45; cursor: default; }
+  .nm { font-weight: 600; }
+  .meta { color: #777; font-size: 12px; }
+  .cnt { margin-left: auto; color: #555; white-space: nowrap; padding-left: 10px; }
+  .tag { color: #b06000; font-size: 11px; border: 1px solid #f0c36d; border-radius: 3px;
+         padding: 0 4px; margin-left: 6px; }
+  .bar { margin-top: 10px; display: flex; gap: 12px; align-items: center; }
+  .bar a { color: #1a73e8; cursor: pointer; font-size: 12px; }
+  .row { margin-top: 16px; display: flex; gap: 8px; align-items: center; }
+  button { font: inherit; padding: 8px 18px; border-radius: 4px; border: 1px solid #dadce0;
+           background: #fff; cursor: pointer; color: #202124; }
+  .danger { background: #c5221f; color: #fff; border-color: #c5221f; }
+  button[disabled] { opacity: .45; cursor: default; }
+  .warn { color: #c5221f; font-size: 12px; margin-top: 12px; }
+  .msg { margin-top: 14px; white-space: pre-wrap; }
+  .err { color: #c5221f; }
+  .ask { margin-top: 14px; border: 1px solid #c5221f; border-radius: 8px; padding: 12px;
+         background: #fdf1f0; }
+  .ask b { color: #c5221f; }
+  .ask .names { margin: 6px 0 0; white-space: pre-wrap; color: #444; }
+</style>
+
+<div id="loading">시트를 살펴보는 중…</div>
+
+<div id="ready" style="display:none">
+  <h3>비울 시트를 고르세요</h3>
+  <div class="lead">1행(제목)은 남기고 2행 아래를 지웁니다. 칸 색·굵은 글씨·글자색·메모도 함께 되돌립니다.</div>
+
+  <div class="list" id="list"></div>
+
+  <div class="bar">
+    <a onclick="pick(true)">전부 선택</a>
+    <a onclick="pick(false)">전부 해제</a>
+  </div>
+
+  <div class="warn">되돌릴 수 없습니다. [설정] 시트는 목록에 없습니다.</div>
+
+  <div class="row" id="step1">
+    <button id="go" class="danger" disabled>비우기</button>
+    <button onclick="google.script.host.close()">닫기</button>
+  </div>
+
+  <div class="ask" id="step2" style="display:none">
+    <b>정말 비울까요? 되돌릴 수 없습니다.</b>
+    <div class="names" id="askNames"></div>
+    <div class="row">
+      <button id="yes" class="danger">예, 비웁니다</button>
+      <button id="no">취소</button>
+    </div>
+  </div>
+</div>
+
+<div id="msg" class="msg"></div>
+
+<script>
+  // 크롬은 Apps Script 다이얼로그(다른 출처 iframe)의 confirm() 을 막는다.
+  // 그래서 확인은 이 화면 안에서 받는다.
+  var items = [];
+
+  function UI(id) { return document.getElementById(id); }
+
+  function fail(m) {
+    UI('loading').style.display = 'none';
+    var msg = UI('msg');
+    msg.className = 'msg err';
+    msg.textContent = m;
+  }
+
+  function boxes() {
+    return Array.prototype.slice.call(document.querySelectorAll('input[type=checkbox]'));
+  }
+
+  function pick(on) {
+    boxes().forEach(function (b) { if (!b.disabled) b.checked = on; });
+    refresh();
+  }
+
+  function chosen() {
+    return boxes().filter(function (b) { return b.checked; }).map(function (b) { return b.value; });
+  }
+
+  function rowsOf(names) {
+    var n = 0;
+    names.forEach(function (nm) {
+      items.forEach(function (it) { if (it.name === nm) n += it.rows; });
+    });
+    return n;
+  }
+
+  function refresh() {
+    var c = chosen();
+    var go = UI('go');
+    go.disabled = c.length === 0;
+    go.textContent = c.length ? '비우기 (' + c.length + '개 시트 / ' + rowsOf(c) + '행)' : '비우기';
+  }
+
+  function drawList() {
+    var box = UI('list');
+    box.innerHTML = '';
+    items.forEach(function (it) {
+      var label = document.createElement('label');
+      if (!it.exists) label.className = 'off';
+
+      var cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.value = it.name;
+      cb.disabled = !it.exists;
+      cb.addEventListener('change', refresh);
+
+      var mid = document.createElement('div');
+      var nm = document.createElement('div');
+      nm.className = 'nm';
+      nm.textContent = it.name;
+      if (it.list) {
+        var tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.textContent = '직접 적은 목록';
+        nm.appendChild(tag);
+      }
+      var meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = it.exists ? it.desc : '시트 없음';
+      mid.appendChild(nm);
+      mid.appendChild(meta);
+
+      var cnt = document.createElement('div');
+      cnt.className = 'cnt';
+      cnt.textContent = it.exists ? it.rows + '행' : '—';
+
+      label.appendChild(cb);
+      label.appendChild(mid);
+      label.appendChild(cnt);
+      box.appendChild(label);
+    });
+    refresh();
+  }
+
+  function load(after) {
+    google.script.run
+      .withSuccessHandler(function (res) {
+        items = res || [];
+        UI('loading').style.display = 'none';
+        UI('ready').style.display = '';
+        drawList();
+        if (after) after();
+      })
+      .withFailureHandler(function (err) { fail('실패: ' + err.message); })
+      .clearList();
+  }
+
+  load();
+
+  UI('go').addEventListener('click', function () {
+    var c = chosen();
+    if (!c.length) return;
+    UI('askNames').textContent = c.join(', ') + '  —  모두 ' + rowsOf(c) + '행';
+    UI('step1').style.display = 'none';
+    UI('step2').style.display = '';
+  });
+
+  UI('no').addEventListener('click', function () {
+    UI('step2').style.display = 'none';
+    UI('step1').style.display = '';
+  });
+
+  UI('yes').addEventListener('click', function () {
+    var c = chosen();
+    if (!c.length) return;
+    var btn = this;
+    btn.disabled = true;
+    btn.textContent = '비우는 중…';
+    google.script.run
+      .withSuccessHandler(function (res) {
+        var msg = UI('msg');
+        msg.className = 'msg';
+        msg.textContent = res.message;
+        UI('step2').style.display = 'none';
+        UI('step1').style.display = '';
+        btn.disabled = false;
+        btn.textContent = '예, 비웁니다';
+        load();          // 남은 행 수를 다시 읽어 보여준다
+      })
+      .withFailureHandler(function (err) {
+        btn.disabled = false;
+        btn.textContent = '예, 비웁니다';
+        UI('step2').style.display = 'none';
+        UI('step1').style.display = '';
+        fail('실패: ' + err.message);
+      })
+      .clearRun(c);
+  });
+</script>

@@ -1,0 +1,136 @@
+<style>
+  body { font: 13px/1.6 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 14px; }
+  .drop { border: 2px dashed #c7c7c7; border-radius: 8px; padding: 20px 14px; text-align: center; color: #666; }
+  .drop.on { border-color: #1a73e8; background: #f2f7fe; color: #1a73e8; }
+  .drop.has { border-style: solid; border-color: #34a853; background: #f4fbf5; }
+  .files { margin-top: 10px; text-align: left; }
+  .f { display: flex; justify-content: space-between; gap: 8px; padding: 3px 0; font-size: 12px; }
+  .f b { color: #188038; font-weight: 600; word-break: break-all; }
+  .f .role { color: #777; white-space: nowrap; }
+  .row { margin-top: 14px; display: flex; gap: 8px; align-items: center; }
+  button { font: inherit; padding: 8px 18px; border-radius: 4px; border: 1px solid #dadce0; background: #fff; cursor: pointer; }
+  button.primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  button[disabled] { opacity: .45; cursor: default; }
+  .msg { margin-top: 12px; white-space: pre-wrap; }
+  .err { color: #c5221f; }
+  .hint { color: #777; font-size: 12px; margin-top: 12px; }
+</style>
+
+<div id="drop" class="drop">
+  아마존 리포트를 여기에 끌어다 놓거나<br>
+  <input id="picker" type="file" multiple accept=".csv,.txt,.tsv,text/csv" style="margin-top:8px">
+  <div id="files" class="files"></div>
+</div>
+
+<div class="row">
+  <button id="go" class="primary" disabled>시트에 넣기</button>
+  <button onclick="google.script.host.close()">닫기</button>
+  <span id="spin" style="display:none;color:#666">처리 중…</span>
+</div>
+
+<div id="msg" class="msg"></div>
+<div class="hint">주문자료·가격자료를 구분해서 넣지 않아도 됩니다 — <b>item-price 가 있는 파일</b>을
+가격자료로 알아서 잡습니다. 한 파일에 주문과 가격이 다 있으면 그것만 올려도 됩니다.<br>
+배송지(수취인 + 주소)가 같은 주문은 한 박스로 묶이고, 이미 넣은 주문번호는 건너뜁니다.</div>
+
+<script>
+  var picked = [];
+  var drop = document.getElementById('drop');
+  var go = document.getElementById('go');
+  var msg = document.getElementById('msg');
+
+  // 파일명만 보고 미리 짐작해 보여준다. 실제 판별은 서버가 컬럼을 읽어서 한다.
+  function guessRole(name) {
+    return /price|payment|settle|決済|取引/i.test(name) ? '가격자료로 추정' : '';
+  }
+
+  function setFiles(list) {
+    picked = Array.prototype.slice.call(list || []).slice(0, 4);
+    var box = document.getElementById('files');
+    box.innerHTML = '';
+    picked.forEach(function (f) {
+      var d = document.createElement('div');
+      d.className = 'f';
+      var b = document.createElement('b');
+      b.textContent = f.name;
+      var r = document.createElement('span');
+      r.className = 'role';
+      r.textContent = guessRole(f.name);
+      d.appendChild(b);
+      d.appendChild(r);
+      box.appendChild(d);
+    });
+    drop.className = 'drop' + (picked.length ? ' has' : '');
+    go.disabled = picked.length === 0;
+    msg.textContent = '';
+    msg.className = 'msg';
+  }
+
+  document.getElementById('picker').addEventListener('change', function (e) {
+    setFiles(e.target.files);
+  });
+
+  ['dragenter', 'dragover'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.add('on'); });
+  });
+  ['dragleave', 'drop'].forEach(function (ev) {
+    drop.addEventListener(ev, function (e) { e.preventDefault(); drop.classList.remove('on'); });
+  });
+  drop.addEventListener('drop', function (e) { setFiles(e.dataTransfer.files); });
+
+  function toBase64(buf) {
+    var bytes = new Uint8Array(buf);
+    var bin = '';
+    var CHUNK = 0x8000;
+    for (var i = 0; i < bytes.length; i += CHUNK) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+    }
+    return btoa(bin);
+  }
+
+  function readFile(f) {
+    return new Promise(function (resolve, reject) {
+      var r = new FileReader();
+      r.onload = function () { resolve({ name: f.name, b64: toBase64(r.result) }); };
+      r.onerror = function () { reject(new Error(f.name + ' 를 읽지 못했습니다.')); };
+      r.readAsArrayBuffer(f);
+    });
+  }
+
+  go.addEventListener('click', function () {
+    go.disabled = true;
+    document.getElementById('spin').style.display = '';
+    msg.className = 'msg';
+    msg.textContent = '';
+
+    // 인코딩·구분자 판별과 파일 역할 구분은 서버(Apps Script)가 한다.
+    // 여기서는 바이트 그대로 넘긴다.
+    Promise.all(picked.map(readFile))
+      .then(function (files) {
+        google.script.run
+          .withSuccessHandler(function (res) {
+            document.getElementById('spin').style.display = 'none';
+            msg.textContent = res.message;
+            if (res.added > 0) {
+              setTimeout(google.script.host.close, 2600);
+            } else {
+              msg.className = 'msg err';
+              go.disabled = false;
+            }
+          })
+          .withFailureHandler(function (err) {
+            document.getElementById('spin').style.display = 'none';
+            msg.className = 'msg err';
+            msg.textContent = '실패: ' + err.message;
+            go.disabled = false;
+          })
+          .mergeAmazonFiles(files);
+      })
+      .catch(function (e) {
+        document.getElementById('spin').style.display = 'none';
+        msg.className = 'msg err';
+        msg.textContent = e.message;
+        go.disabled = false;
+      });
+  });
+</script>

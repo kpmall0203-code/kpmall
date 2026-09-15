@@ -1,0 +1,125 @@
+<style>
+  body { font: 13px/1.7 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 16px; }
+  .box { border: 1px solid #e0e0e0; border-radius: 8px; padding: 14px; background: #fafafa; }
+  .n { font-size: 22px; font-weight: 700; color: #202124; }
+  .sub { color: #555; margin-top: 4px; }
+  .name { color: #555; word-break: break-all; margin-top: 6px; font-size: 12px; }
+  .row { margin-top: 16px; display: flex; gap: 8px; align-items: center; }
+  button, a.btn { font: inherit; padding: 8px 18px; border-radius: 4px; border: 1px solid #dadce0;
+                  background: #fff; cursor: pointer; text-decoration: none; color: #202124; display: inline-block; }
+  .primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  button[disabled], a.off { opacity: .45; pointer-events: none; }
+  .msg { margin-top: 14px; white-space: pre-wrap; }
+  .err { color: #c5221f; }
+  .hint { color: #777; font-size: 12px; margin-top: 12px; }
+  .warn { color: #b06000; font-size: 12px; margin-top: 8px; }
+  .stop { color: #c5221f; font-size: 12px; margin-top: 8px; }
+  code { background: #f1f3f4; padding: 0 3px; border-radius: 2px; }
+</style>
+
+<div id="loading">파일을 만드는 중…</div>
+
+<div id="ready" style="display:none">
+  <div class="box">
+    <div class="n"><span id="cnt"></span>행</div>
+    <div class="sub"><b id="fmt"></b> / <span id="cols"></span>컬럼</div>
+    <div class="sub">박스 <span id="boxes"></span>건</div>
+    <div class="name" id="fname"></div>
+  </div>
+
+  <div class="row">
+    <a id="dl" class="btn primary" download>내려받기</a>
+    <button onclick="google.script.host.close()">닫기</button>
+  </div>
+
+  <div id="stop" class="stop" style="display:none"></div>
+  <div id="notes" class="warn" style="display:none"></div>
+
+  <div class="hint" id="hintB2" style="display:none">
+    야마토 B2 클라우드 <b>外部データ取り込み基本レイアウト</b> 와 같은 95컬럼입니다.
+    박스 1건 = 송장 1장이라 상품 단위로 펼치지 않고, 상품명은
+    <code>品名１</code> · <code>品名２</code> 에 넣고 3개 이상이면 <code>記事</code> 에
+    <code>他 N点</code> 으로 적습니다.<br>
+    첫 줄 제목행 여부는 [설정] <code>근석이_헤더행</code>, 파일 형식은
+    <code>근석이_파일형식</code>(CSV / xlsx) 로 바꿉니다.
+  </div>
+  <div class="hint" id="hintAmz" style="display:none">
+    아마존 주문 리포트와 같은 <b>32컬럼</b>입니다 (UTF-8, 모든 값 따옴표).
+    박스 1건을 주문상품 단위로 되펼쳐, 아마존이 준 원본 값을 그대로 넘깁니다 —
+    글자 수 제한도 필수항목도 없습니다.<br>
+    받는 쪽에서 송장을 직접 만들 때 쓰세요. 야마토 송장을 바로 뽑으려면
+    [설정] <code>근석이_양식</code> 을 <code>B2</code> 로 바꾸세요.
+  </div>
+  <div class="hint">
+    <b>[근석이] 시트 자체는 [주문] 과 같은 양식</b>입니다 — 손으로 행을 옮겨도
+    칸이 어긋나지 않게 변환은 내려받을 때만 합니다.
+    양식은 [설정] <code>근석이_양식</code> (B2 / 아마존) 로 고릅니다.
+  </div>
+</div>
+
+<div id="msg" class="msg"></div>
+
+<script>
+  function fail(m) {
+    document.getElementById('loading').style.display = 'none';
+    var msg = document.getElementById('msg');
+    msg.className = 'msg err';
+    msg.textContent = m;
+  }
+
+  google.script.run
+    .withSuccessHandler(function (res) {
+      if (!res || !res.count) { fail(res && res.message ? res.message : '내려받을 주문이 없습니다.'); return; }
+
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('ready').style.display = '';
+      document.getElementById('cnt').textContent = res.count + (res.header ? ' (+제목행)' : '');
+      document.getElementById('boxes').textContent = res.boxes;
+      document.getElementById('cols').textContent = res.columns;
+      document.getElementById('fname').textContent = res.name;
+      document.getElementById('fmt').textContent =
+        res.format === '아마존' ? '아마존 32컬럼' : '야마토 B2 95컬럼';
+      document.getElementById(res.format === '아마존' ? 'hintAmz' : 'hintB2')
+        .style.display = '';
+
+      if (res.missing && res.missing.length) {
+        var st = document.getElementById('stop');
+        st.style.display = '';
+        st.textContent = '宅急便 필수항목이 비어 있습니다: ' + res.missing.join(', ') +
+          '\n[설정] 의 발송인_* / 야마토_* 값을 채운 뒤 다시 만드세요. ' +
+          '이대로 올리면 B2 가 거부합니다.';
+      }
+
+      var w = [];
+      if (res.cut) {
+        w.push('주소나 이름이 B2 글자 수 제한(주소 64 / 이름 32, 반각 기준)을 넘어 ' +
+          res.cut + '건은 잘렸습니다. 파일을 열어 확인하세요.');
+      }
+      if (res.partial) {
+        w.push('손으로 옮긴 것으로 보이는 행 ' + res.partial + '건은 원본 리포트 값이 없어 ' +
+          '시트에 보이는 칸으로만 채웠습니다.');
+      }
+      if (w.length) {
+        var el = document.getElementById('notes');
+        el.style.display = '';
+        el.textContent = w.join('\n');
+      }
+
+      var bin = atob(res.base64);
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+
+      var type = /\.xlsx$/.test(res.name)
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'text/csv';
+      var a = document.getElementById('dl');
+      a.href = URL.createObjectURL(new Blob([bytes], { type: type }));
+      a.setAttribute('download', res.name);
+      a.addEventListener('click', function () {
+        a.className = 'btn';
+        a.textContent = '다시 내려받기';
+      });
+    })
+    .withFailureHandler(function (err) { fail('실패: ' + err.message); })
+    .preparePickFile();
+</script>

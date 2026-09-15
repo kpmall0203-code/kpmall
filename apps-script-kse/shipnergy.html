@@ -1,0 +1,92 @@
+<style>
+  body { font: 13px/1.7 -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 0; padding: 16px; }
+  .box { border: 1px solid #e0e0e0; border-radius: 8px; padding: 14px; background: #fafafa; }
+  .n { font-size: 22px; font-weight: 700; color: #202124; }
+  .sub { color: #555; margin-top: 4px; }
+  .name { color: #555; word-break: break-all; margin-top: 6px; font-size: 12px; }
+  .row { margin-top: 16px; display: flex; gap: 8px; align-items: center; }
+  button, a.btn { font: inherit; padding: 8px 18px; border-radius: 4px; border: 1px solid #dadce0;
+                  background: #fff; cursor: pointer; text-decoration: none; color: #202124; display: inline-block; }
+  .primary { background: #1a73e8; color: #fff; border-color: #1a73e8; }
+  .msg { margin-top: 14px; white-space: pre-wrap; }
+  .err { color: #c5221f; }
+  .hint { color: #777; font-size: 12px; margin-top: 12px; }
+  .warn { color: #b06000; font-size: 12px; margin-top: 8px; }
+</style>
+
+<div id="loading">Shipnergy 파일을 만드는 중…</div>
+
+<div id="ready" style="display:none">
+  <div class="box">
+    <div class="n"><span id="cnt"></span>행</div>
+    <div class="sub">박스 <span id="boxes"></span>건 → 주문상품 단위로 펼침 / <span id="cols"></span>컬럼</div>
+    <div class="name" id="fname"></div>
+  </div>
+
+  <div class="row">
+    <a id="dl" class="btn primary" download>내려받기</a>
+    <button onclick="google.script.host.close()">닫기</button>
+  </div>
+
+  <div class="hint">
+    Shipnergy 업로드 양식(<code>amazon_jp.xlsx</code>)과 같은 34컬럼 순서입니다.
+    안내문이 적힌 2행은 넣지 않습니다.<br>
+    <b>[shipnergy] 시트 자체는 [주문] 과 같은 양식</b>입니다 — 손으로 행을 옮겨도
+    칸이 어긋나지 않게 변환은 내려받을 때만 합니다.
+  </div>
+  <div id="notes" class="warn" style="display:none"></div>
+</div>
+
+<div id="msg" class="msg"></div>
+
+<script>
+  function fail(m) {
+    document.getElementById('loading').style.display = 'none';
+    var msg = document.getElementById('msg');
+    msg.className = 'msg err';
+    msg.textContent = m;
+  }
+
+  google.script.run
+    .withSuccessHandler(function (res) {
+      if (!res || !res.count) { fail(res && res.message ? res.message : '내려받을 주문이 없습니다.'); return; }
+
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('ready').style.display = '';
+      document.getElementById('cnt').textContent = res.count;
+      document.getElementById('boxes').textContent = res.boxes;
+      document.getElementById('cols').textContent = res.columns;
+      document.getElementById('fname').textContent = res.name;
+
+      var w = [];
+      if (res.splitBoxes) {
+        w.push('합배송 박스 ' + res.splitBoxes + '건은 주문번호가 서로 달라서 Shipnergy 에서 ' +
+          '따로 올라갑니다 — Shipnergy 는 order-id 가 같은 줄만 한 건으로 합칩니다.');
+      }
+      if (res.partial) {
+        w.push('손으로 옮긴 것으로 보이는 행 ' + res.partial + '건은 원본 리포트 값이 없어 ' +
+          '시트에 보이는 칸으로만 채웠습니다 (구매자 이메일 등은 빈값).');
+      }
+      if (w.length) {
+        var el = document.getElementById('notes');
+        el.style.display = '';
+        el.textContent = w.join('\n');
+      }
+
+      var bin = atob(res.base64);
+      var bytes = new Uint8Array(bin.length);
+      for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+
+      var a = document.getElementById('dl');
+      a.href = URL.createObjectURL(new Blob([bytes], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      }));
+      a.setAttribute('download', res.name);
+      a.addEventListener('click', function () {
+        a.className = 'btn';
+        a.textContent = '다시 내려받기';
+      });
+    })
+    .withFailureHandler(function (err) { fail('실패: ' + err.message); })
+    .prepareShipnergy();
+</script>
