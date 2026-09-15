@@ -630,23 +630,41 @@ function naSendState_(ids, state) {
 /** 광고그룹 기본입찰을 올린다 */
 function naSendBids_(jobs, rows) {
   if (!jobs.length) return 0;
-  var token, done = 0;
+  var token, done = 0, fail = 0;
   try { token = adsToken_(); } catch (e) { return 0; }
-  for (var i = 0; i < jobs.length; i++) {
-    var j = jobs[i];
-    if (!j.gid) continue;
+  // 한 번에 100 개씩 — 설정을 올리면 한 날에 수백 줄이 함께 올라간다.
+  // 한 줄에 한 번씩 부르면 그것만으로 6분을 먹고 절반은 옛 값에 남는다.
+  var use = [];
+  for (var i = 0; i < jobs.length; i++) if (jobs[i].gid) use.push(jobs[i]);
+  for (var b = 0; b < use.length; b += 100) {
+    var part = use.slice(b, b + 100);
     try {
       var res = adsApiRetry_(token, 'put', '/sp/adGroups',
-        { adGroups: [{ adGroupId: String(j.gid), defaultBid: Number(j.to) }] },
+        { adGroups: part.map(function (j) {
+            return { adGroupId: String(j.gid), defaultBid: Number(j.to) };
+          }) },
         ADSW_CT_ADGROUP, ADSW_CT_ADGROUP);
-      if (adsCreated_(res, 'adGroups', 'adGroupId').ok) {
-        done++;
-        rows[j.ri][NA_I_BID] = j.to;                  // 보낸 뒤에만 적는다
-      } else {
-        log_('newads', 'WARN', '입찰 못 올렸습니다 ' + j.sku);
+      var st = adsCreated_(res, 'adGroups', 'adGroupId');
+      if (!st.ok) {
+        fail += part.length;
+        log_('newads', 'WARN', '입찰 못 올렸습니다 ' + part.length + '개 — ' + (st.msg || ''));
+        continue;
       }
-    } catch (e2) { log_('newads', 'WARN', '입찰 못 올렸습니다 ' + j.sku + ': ' + String(e2).substring(0, 120)); }
+      // 아마존이 '보낸 것 중 몇 번째가 됐나' 를 준다 — 된 줄만 시트에 적는다
+      var okIdx = {};
+      for (var k = 0; k < st.idx.length; k++) if (isFinite(st.idx[k])) okIdx[st.idx[k]] = true;
+      for (var m = 0; m < part.length; m++) {
+        if (st.idx.length && !okIdx[m]) { fail++; continue; }
+        rows[part[m].ri][NA_I_BID] = part[m].to;      // 보낸 뒤에만 적는다
+        done++;
+      }
+    } catch (e2) {
+      fail += part.length;
+      log_('newads', 'WARN', '입찰 못 올렸습니다 ' + part.length + '개: ' + String(e2).substring(0, 120));
+    }
   }
-  if (done) log_('newads', 'INFO', '광고그룹 입찰 ' + done + '개를 올렸습니다');
+  if (done || fail) {
+    log_('newads', 'INFO', '광고그룹 입찰 ' + done + '개를 올렸습니다' + (fail ? ' · 못 올림 ' + fail : ''));
+  }
   return done;
 }
