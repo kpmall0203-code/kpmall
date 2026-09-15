@@ -263,10 +263,18 @@ function addAdGrowSku() {
                          price: Number(lv[i][L_PRICE]) || 0 };
     }
   }
-  var have = {};
+  // 이미 있는 SKU 와 '진짜 마지막 줄'. getLastRow() 는 승인 칸의 빈 체크박스(FALSE)도
+  // 내용으로 세어서, 체크박스가 아래로 길게 깔려 있으면 새 줄을 500번째 아래에 붙인다 —
+  // 사람은 표가 비어 보인다 (실측 2026-09-15). SKU 칸이 찬 마지막 줄 다음에 붙인다.
+  var have = {}, lastSku = 1;
   if (sh.getLastRow() > 1) {
     var ev = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
-    for (var e = 0; e < ev.length; e++) have[String(ev[e][0]).trim()] = true;
+    for (var e = 0; e < ev.length; e++) {
+      var s0 = String(ev[e][0]).trim();
+      if (!s0) continue;
+      have[s0] = true;
+      lastSku = e + 2;
+    }
   }
 
   var add = [], miss = [], dup = 0, recWhy = [];
@@ -297,7 +305,7 @@ function addAdGrowSku() {
     add.push(row);
   }
   if (add.length) {
-    var at = Math.max(sh.getLastRow(), 1) + 1;
+    var at = lastSku + 1;
     var need = at + add.length - 1;
     if (sh.getMaxRows() < need) sh.insertRowsAfter(sh.getMaxRows(), need - sh.getMaxRows());
     // ID 칸은 글자 서식으로 — 숫자로 바뀌면 뒷자리가 반올림돼 다른 ID 가 된다
