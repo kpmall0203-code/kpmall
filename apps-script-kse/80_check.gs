@@ -1,5 +1,5 @@
 /**
- * 검사 — 이름 / 주소 / 전화번호를 보고 문제 있는 주문을 [오류확인] 으로 보낸다.
+ * 검사 — 이름 / 주소 / 전화번호 / 금액을 보고 문제 있는 주문을 [오류확인] 으로 보낸다.
  *
  * 프런트에서는 `검사하기` 버튼 하나로 세 가지를 순서대로 돌린다.
  * 하나씩 돌리고 싶으면 설정 > 개별 검사 에 따로 있다.
@@ -116,6 +116,61 @@ function findOrgHit_(text) {
   return null;
 }
 
+// ── 금액 ────────────────────────────────────────────────────────────────
+//
+// 합계금액·단가는 자료를 올릴 때 아마존 리포트에서 그대로 받아 적고, 그 뒤로 코드는
+// 읽기만 한다 (관세 신고 기준 판정·색칠). 그래서 이 칸이 원본과 달라졌다면
+// 시트에서 사람이 고친 것이다. 고치는 것 자체는 막지 않되, 어긋난 것은 보이게 한다.
+//
+// 관세 신고 기준을 이 합계로 판정하므로, 합계가 조용히 낮아지면 신고 대상이
+// 그냥 지나간다. 그래서 들여온 값과 다르면 얼마에서 얼마로 바뀌었는지 적는다.
+
+/**
+ * 금액이 서로 맞는가.
+ *   1) 합계금액 = Σ(단가 × 수량)        → 둘 중 하나가 틀렸다 (확정)
+ *   2) 합계금액 = 들여온 원본의 합계      → 사람이 고쳤을 수 있다 (애매)
+ *
+ * @return {{level:string, reason:string}|null}
+ */
+function priceDefect_(v, cfg) {
+  var totalRaw = String(v[COL.TOTAL - 1] == null ? '' : v[COL.TOTAL - 1]).trim();
+  if (!totalRaw) return null;          // 가격 없음은 병합 때 따로 적는다
+  var total = num_(totalRaw, 0);
+
+  var qs = String(v[COL.QTY - 1] == null ? '' : v[COL.QTY - 1]).split('\n');
+  var us = String(v[COL.UNIT_PRICE - 1] == null ? '' : v[COL.UNIT_PRICE - 1]).split('\n');
+  if (us.length === qs.length) {
+    var sum = 0, ok = true;
+    for (var i = 0; i < us.length; i++) {
+      if (String(us[i]).trim() === '') { ok = false; break; }
+      sum += num_(us[i], 0) * (parseInt(num_(qs[i], 1), 10) || 1);
+    }
+    if (ok && Math.abs(sum - total) >= 1) {
+      return { level: LV_NO, reason: '금액 안 맞음 — 단가×수량 ' + round_(sum, 0) +
+        ' ≠ 합계 ' + round_(total, 0) };
+    }
+  }
+
+  var g = null;
+  try { g = JSON.parse(String(v[COL.RAW - 1] || 'null')); } catch (e) { g = null; }
+  if (g && g.items && g.items.length) {
+    var orig = 0, has = false;
+    g.items.forEach(function (it) {
+      if (it.noPrice) return;
+      orig += num_(it.linePrice, 0);
+      has = true;
+    });
+    if (has && Math.abs(orig - total) >= 1) {
+      var th = num_((cfg || getConfig()).관세임계값, 0);
+      var duty = (th > 0 && orig >= th && total < th)
+        ? ' — 원래는 관세 신고 대상 (≥ ' + th + ')' : '';
+      return { level: LV_MAYBE, reason: '합계 고쳐짐 — 들여온 값 ' + round_(orig, 0) +
+        ' → ' + round_(total, 0) + duty };
+    }
+  }
+  return null;
+}
+
 // ── 전화번호 규칙 ───────────────────────────────────────────────────────
 // 국가별 자릿수. cc 는 국제표기('+cc'/'00cc')를 국내표기('0…')로 바꾸는 데 쓴다.
 // ── 전화번호 ────────────────────────────────────────────────────────────
@@ -220,7 +275,7 @@ function 검사_수집_(rows, opts, cfg, nameRows) {
     findings[row].push({ col: col, level: level, reason: reason, spans: spans || null });
   }
 
-  var counts = { name: 0, addr: 0, phone: 0, item: 0 };
+  var counts = { name: 0, addr: 0, phone: 0, item: 0, price: 0 };
   var aiUsed = 0;
   var error = '';
 
@@ -269,6 +324,16 @@ function 검사_수집_(rows, opts, cfg, nameRows) {
           '기관·법인명 (' + orgName.words.join(',') + ')', orgName.spans);
         counts.addr++;
       }
+    });
+  }
+
+  // ── 금액: 단가×수량 = 합계금액 인가, 들여온 값 그대로인가 ─────────────
+  if (opts.price) {
+    rows.forEach(function (r) {
+      var bad = priceDefect_(r.v, cfg);
+      if (!bad) return;
+      add(r.row, COL.TOTAL, bad.level, bad.reason);
+      counts.price++;
     });
   }
 
@@ -404,7 +469,7 @@ function 검사_실행_(opts) {
   오류확인_정렬_();
 
   var counts = {};
-  ['name', 'addr', 'phone', 'item'].forEach(function (k) {
+  ['name', 'addr', 'phone', 'item', 'price'].forEach(function (k) {
     counts[k] = a.counts[k] + b.counts[k];
   });
   var aiUsed = a.aiUsed + b.aiUsed;
@@ -416,6 +481,7 @@ function 검사_실행_(opts) {
   if (opts.addr) parts.push('주소 ' + counts.addr + '건');
   if (opts.phone) parts.push('전화 ' + counts.phone + '건');
   if (opts.item) parts.push('금지 상품명 ' + counts.item + '건');
+  if (opts.price) parts.push('금액 ' + counts.price + '건');
 
   var msg = '검사 ' + (rows.length + eRows.length) + '건' +
     ' ([' + SHEET_ORDERS + '] ' + rows.length + ' + [' + SHEET_ERROR + '] ' + eRows.length + ')' +
@@ -453,7 +519,7 @@ function 검사결과_이관_(rows, findings) {
 
 /** 프런트의 단일 버튼 — 이름·주소·전화를 순서대로 검사한다. */
 function 검사하기() {
-  var r = 검사_실행_({ name: true, addr: true, phone: true, item: true });
+  var r = 검사_실행_({ name: true, addr: true, phone: true, item: true, price: true });
   SpreadsheetApp.getUi().alert(r.message);
 }
 
@@ -472,4 +538,8 @@ function 검사_주소만() {
 
 function 검사_전화만() {
   SpreadsheetApp.getUi().alert(검사_실행_({ phone: true }).message);
+}
+
+function 검사_금액만() {
+  SpreadsheetApp.getUi().alert(검사_실행_({ price: true }).message);
 }
