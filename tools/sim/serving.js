@@ -1,0 +1,21 @@
+const fs=require('fs'); const src=fs.readFileSync('' + __dirname + '/../../apps-script/78F_신규광고_점검.gs','utf8');
+let out=[], log=[], tables={};
+global.log_=(a,b,c)=>log.push(c); global.adBusyGuard_=()=>true; global.ui_=()=>({alert:(t,m)=>out.push(m),ButtonSet:{OK:1}});
+global.adsToken_=()=>'t'; global.ADSW_CT_CAMPAIGN='c'; global.ADSW_CT_PRODUCTAD='p';
+global.naOurCampaigns_=()=>({prefix:'KP NEW',cids:{c1:true,c2:true}});
+let calls=0;
+global.adsApiRetry_=(t,m,p,b)=>{ calls++;
+  if (p==='/sp/campaigns/list') return {campaigns:[{campaignId:'c1',name:'KP NEW B1-1',state:'ENABLED',extendedData:{servingStatus:'CAMPAIGN_STATUS_ENABLED'}},{campaignId:'c2',name:'KP NEW B2-1',state:'ENABLED',extendedData:{servingStatus:'CAMPAIGN_STATUS_ENABLED'}}]};
+  if (b.nextToken) return {productAds:[{sku:'S3',asin:'A3',campaignId:'c2',adGroupId:'g3',adId:'a3',state:'ENABLED',extendedData:{servingStatus:'AD_STATUS_LIVE'}}]};
+  return {productAds:[{sku:'S1',asin:'A1',campaignId:'c1',adGroupId:'g1',adId:'a1',state:'ENABLED',extendedData:{servingStatus:'NOT_BUYABLE',servingStatusDetails:[{name:'NOT_BUYABLE_DETAIL',message:'no featured offer'}]}},
+    {sku:'S2',asin:'A2',campaignId:'c1',adGroupId:'g2',adId:'a2',state:'ENABLED',extendedData:{servingStatus:'AD_STATUS_LIVE'}}], nextToken:'n1'}; };
+global.naSheet_=n=>({getRange:()=>({setNumberFormat:()=>{}}), getName:()=>n}); global.writeTable_=(sh,h,rows)=>{tables[sh.getName()]=rows;};
+eval(src);
+let fail=0; const ok=(c,m)=>{ console.log((c?'  ✓ ':'  ✗ ')+m); if(!c) fail++; };
+naServingCheck();
+const t=tables['서빙상태'];
+ok(t.length===3 && t[0][0]==='S1' && t[0][7]==='NOT_BUYABLE' && /카트박스/.test(t[0][8]) && /no featured offer/.test(t[0][9]), '문제 있는 광고가 위로, 뜻·상세 채움');
+ok(calls===3, '캠페인 1 + 상품광고 2쪽 = 호출 3 ('+calls+')');
+ok(/상품광고 3개 \(캠페인 2개\)/.test(out[0]) && /2개  AD_STATUS_LIVE/.test(out[0]) && /내보내지 않는 광고 1개/.test(out[0]), '알림창 요약');
+ok(/서빙 상태 — 광고 3개 · 내보냄 2/.test(log[0]), '로그: '+log[0]);
+console.log(fail?'\n✗ 실패 '+fail:'\n✓ 전부 통과'); process.exit(fail?1:0);
