@@ -6,17 +6,32 @@
  * 송장번호까지 받은 건은 곧바로 [완료] 로 옮긴다 (완료 처리 버튼은 없앴다).
  */
 
-function 전송대상_() {
-  return orderRows_().filter(function (r) {
+/**
+ * KSE 에 보낼 행 — 보낼 차례대로.
+ *
+ * ③ 주문 정렬은 급한 것(발송기한이 이른 것)을 시트 위로 올린다. 그런데 KSE 는
+ * 접수한 차례대로 번호를 매기고, 접수 목록과 송장을 뽑으면 최근 접수가 앞에 온다.
+ * 시트 위부터 보내면 가장 급한 건이 가장 먼저 접수돼, 뽑을 때 맨 뒤 장으로 간다.
+ *
+ * 그래서 기본은 '시트 아래부터' — 안 급한 것부터 접수하고 급한 것을 마지막에 접수해,
+ * 뽑았을 때 앞 장이 먼저 보낼 물건이 되게 한다. 시트의 보기 순서(급한 것이 위)는
+ * 그대로 두고 보내는 차례만 뒤집는다.
+ *
+ * KSE 목록이 오래된 접수부터 나오는 곳이면 [설정] KSE_등록순서 를 '시트 위부터' 로.
+ */
+function 전송대상_(cfg) {
+  var list = orderRows_().filter(function (r) {
     return String(r.v[COL.STATUS - 1]).trim() === ST.READY &&
            !String(r.v[COL.KSE_NO - 1]).trim();
   });
+  var order = String((cfg || getConfig()).KSE_등록순서 || '시트 아래부터').trim();
+  return order === '시트 위부터' ? list : list.reverse();
 }
 
 function KSE_배송등록() {
   var ui = SpreadsheetApp.getUi();
   var cfg = getConfig();
-  var targets = 전송대상_();
+  var targets = 전송대상_(cfg);
   if (!targets.length) {
     ui.alert('KSE에 보낼 대기 건이 없습니다.');
     return 0;
@@ -28,8 +43,13 @@ function KSE_배송등록() {
     orders += String(t.v[COL.ORDER_IDS - 1]).split('\n').filter(function (x) { return x.trim(); }).length;
   });
 
+  var orderDesc = String(cfg.KSE_등록순서 || '시트 아래부터').trim() === '시트 위부터'
+    ? '시트 위부터 접수합니다'
+    : '시트 아래부터 접수합니다 — 급한 건이 마지막에 접수돼 뽑을 때 앞 장에 옵니다';
+
   var answer = ui.alert('KSE 배송등록',
     kseBaseUrl_() + ' 에\n박스 ' + boxes + '건 (주문 ' + orders + '건) 을 실제로 배송접수합니다.\n' +
+    orderDesc + '.\n' +
     '(필수값이 빠진 건은 자동으로 보류됩니다)\n\n' +
     '접수 후에는 되돌리기 어렵습니다. 진행할까요?', ui.ButtonSet.YES_NO);
   if (answer !== ui.Button.YES) return 0;
