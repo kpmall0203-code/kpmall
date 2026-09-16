@@ -442,14 +442,17 @@ function adPromoteStopOld_(opts) {
       out.left++; continue;
     }
     // ② 그 SKU 들의 옛 광고 — 상품광고목록에서
-    var ids = [], hit = [];
+    var ids = [], hit = [], where = {};
     for (var s2 = 0; s2 < W.skus.length; s2++) {
       var sk = W.skus[s2];
       if (!inNew[sk]) continue;                          // 새 자리에 없으면 옛 자리를 끄면 안 된다
       var u2 = units[sk];
       if (!u2) continue;
       for (var a2 = 0; a2 < u2.ads.length; a2++) {
-        if (u2.ads[a2].state === 'ENABLED' && u2.ads[a2].gid !== W.gid) { ids.push(u2.ads[a2].id); hit.push(sk); }
+        if (u2.ads[a2].state === 'ENABLED' && u2.ads[a2].gid !== W.gid) {
+          ids.push(u2.ads[a2].id); hit.push(sk);
+          where[u2.ads[a2].camp + (u2.ads[a2].grp && u2.ads[a2].grp !== u2.ads[a2].camp ? ' / ' + u2.ads[a2].grp : '')] = true;
+        }
       }
     }
     out.rows++; out.skus += hit.length;
@@ -462,8 +465,9 @@ function adPromoteStopOld_(opts) {
     if (ids.length) {
       logBuf.push([adLogRow_({ kind: '상품', camp: W.name, group: W.name, sku: adSkuText_(hit, 3),
         target: ids.length + '개', item: '옛 그룹에서 멈춤', from: 'ENABLED', to: 'PAUSED',
-        why: '승격 뒷정리 — 옮긴 상품이 옛 그룹에서 아직 켜져 있었다 (두 곳에서 입찰하면 자기끼리 값을 올림)',
-        by: '자동', cid: W.cid, gid: W.gid })]);
+        why: '승격 뒷정리 — 옮긴 상품이 옛 그룹에서 아직 켜져 있었다 (두 곳에서 입찰하면 자기끼리 값을 올림) · 멈춘 곳: ' +
+             Object.keys(where).join(', '),
+        by: '자동', cid: W.cid, gid: W.gid, tid: ids.join(',').substring(0, 500) })]);
     }
     // ④ 계획 표의 [광고ID들] 을 진짜 목록으로 (글자로 고정해서)
     if (newIds.length) {

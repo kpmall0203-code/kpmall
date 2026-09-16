@@ -298,14 +298,14 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
     // ③ 이 SKU 들이 지금 어디 있나.
     //    [상품광고목록] 을 먼저 본다 — 아마존에 SKU 로 묻는 skuFilter 는 거의 아무것도 못 찾았다
     //    (152개 중 4개). 목록에 없는 SKU 만 아마존에 묻는다.
-    var placed = {}, unitMap = {};
+    var placed = {}, unitMap = {}, gnames = null;
     try { unitMap = adUnitMap_(); } catch (eu) { unitMap = {}; }
     for (var u0 = 0; u0 < skus.length; u0++) {
       var uu = unitMap[skus[u0]];
       if (!uu) continue;
       for (var ua = 0; ua < uu.ads.length; ua++) {
         if (uu.ads[ua].state !== 'ENABLED' && uu.ads[ua].gid !== gid) continue;   // 이미 꺼진 옛 광고는 볼 일 없다
-        (placed[skus[u0]] || (placed[skus[u0]] = [])).push({ adId: uu.ads[ua].id, gid: uu.ads[ua].gid });
+        (placed[skus[u0]] || (placed[skus[u0]] = [])).push({ adId: uu.ads[ua].id, gid: uu.ads[ua].gid, state: uu.ads[ua].state });
       }
     }
     try {
@@ -320,7 +320,7 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
         var dup = false, pl0 = placed[sk] || [];
         for (var d0 = 0; d0 < pl0.length; d0++) if (pl0[d0].adId === String(arr[a].adId || '')) dup = true;
         if (!dup) (placed[sk] || (placed[sk] = [])).push(
-          { adId: String(arr[a].adId || ''), gid: String(arr[a].adGroupId || '') });
+          { adId: String(arr[a].adId || ''), gid: String(arr[a].adGroupId || ''), state: String(arr[a].state || '') });
       }
     } catch (e2) {
       log_('ads', 'WARN', '기존 광고 조회 실패 (' + name + '): ' + String(e2).substring(0, 120));
@@ -362,7 +362,10 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
 
     // ⑤ 옛 그룹에서는 멈춘다 (지우지 않는다 — 되돌릴 수 있어야 한다).
     //    새 그룹에 실제로 들어간 SKU 만 — 이미 있던 것(here)이거나 방금 된 것(okSku)
-    var stop = [];
+    //    켜져 있는 것만 — 이미 꺼진 옛 광고를 또 '멈췄다' 고 세면 대장이 거짓말을 한다 (실측 2026-09-15).
+    //    어느 캠페인·그룹의 광고를 껐는지 대장에 남긴다 — 사람이 손으로 만든 수동 캠페인일 수 있다.
+    var stop = [], oldWhere = {}, oldIds = [];
+    if (!gnames) { try { gnames = adUnitNames_(); } catch (eG) { gnames = {}; } }
     for (var s2 = 0; s2 < skus.length; s2++) {
       var landed = okSku[skus[s2]];
       var lst1 = placed[skus[s2]] || [];
@@ -370,9 +373,13 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
       if (!landed) continue;
       var lst2 = lst1;
       for (var l2 = 0; l2 < lst2.length; l2++) {
-        if (lst2[l2].gid !== gid && lst2[l2].adId) {
-          stop.push({ adId: lst2[l2].adId, state: 'PAUSED' });
-        }
+        var o2 = lst2[l2];
+        if (o2.gid === gid || !o2.adId) continue;
+        if (o2.state && o2.state !== 'ENABLED') continue;
+        stop.push({ adId: o2.adId, state: 'PAUSED' });
+        oldIds.push(o2.adId);
+        var nm2 = gnames[o2.gid];
+        oldWhere[nm2 ? (nm2.camp + (nm2.grp && nm2.grp !== nm2.camp ? ' / ' + nm2.grp : '')) : ('그룹 ' + o2.gid)] = true;
       }
     }
     var stopped = 0;
@@ -389,12 +396,14 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
       }
     }
     if (stopped) {
+      var whereTxt = Object.keys(oldWhere).join(', ');
       log.push(adLogRow_({ at: now, kind: '상품', camp: name, group: name,
         sku: skuTxt, asin: asinTxt, target: stopped + '개',
         item: '옛 그룹에서 멈춤', from: 'ENABLED', to: 'PAUSED',
         sum: '옛 광고그룹에서 ' + stopped + '개 멈춤 · ' + adSkuText_(skus, 2) +
-             ' (두 곳에서 입찰하면 자기끼리 값을 올림)',
-        why: '같은 상품이 두 곳에서 입찰하면 자기끼리 값을 올린다', cid: cid, gid: gid }));
+             ' · 어디: ' + whereTxt.substring(0, 120) + ' (두 곳에서 입찰하면 자기끼리 값을 올림)',
+        why: '같은 상품이 두 곳에서 입찰하면 자기끼리 값을 올린다 · 멈춘 곳: ' + whereTxt,
+        cid: cid, gid: gid, tid: oldIds.join(',').substring(0, 500) }));
     }
 
     if (log.length) { if (bucket) bucket.push(log); else {
