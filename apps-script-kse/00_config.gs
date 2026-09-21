@@ -403,13 +403,36 @@ function orderRows_() {
   return vals.map(function (v, i) { return { row: i + 2, v: v }; });
 }
 
-/** updates: [[row, col, value], ...] */
+/**
+ * updates: [[row, col, value], ...] 를 [주문] 시트에 쓴다.
+ *
+ * 칸 하나씩 setValue 하면 117건 접수에 600번 넘게 써서 1분을 넘긴다 — 그 사이에
+ * 6분 제한에 걸리면 KSE 에는 접수됐는데 시트에 안 남는다. 그래서 같은 열에서
+ * 행이 이어지는 구간을 한 번에 쓴다 (건드리는 칸은 전과 똑같고, 호출 수만 준다).
+ * 같은 칸에 여러 번 쓰면 마지막 값이 남는다 (전과 같다).
+ */
 function applyUpdates_(updates) {
-  if (!updates.length) return;
+  if (!updates || !updates.length) return;
   var sh = ordersSheet_();
-  for (var i = 0; i < updates.length; i++) {
-    sh.getRange(updates[i][0], updates[i][1]).setValue(updates[i][2]);
-  }
+  var byCol = {};
+  updates.forEach(function (u) {
+    if (!byCol[u[1]]) byCol[u[1]] = {};
+    byCol[u[1]][u[0]] = u[2];
+  });
+  Object.keys(byCol).forEach(function (colKey) {
+    var col = Number(colKey);
+    var cells = byCol[colKey];
+    var rows = Object.keys(cells).map(Number).sort(function (a, b) { return a - b; });
+    var start = 0;
+    while (start < rows.length) {
+      var end = start;
+      while (end + 1 < rows.length && rows[end + 1] === rows[end] + 1) end++;
+      var vals = [];
+      for (var i = start; i <= end; i++) vals.push([cells[rows[i]]]);
+      sh.getRange(rows[start], col, vals.length, 1).setValues(vals);
+      start = end + 1;
+    }
+  });
   SpreadsheetApp.flush();
 }
 
