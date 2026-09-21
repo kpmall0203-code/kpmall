@@ -119,12 +119,12 @@ function naCycleRun_(opts) {
   for (var i = 0; i < rows.length; i++) {
     if (String(rows[i][NA_I_OWNER] || '').trim() !== NA_OWNER) continue;
     var st = String(rows[i][NA_I_STATE] || '');
-    if (st === NAS_PROBE || st === NAS_WATCH || st === NAS_PROFIT) { work.push(i); out.live++; }
+    if (st === NAS_PROBE || st === NAS_WATCH || st === NAS_PROFIT || st === NAS_MATURE) { work.push(i); out.live++; }
     else if ((st === NAS_STOP || st === NAS_COOL) && String(rows[i][NA_I_GID] || '').trim()) work.push(i);
   }
 
   // 판돈 원장을 먼저 새로 센다 — 보호·판정이 다 이 값을 본다
-  naPotUpdate_(rows, fams, famAt, perf, ctx);
+  var famX = naPotUpdate_(rows, fams, famAt, perf, ctx);   // 상품군별 잠정 집계 (안 익은 주문·매출)
 
   var stopIds = [], bidJobs = [], resumeIds = [];
   // 설정이 바뀌면 도는 것도 따라간다 — 판돈은 키우고, 허용 입찰을 다시 셈해 시작 입찰이
@@ -142,17 +142,18 @@ function naCycleRun_(opts) {
     var st0 = String(r[NA_I_STATE] || '');
     if (st0 === NAS_STOP || st0 === NAS_COOL) {
       // 멈춘 것 — 다시 켤 수 있나만 본다
-      var rs = naResume_(r, fam, listing[sku], ctx, pol, today);
+      var rs = naResume_(r, fam, listing[sku], ctx, pol, today, o, famX[String(r[NA_I_FAM] || '').trim()]);
       if (rs.resume) {
         var ids0 = naAdIdsFor_(units, sku, String(r[NA_I_GID] || ''), 'PAUSED', r[NA_I_ADIDS]);
         for (var k0 = 0; k0 < ids0.length; k0++) resumeIds.push(ids0[k0]);
-        r[NA_I_STATE] = NAS_PROBE; r[NA_I_ALLOC] = NAA_START; r[NA_I_WHY] = rs.why; r[NA_I_NEXT] = today;
-        if (fam) { fam[NA_F_STATE] = NAS_PROBE; fam[NA_F_WHY] = ''; fam[NA_F_COOL] = ''; }
+        var stR = rs.mature ? NAS_MATURE : NAS_PROBE;
+        r[NA_I_STATE] = stR; r[NA_I_ALLOC] = NAA_START; r[NA_I_WHY] = rs.why; r[NA_I_NEXT] = today;
+        if (fam) { fam[NA_F_STATE] = stR; fam[NA_F_WHY] = rs.mature ? rs.why : ''; fam[NA_F_COOL] = ''; }
         out.resumed++;
       } else if (rs.why && rs.why !== String(r[NA_I_WHY])) r[NA_I_WHY] = rs.why;
       continue;
     }
-    var d = naDecide_(r, fam, o, listing[sku], ctx, pol, today);
+    var d = naDecide_(r, fam, o, listing[sku], ctx, pol, today, famX[String(r[NA_I_FAM] || '').trim()]);
 
     if (d.stop) {
       r[NA_I_STATE] = NAS_STOP;
@@ -298,10 +299,12 @@ function naPotUpdate_(rows, fams, famAt, perf, ctx) {
     var o = perf.bySku[sku];
     if (!o) continue;
     var fk = String(rows[i][NA_I_FAM] || '').trim();
-    var a = agg[fk] || (agg[fk] = { cost: 0, mSales: 0, mOd: 0, pct: 0 });
+    var a = agg[fk] || (agg[fk] = { cost: 0, mSales: 0, mOd: 0, pct: 0, sales: 0, od: 0, pRisk: 0 });
     a.cost += o.cost;
     a.mSales += o.mSales;
     a.mOd += o.mOd;
+    a.sales += o.sales;                            // 잠정 포함 전부
+    a.od += o.od;
     var pct = Number(rows[i][NA_I_MPCT]) || 0;
     if (pct > a.pct) a.pct = pct;                 // 상품군 안에서 가장 높은 마진율로 본다
   }
@@ -312,20 +315,26 @@ function naPotUpdate_(rows, fams, famAt, perf, ctx) {
     var pot = Number(fam[NA_F_POT]) || 0;
     var profit = a2.mSales * (a2.pct / 100);
     var risk = Math.max(0, a2.cost - profit);
+    // 잠정 위험손실 — 아직 안 익은 매출까지 이익으로 쳐서 깎은 손실. 첫 16일에는 익은 것이 없어서
+    // 잘 팔리는 것도 위험손실 = 광고비 전액이 된다. 그래서 판돈으로 멈추기 전에 이것으로 한 번 더 본다
+    a2.pRisk = Math.max(0, a2.cost - a2.sales * (a2.pct / 100));
     fam[NA_F_SPENT] = Math.round(a2.cost);
     fam[NA_F_RISK] = Math.round(risk);
     // 남은 판돈 — 성숙 주문이 하나라도 있으면 손실만 깎는다 (naDecide_ 의 잣대와 같다).
-    // 탐색 중에만 누적 광고비로도 깎는다. 표의 숫자와 멈추는 규칙이 같은 셈이어야 사람이 읽는다
+    // 익은 건 없어도 팔리고 있으면 잠정 손실로 깎는다. 탐색 중에만 누적 광고비로도 깎는다.
+    // 표의 숫자와 멈추는 규칙이 같은 셈이어야 사람이 읽는다
     fam[NA_F_LEFT] = pot > 0
-      ? Math.round(a2.mOd >= 1 ? pot - risk : Math.min(pot - a2.cost, pot - risk)) : '';
+      ? Math.round(a2.mOd >= 1 ? pot - risk
+                 : (a2.od >= 1 ? pot - a2.pRisk : Math.min(pot - a2.cost, pot - risk))) : '';
   }
+  return agg;
 }
 
 /**
  * 한 SKU 를 어떻게 할까. 시트도 아마존도 건드리지 않는다 — 판단만 한다.
  * @return {Object} {stop,guard,hand,raise,bid,state,why,tag,cool}
  */
-function naDecide_(r, fam, o, L, ctx, pol, today) {
+function naDecide_(r, fam, o, L, ctx, pol, today, fx) {
   var sku = String(r[NA_I_SKU] || '').trim();
   var no = function (tag, why, cool, guard) {
     return { stop: true, guard: !!guard, tag: tag, why: why, cool: cool || 0 };
@@ -366,10 +375,25 @@ function naDecide_(r, fam, o, L, ctx, pol, today) {
   // 먼저 하므로, 상태가 아직 소액운영인 채로 잘 팔리는 것을 누적 광고비 때문에 멈추면 안 된다
   // (실자료로 돌려 보니 하루 한 건씩 팔리는 것 17개가 그렇게 멈췄다 — 2026-09-11)
   var hasSale = !!(o && o.mOd >= 1);
+  // 팔리는데 아직 안 익은 것 — 첫 16일에는 성숙 주문이 0 이라 '탐색' 잣대(누적 광고비)로 재면
+  // 하루 몇 건씩 파는 것이 판돈을 넘는 순간 멈춘다 (실측 2026-09-21: 8건 ¥32,535 판 것을 껐다).
+  // 잠정 손실(광고비 − 잠정 매출 × 마진)이 판돈 안이면 익을 때까지 둔다 — "수익을 내는 광고는 끄지 않는다"
+  var anySale = !!(o && o.od >= 1) || !!(fx && fx.od >= 1);
   if (fam && Number(fam[NA_F_POT]) > 0) {
     var pot = Number(fam[NA_F_POT]), spent = Number(fam[NA_F_SPENT]) || 0, risk = Number(fam[NA_F_RISK]) || 0;
-    var probing = stNow === NAS_PROBE && !hasSale;
+    var probing = stNow === NAS_PROBE && !hasSale && !anySale;
     var leftNow = probing ? Math.min(pot - spent, pot - risk) : pot - risk;
+    if (!(leftNow > 0) && !hasSale && anySale) {
+      var pRisk = fx ? fx.pRisk : Math.max(0, o.cost - o.sales * (pct / 100));
+      if (pot - pRisk > 0) {
+        return { state: NAS_MATURE, tag: '',
+                 why: '잠정 주문 ' + (fx ? fx.od : o.od) + '건 · 잠정 매출 ¥' + Math.round(fx ? fx.sales : o.sales) +
+                      ' — 광고비 ¥' + Math.round(spent) + ' 가 판돈 ¥' + Math.round(pot) +
+                      ' 을 넘었지만 잠정 손실 ¥' + Math.round(pRisk) + ' 이 판돈 안이라 익을 때까지 둡니다' };
+      }
+      return no(NAR_POT_OUT, '상품군 판돈 ¥' + Math.round(pot) + ' 을 잠정 손실로도 다 깎았습니다 (누적 ¥' +
+                Math.round(spent) + ' · 잠정 손실 ¥' + Math.round(pRisk) + ') — 멈춥니다', pol.cooldown);
+    }
     if (!(leftNow > 0)) {
       return no(NAR_POT_OUT, '상품군 판돈 ¥' + Math.round(pot) + ' 을 ' +
                 (probing ? '다 썼습니다' : '손실로 다 깎았습니다') +
@@ -563,9 +587,20 @@ function naRetryIneligible_(today) {
  *                             달라졌으면 판돈을 새 G 로 다시 세고, 누적은 그대로 잇는다
  * 같은 광고그룹의 상품광고를 다시 켠다 — 새 그룹을 만들면 탐색비 원장이 끊긴다 (§7.1)
  */
-function naResume_(r, fam, L, ctx, pol, today) {
+function naResume_(r, fam, L, ctx, pol, today, o, fx) {
   var sku = String(r[NA_I_SKU] || '').trim();
   var cool = fam ? adYmd_(fam[NA_F_COOL]) : '';
+  // 판돈으로 멈췄는데 실은 팔리고 있던 것 (안 익은 주문) — 잠정 손실이 판돈 안이면 냉각을 기다리지 않고 켠다.
+  // 위 naDecide_ 의 잣대를 고치기 전에 멈춘 것을 살리는 길이기도 하다
+  var od = fx ? fx.od : (o ? o.od : 0);
+  if (cool && od >= 1 && fam && Number(fam[NA_F_POT]) > 0 && /판돈/.test(String(fam[NA_F_WHY] || ''))) {
+    var pRisk0 = fx ? fx.pRisk : Math.max(0, o.cost - o.sales * ((Number(r[NA_I_MPCT]) || 0) / 100));
+    if (Number(fam[NA_F_POT]) - pRisk0 > 0 && L && NA_LISTING_OK[String(L.state || '').trim().toLowerCase()] && L.stock > 0) {
+      return { resume: true, mature: true,
+               why: '판돈으로 멈췄지만 잠정 주문 ' + od + '건이 있고 잠정 손실 ¥' + Math.round(pRisk0) +
+                    ' 이 판돈 ¥' + Math.round(Number(fam[NA_F_POT])) + ' 안입니다 — 다시 켜고 익을 때까지 둡니다' };
+    }
+  }
   if (cool && cool > today) return { why: String(r[NA_I_WHY] || '') };
   if (!L) return { why: '리스팅에 없습니다 — 올라오면 다시 켭니다' };
   if (!NA_LISTING_OK[String(L.state || '').trim().toLowerCase()]) {
