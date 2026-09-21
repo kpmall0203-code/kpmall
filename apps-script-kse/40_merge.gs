@@ -161,11 +161,14 @@ function mergeReports_(ord, prc, names) {
   var items = [];        // 병합 성공 행
   var skippedDup = 0;
   var dupIds = [];       // 중복으로 뺀 주문번호 — 로그에 남긴다
+  var fileIds = [];      // 파일에 든 주문번호 전부 — 나중에 '파일엔 있었는데 어디에도 없다' 를 찾게
+  var fileSeen = {};
 
   ord.rows.forEach(function (r) {
     var orderId = cellAt_(r, oc.orderId);
     var itemId = cellAt_(r, oc.orderItemId);
     if (!orderId && !itemId) return;
+    if (orderId && !fileSeen[orderId]) { fileSeen[orderId] = true; fileIds.push(orderId); }
 
     if (seen[orderId]) {
       skippedDup++;
@@ -485,6 +488,9 @@ function mergeReports_(ord, prc, names) {
     });
     return out;
   };
+  // 파일의 주문번호 전부를 먼저 남긴다. 아래 세 줄(중복·오류확인·근석이)과 [주문]·[완료] 에
+  // 없는 번호가 있으면, 그 주문은 시트 밖(손으로 지움·옮김)에서 사라진 것이다.
+  logIds_('병합', '파일의 주문번호', fileIds);
   logIds_('병합', '중복 제외 (이미 [' + SHEET_ORDERS + ']·[' + SHEET_DONE + '] 에 있음)', dupIds);
   logIds_('병합', '[' + SHEET_ERROR + '] 으로 보낸 주문', idsOf(toError));
   logIds_('병합', '[' + SHEET_PICK + '] 으로 보낸 주문', idsOf(toPick));
