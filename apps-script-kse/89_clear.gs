@@ -36,6 +36,9 @@ function clearList() {
   });
 }
 
+// 주문 양식(25칸)인 시트 — 비울 때 어떤 주문번호를 지웠는지 로그에 남긴다
+var CLEAR_ORDER_SHEETS = [SHEET_ORDERS, SHEET_ERROR, SHEET_PICK, SHEET_SHIP, SHEET_DONE];
+
 /** 시트 하나를 비운다 — 헤더만 남기고 값·서식·메모를 되돌린다 */
 function clearSheet_(name) {
   var sh = SpreadsheetApp.getActive().getSheetByName(name);
@@ -43,6 +46,14 @@ function clearSheet_(name) {
 
   var last = sh.getLastRow();
   var removed = Math.max(0, last - 1);
+  if (removed > 0 && CLEAR_ORDER_SHEETS.indexOf(name) >= 0 && sh.getMaxColumns() >= COL.ORDER_IDS) {
+    // 지우기 전에 주문번호를 남긴다 — 되돌릴 수 없는 동작이라 무엇을 지웠는지는 남아야 한다
+    var ids = [];
+    sh.getRange(2, COL.ORDER_IDS, removed, 1).getValues().forEach(function (r) {
+      String(r[0] || '').split('\n').forEach(function (id) { if (id.trim()) ids.push(id.trim()); });
+    });
+    logIds_('정리', '비우기 [' + name + '] 지운 주문', ids);
+  }
   if (removed > 0) {
     keepSpareRows_(sh, removed);
     sh.deleteRows(2, removed);

@@ -716,6 +716,30 @@ function deleteRowsAt_(sh, rowNums) {
     .forEach(function (rowNum) { sh.deleteRow(rowNum); });
 }
 
+/**
+ * 주문번호 목록을 [로그] 에 남긴다 — '어느 주문이 어디로 갔는가' 를 나중에 찾을 수 있게.
+ *
+ * 로그 한 칸은 4000자까지라, 넘치면 여러 줄로 나눠 적는다 (줄마다 몇 번째인지 붙인다).
+ * 목록이 비면 아무것도 적지 않는다.
+ */
+function logIds_(step, label, ids) {
+  var list = (ids || []).map(function (x) { return String(x == null ? '' : x).trim(); })
+    .filter(function (x) { return x; });
+  if (!list.length) return;
+  var head = label + ' ' + list.length + '건: ';
+  var chunks = [];
+  var cur = '';
+  list.forEach(function (id) {
+    var next = cur ? cur + ', ' + id : id;
+    if (next.length > 3800) { chunks.push(cur); cur = id; }
+    else cur = next;
+  });
+  if (cur) chunks.push(cur);
+  chunks.forEach(function (c, i) {
+    log_(step, head + (chunks.length > 1 ? '(' + (i + 1) + '/' + chunks.length + ') ' : '') + c);
+  });
+}
+
 function log_(step, message) {
   try {
     var sh = SpreadsheetApp.getActive().getSheetByName(SHEET_LOG);

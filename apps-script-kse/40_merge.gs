@@ -160,13 +160,18 @@ function mergeReports_(ord, prc, names) {
   var noPrice = [];      // 가격 못 찾은 원본 행
   var items = [];        // 병합 성공 행
   var skippedDup = 0;
+  var dupIds = [];       // 중복으로 뺀 주문번호 — 로그에 남긴다
 
   ord.rows.forEach(function (r) {
     var orderId = cellAt_(r, oc.orderId);
     var itemId = cellAt_(r, oc.orderItemId);
     if (!orderId && !itemId) return;
 
-    if (seen[orderId]) { skippedDup++; return; }
+    if (seen[orderId]) {
+      skippedDup++;
+      if (dupIds.indexOf(orderId) < 0) dupIds.push(orderId);
+      return;
+    }
 
     // 가격을 못 찾은 행도 빼지 않고 같이 묶는다.
     // 배송지가 같으면 한 박스이므로, 가격 없는 상품만 따로 떼어놓으면
@@ -468,6 +473,21 @@ function mergeReports_(ord, prc, names) {
     (bizCount ? '\n법인주문 ' + bizCount + '건 — [' + SHEET_ERROR +
       '] 으로 보냈습니다 (굵은 글씨 + 연한 초록)' : '');
   log_('병합', (names || '') + ' — ' + summary.replace(/\n/g, ' / '));
+
+  // 어느 주문이 어디로 갔는지 번호로 남긴다 — 나중에 '이 주문 왜 없지' 를 로그만 보고 찾게.
+  // [주문] 으로 간 것은 시트에 그대로 있으니 적지 않는다.
+  var idsOf = function (list) {
+    var out = [];
+    list.forEach(function (r) {
+      String(r[COL.ORDER_IDS - 1] || '').split('\n').forEach(function (id) {
+        if (id.trim()) out.push(id.trim());
+      });
+    });
+    return out;
+  };
+  logIds_('병합', '중복 제외 (이미 [' + SHEET_ORDERS + ']·[' + SHEET_DONE + '] 에 있음)', dupIds);
+  logIds_('병합', '[' + SHEET_ERROR + '] 으로 보낸 주문', idsOf(toError));
+  logIds_('병합', '[' + SHEET_PICK + '] 으로 보낸 주문', idsOf(toPick));
   return { added: toOrders.length, message: (names ? names + '\n' : '') + summary };
 }
 
