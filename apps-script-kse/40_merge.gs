@@ -51,7 +51,8 @@ function buildAddress_(row, index, cfg) {
     var v = cellAt_(row, idx);
     if (v) parts.push(v);
   }
-  return dedupePrefecture_(parts.join(' '));
+  // 아마존이 address-1 에 도도부현·시를 또 넣어 준 경우 겹치는 머리를 뗀다 (00_config.gs)
+  return joinAddrParts_(parts);
 }
 
 /**

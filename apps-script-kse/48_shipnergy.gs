@@ -111,10 +111,20 @@ function shipRow_(it, box, cfg, sheetTitle) {
 
   // 주소 — 손으로 고쳤거나 원본 조각이 없으면 시트 주소를 1번 칸에 통째로
   var sheetAddr = String(box.address || '').trim();
-  var origAddr = dedupePrefecture_([
+  // 시트 주소는 병합이 joinAddrParts_ 로 만든다 — 같은 식으로 만들어야 '안 고쳤다' 를 알아본다
+  var origAddr = joinAddrParts_([
     get('ship-state'), get('ship-city'),
     get('ship-address-1'), get('ship-address-2'), get('ship-address-3')
-  ].filter(function (s) { return s; }).join(' '));
+  ]);
+  // 원본 조각을 그대로 내보낼 때도 겹치는 머리는 뗀다 — 아마존이 address-1 에 도도부현·시를
+  // 또 넣어 주는 경우가 있어, 받는 쪽이 state + address 로 붙이면 두 번 나간다 (00_config.gs)
+  var fr = cleanAddrFrags_(out['ship-state'], out['ship-city'],
+    out['ship-address-1'], out['ship-address-2'], out['ship-address-3']);
+  out['ship-city'] = fr.city;
+  out['ship-address-1'] = fr.a1;
+  out['ship-address-2'] = fr.a2;
+  out['ship-address-3'] = fr.a3;
+
   if (!origAddr || (sheetAddr && sheetAddr !== origAddr)) {
     // Shipnergy 는 ship-state · ship-city 를 주소 앞에 다시 붙여 배송지를 만든다.
     // 시트 주소는 '도도부현 + 시 + 번지' 한 덩어리라, 그대로 넣으면 도도부현·시가
@@ -223,11 +233,13 @@ function prepareShipnergy() {
   var boxes = 0;
   var partial = 0;
   var splitBoxes = 0;
+  var ids = [];          // 내려받기를 누르면 이 박스들을 [완료] 로 옮긴다
 
   vals.forEach(function (v) {
     if (!String(v[COL.ORDER_ID - 1] || '').trim() && !String(v[COL.RECEIVER - 1] || '').trim()) return;
     var r = pickRowToBox_(v);
     boxes++;
+    if (String(v[COL.ORDER_ID - 1] || '').trim()) ids.push(String(v[COL.ORDER_ID - 1]).trim());
     if (!r.full) partial++;
 
     // 같은 박스인데 주문번호가 서로 다르면 Shipnergy 는 따로 올린다 (안내용으로만 센다)
@@ -262,8 +274,14 @@ function prepareShipnergy() {
     splitBoxes: splitBoxes,
     columns: SHIP_COLUMNS.length,
     name: name,
+    ids: ids,
     base64: Utilities.base64Encode(blob.getBytes())
   };
+}
+
+/** 다이얼로그가 '내려받기' 를 눌렀을 때 부른다 — 내려받은 박스를 [완료] 로 옮긴다 */
+function shipnergyDownloaded(ids) {
+  return { moved: moveToDoneFrom_(SHEET_SHIP, ids || [], DONE_VIA_SHIP) };
 }
 
 function shipnergy_다운() {

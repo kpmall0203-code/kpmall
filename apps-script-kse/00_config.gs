@@ -22,6 +22,10 @@ var SHEET_SHIP = 'shipnergy';       // Shipnergy 로 보낼 주문
 var SHEET_CONFIG = '설정';
 var SHEET_LOG = '로그';
 
+// 내려받기로 끝난 건의 표시 — 비고에 남겨, [완료] 에서 되돌릴 때 원래 시트를 알아본다
+var DONE_VIA_PICK = '[' + SHEET_PICK + '] 내려받음';
+var DONE_VIA_SHIP = '[' + SHEET_SHIP + '] 내려받음';
+
 // ── [주문] 시트 컬럼 (1-based). 1행 = KSE 패키지 1건 ─────────────────────
 var COL = {
   STATUS: 1,        // 상태
@@ -367,6 +371,48 @@ function stripAddrHead_(addr, heads) {
   return t.trim();
 }
 
+/**
+ * 주소 조각(ship-state, ship-city, ship-address-1~3)을 이을 때 겹치는 머리를 뗀다.
+ *
+ * 아마존 리포트는 ship-state 를 따로 주면서 address-1 에도 '東京都目黒区…' 처럼 도도부현을
+ * 또 넣는 경우가 있고(오늘 625행 중 9행), city 와 address-1 이 같은 경우도 있다(3행).
+ * 그대로 이으면 '東京都東京都目黒区…' 가 되어 KSE·야마토·Shipnergy 에 그대로 나간다.
+ * 앞 조각이 뒤 조각의 머리에 들어 있을 때만 떼고, 순서는 지키고, 빈 조각은 뺀다.
+ * (도도부현으로 시작하는 지명 — '東京都心…' 같은 — 은 이론상 잘못 뗄 수 있으나
+ *  아마존 주소 칸에서는 본 적이 없다.)
+ */
+function dedupeAddrParts_(parts) {
+  var out = [];
+  (parts || []).forEach(function (p) {
+    var t = String(p == null ? '' : p).trim();
+    if (!t) return;
+    t = stripAddrHead_(t, out);
+    if (t) out.push(t);
+  });
+  return out;
+}
+
+/**
+ * 원본 주소 조각을 칸별로 돌려주되 겹치는 머리를 뗀다 — 조각을 따로 내보내는 양식
+ * (Shipnergy·아마존 32컬럼·야마토 B2)용. dedupeAddrParts_ 와 같은 규칙이라, 이 조각을
+ * 이어 붙이면 시트의 주소 칸(joinAddrParts_)과 같은 글자가 된다.
+ * 뗀 뒤 빈 칸이 생기면 address-1~3 은 앞으로 당긴다.
+ */
+function cleanAddrFrags_(state, city, a1, a2, a3) {
+  var s = String(state == null ? '' : state).trim();
+  var c = stripAddrHead_(city, [s]);
+  var x1 = stripAddrHead_(a1, [s, c]);
+  var x2 = stripAddrHead_(a2, [s, c, x1]);
+  var x3 = stripAddrHead_(a3, [s, c, x1, x2]);
+  var seq = [x1, x2, x3].filter(function (v) { return v; });
+  return { state: s, city: c, a1: seq[0] || '', a2: seq[1] || '', a3: seq[2] || '' };
+}
+
+/** 주소 조각을 한 줄로 — 시트의 주소 칸과 KSE ReceiverFullAddr 가 이것을 쓴다. */
+function joinAddrParts_(parts) {
+  return dedupePrefecture_(dedupeAddrParts_(parts).join(' '));
+}
+
 /** 앞뒤로 같은 도도부현이 두 번 붙는 경우를 하나로 줄인다. */
 function dedupePrefecture_(addr) {
   return String(addr || '')
@@ -468,6 +514,48 @@ function moveToDone_(rows) {
 }
 
 /**
+ * 어느 시트에서든 주문번호로 골라 [완료] 로 옮긴다 — 근석이·shipnergy 내려받기가 쓴다.
+ *
+ * KSE 를 거치지 않은 건이라 접수번호는 비어 있고, 비고에 어디로 나갔는지를 남긴다
+ * (DONE_VIA_PICK / DONE_VIA_SHIP). [완료] 에서 되돌리면 그 표시를 보고 원래 시트로 간다.
+ * 행 번호가 아니라 주문번호로 고른다 — 다이얼로그가 떠 있는 동안 시트가 바뀌어도 안전하다.
+ *
+ * @return {number} 옮긴 행 수
+ */
+function moveToDoneFrom_(sheetName, ids, via) {
+  var sh = SpreadsheetApp.getActive().getSheetByName(sheetName);
+  if (!sh || sh.getLastRow() < 2 || !ids || !ids.length) return 0;
+  var want = {};
+  ids.forEach(function (id) { want[String(id == null ? '' : id).trim()] = true; });
+
+  var vals = sh.getRange(2, 1, sh.getLastRow() - 1, COL_COUNT).getValues();
+  var stamp = nowStr_();
+  var picked = [];
+  for (var i = 0; i < vals.length; i++) {
+    var v = vals[i];
+    if (!want[String(v[COL.ORDER_ID - 1] == null ? '' : v[COL.ORDER_ID - 1]).trim()]) continue;
+    v[COL.STATUS - 1] = ST.DONE;
+    v[COL.DONE_AT - 1] = stamp;
+    var note = String(v[COL.NOTE - 1] || '').trim();
+    var mark = via + ' ' + stamp;
+    v[COL.NOTE - 1] = note ? note + ' / ' + mark : mark;
+    picked.push({ row: i + 2, v: v });
+  }
+  if (!picked.length) return 0;
+
+  var done = doneSheet_();
+  var dStart = done.getLastRow() + 1;
+  var rows = picked.map(function (p) { return p.v; });
+  writeRows_(done, dStart, rows);
+  markBizRows_(done, dStart, rows);
+  deleteRowsAt_(sh, picked.map(function (p) { return p.row; }));
+  SpreadsheetApp.flush();
+  logIds_('완료처리', '[' + sheetName + '] 내려받음 → [' + SHEET_DONE + ']',
+    rows.map(function (v) { return String(v[COL.ORDER_ID - 1]); }));
+  return picked.length;
+}
+
+/**
  * 사람이 판단해야 할 주문을 모아두는 [오류확인] 시트.
  * 관세 신고 대상(합계 임계값 초과)처럼 그대로 보내면 안 되는 건이 여기로 온다.
  */
@@ -533,34 +621,66 @@ function restoreFromError_(orderIds) {
   return { n: picked.length, pick: toPick };
 }
 
-/** [완료] → [주문] 되돌리기 (KSE·업로드가 반려됐을 때) */
+/**
+ * [완료] → 원래 시트로 되돌리기.
+ *
+ * KSE 로 접수한 건은 [주문] 으로 (KSE·업로드가 반려됐을 때).
+ * 근석이·shipnergy 로 내려받아 끝난 건(비고의 DONE_VIA_*)은 그 시트로 대기 상태로 돌아간다 —
+ * 파일을 다시 만들 수 있게. [주문] 으로 보내면 KSE 로 나갈 수 있어 위험하다.
+ *
+ * @return {{n:number, orders:number, pick:number, ship:number}}
+ */
 function restoreFromDone_(orderIds) {
   var want = {};
   (orderIds || []).forEach(function (id) { want[String(id).trim()] = true; });
 
+  var empty = { n: 0, orders: 0, pick: 0, ship: 0 };
   var done = doneSheet_();
-  if (done.getLastRow() < 2) return 0;
+  if (done.getLastRow() < 2) return empty;
 
   var vals = done.getRange(2, 1, done.getLastRow() - 1, COL_COUNT).getValues();
   var picked = [];
   for (var i = 0; i < vals.length; i++) {
     if (want[String(vals[i][COL.ORDER_ID - 1]).trim()]) picked.push({ row: i + 2, v: vals[i] });
   }
-  if (!picked.length) return 0;
+  if (!picked.length) return empty;
 
-  var orders = ordersSheet_();
-  writeRows_(orders, orders.getLastRow() + 1, picked.map(function (p) {
-      var v = p.v.slice();
+  var stamp = nowStr_();
+  var toOrders = [], toPick = [], toShip = [];
+  picked.forEach(function (p) {
+    var v = p.v.slice();
+    var note = String(v[COL.NOTE - 1] || '');
+    v[COL.DONE_AT - 1] = '';
+    if (note.indexOf(DONE_VIA_PICK) >= 0 || note.indexOf(DONE_VIA_SHIP) >= 0) {
+      // 내려받기 표시만 떼고 나머지 비고는 남긴다
+      var kept = note.split(' / ').filter(function (seg) {
+        var s = seg.trim();
+        return s && s.indexOf(DONE_VIA_PICK) !== 0 && s.indexOf(DONE_VIA_SHIP) !== 0;
+      });
+      kept.push('되돌림 ' + stamp);
+      v[COL.STATUS - 1] = ST.READY;
+      v[COL.NOTE - 1] = kept.join(' / ');
+      (note.indexOf(DONE_VIA_PICK) >= 0 ? toPick : toShip).push(v);
+    } else {
       v[COL.STATUS - 1] = String(v[COL.INVOICE - 1]).trim() ? ST.INVOICED : ST.SENT;
-      v[COL.DONE_AT - 1] = '';
-      v[COL.NOTE - 1] = '되돌림 ' + nowStr_();
-      return v;
-    }));
+      v[COL.NOTE - 1] = '되돌림 ' + stamp;
+      toOrders.push(v);
+    }
+  });
+
+  var put = function (sh, rows) {
+    if (!rows.length) return;
+    var start = sh.getLastRow() + 1;
+    writeRows_(sh, start, rows);
+    markBizRows_(sh, start, rows);
+  };
+  put(ordersSheet_(), toOrders);
+  put(pickSheet_(), toPick);
+  put(shipSheet_(), toShip);
 
   deleteRowsAt_(done, picked.map(function (p) { return p.row; }));
-
   SpreadsheetApp.flush();
-  return picked.length;
+  return { n: picked.length, orders: toOrders.length, pick: toPick.length, ship: toShip.length };
 }
 
 /**

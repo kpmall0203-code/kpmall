@@ -155,6 +155,10 @@ function b2Address_(box, items) {
 
   var addr, bldgParts = [];
   if (pref && (city || a1)) {
+    // 아마존이 city·address-1 에 도도부현(또는 시)을 또 넣어 준 경우 겹치는 머리를 뗀다 —
+    // 그대로 붙이면 '東京都東京都目黒区…' 가 송장에 찍힌다
+    var fr = cleanAddrFrags_(pref, city, a1, a2, a3);
+    city = fr.city; a1 = fr.a1; a2 = fr.a2; a3 = fr.a3;
     var s1 = splitBldg_(a1);
     addr = pref + city + s1.addr;
     if (s1.bldg) bldgParts.push(s1.bldg);
@@ -320,11 +324,13 @@ function preparePickB2() {
   var boxes = 0;
   var partial = 0;
   var cut = 0;
+  var ids = [];          // 내려받기를 누르면 이 박스들을 [완료] 로 옮긴다
 
   vals.forEach(function (v) {
     if (!String(v[COL.ORDER_ID - 1] || '').trim() && !String(v[COL.RECEIVER - 1] || '').trim()) return;
     var r = pickRowToBox_(v);
     boxes++;
+    if (String(v[COL.ORDER_ID - 1] || '').trim()) ids.push(String(v[COL.ORDER_ID - 1]).trim());
     if (!r.full) partial++;
     var line = b2Row_(r.box, r.items, cfg);
     // 글자 수 제한으로 잘린 칸이 있으면 세어 알려준다
@@ -376,6 +382,7 @@ function preparePickB2() {
     header: header,
     missing: missing,
     name: name,
+    ids: ids,
     base64: Utilities.base64Encode(blob.getBytes())
   };
 }

@@ -42,10 +42,11 @@ function amzExportRow_(it, box) {
 
   // 사람이 시트에서 고쳐 넣는 칸은 시트 값이 이긴다 (붉은 칸을 손으로 채우는 흐름)
   var sheetAddr = String(box.address || '').trim();
-  var origAddr = dedupePrefecture_([
+  // 시트 주소는 병합이 joinAddrParts_ 로 만든다 — 같은 식으로 만들어야 '안 고쳤다' 를 알아본다
+  var origAddr = joinAddrParts_([
     get('ship-state'), get('ship-city'),
     get('ship-address-1'), get('ship-address-2'), get('ship-address-3')
-  ].filter(function (s) { return s; }).join(' '));
+  ]);
   var addrEdited = sheetAddr && origAddr && sheetAddr !== origAddr;
 
   var out = {};
@@ -84,6 +85,15 @@ function amzExportRow_(it, box) {
   prefer('ship-postal-code', box.zip, function (x) { return zipJP_(x); });
   prefer('ship-country', box.country, function (x) { return String(x).toUpperCase(); });
   if (!out['recipient-name']) out['recipient-name'] = String(box.receiver || '');
+
+  // 원본 조각을 그대로 내보낼 때도 겹치는 머리는 뗀다 — 아마존이 address-1 에 도도부현·시를
+  // 또 넣어 주는 경우가 있어, 받는 쪽이 state + address 로 붙이면 두 번 나간다 (00_config.gs)
+  var fr = cleanAddrFrags_(out['ship-state'], out['ship-city'],
+    out['ship-address-1'], out['ship-address-2'], out['ship-address-3']);
+  out['ship-city'] = fr.city;
+  out['ship-address-1'] = fr.a1;
+  out['ship-address-2'] = fr.a2;
+  out['ship-address-3'] = fr.a3;
 
   if (addrEdited || !origAddr) {
     // 주소를 손으로 고쳤거나 원본 주소가 없으면 시트 주소를 1번 칸에 넣는다.
@@ -156,11 +166,13 @@ function preparePickCsv() {
   var lines = [AMZ_EXPORT_COLUMNS.map(csvField_).join(',')];
   var boxes = 0;
   var partial = 0;
+  var ids = [];          // 내려받기를 누르면 이 박스들을 [완료] 로 옮긴다
 
   vals.forEach(function (v) {
     if (!String(v[COL.ORDER_ID - 1] || '').trim() && !String(v[COL.RECEIVER - 1] || '').trim()) return;
     var r = pickRowToBox_(v);
     boxes++;
+    if (String(v[COL.ORDER_ID - 1] || '').trim()) ids.push(String(v[COL.ORDER_ID - 1]).trim());
     if (!r.full) partial++;
     r.items.forEach(function (it) { lines.push(amzExportRow_(it, r.box)); });
   });
@@ -189,8 +201,17 @@ function preparePickCsv() {
     header: true,
     columns: AMZ_EXPORT_COLUMNS.length,
     name: name,
+    ids: ids,
     base64: Utilities.base64Encode(blob.getBytes())
   };
+}
+
+/**
+ * 다이얼로그가 '내려받기' 를 눌렀을 때 부른다 — 내려받은 박스를 [완료] 로 옮긴다.
+ * 파일만 만들고 닫으면 아무것도 움직이지 않는다. 같은 창에서 '다시 내려받기' 는 다시 옮기지 않는다.
+ */
+function pickDownloaded(ids) {
+  return { moved: moveToDoneFrom_(SHEET_PICK, ids || [], DONE_VIA_PICK) };
 }
 
 /**
@@ -271,6 +292,9 @@ function prepareShipConfirm() {
   var merged = 0;
 
   vals.forEach(function (v) {
+    // 근석이·shipnergy 로 내려받아 끝난 건은 KSE 를 안 거쳐 접수번호가 없다 — 그쪽 송장으로 따로 한다
+    var note = String(v[COL.NOTE - 1] || '');
+    if (note.indexOf(DONE_VIA_PICK) >= 0 || note.indexOf(DONE_VIA_SHIP) >= 0) return;
     var inv = String(v[trackCol - 1] || '').trim();
     if (!inv) { if (String(v[COL.ORDER_ID - 1] || '').trim()) noInvoice++; return; }
 

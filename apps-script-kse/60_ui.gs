@@ -48,7 +48,7 @@ function onOpen() {
     .addSubMenu(ui.createMenu('점검')
       .addItem('배송상태 새로고침', 'KSE_배송상태_조회')
       .addItem('오류확인 → 주문으로 되돌리기', '오류확인_되돌리기')
-      .addItem('완료 → 주문으로 되돌리기', '완료_되돌리기')
+      .addItem('완료 → 되돌리기 (원래 시트로)', '완료_되돌리기')
       .addItem('근석이 → 주문으로 되돌리기', '근석이_되돌리기')
       .addItem('shipnergy → 주문으로 되돌리기', 'shipnergy_되돌리기')
       .addItem('KSE 연결 테스트', 'KSE_연결테스트')
@@ -226,7 +226,7 @@ function 오류확인_되돌리기() {
 /** KSE 접수가 잘못됐을 때, [완료]로 옮긴 건을 [주문]으로 되돌린다. */
 function 완료_되돌리기() {
   var ui = SpreadsheetApp.getUi();
-  var res = ui.prompt('완료 → 주문으로 되돌리기',
+  var res = ui.prompt('완료 → 되돌리기 (원래 시트로)',
     '되돌릴 대표주문번호를 콤마로 구분해 적어주세요.\n예: 250-5587398-0612618',
     ui.ButtonSet.OK_CANCEL);
   if (res.getSelectedButton() !== ui.Button.OK) return;
@@ -236,10 +236,15 @@ function 완료_되돌리기() {
     .filter(function (x) { return x; });
   if (!ids.length) return;
 
-  var n = restoreFromDone_(ids);
-  log_('되돌리기', n + '건 (' + ids.join(', ') + ')');
-  ui.alert(n ? n + '건을 [' + SHEET_ORDERS + '] 시트로 되돌렸습니다.'
-             : '[' + SHEET_DONE + '] 시트에서 해당 주문번호를 찾지 못했습니다.');
+  var r = restoreFromDone_(ids);
+  log_('되돌리기', '[' + SHEET_DONE + '] → 주문 ' + r.orders + ' / 근석이 ' + r.pick +
+    ' / shipnergy ' + r.ship + ' (' + ids.join(', ') + ')');
+  ui.alert(r.n
+    ? r.n + '건을 되돌렸습니다.\n' +
+      (r.orders ? '  [' + SHEET_ORDERS + '] ' + r.orders + '건 (KSE 접수 건)\n' : '') +
+      (r.pick ? '  [' + SHEET_PICK + '] ' + r.pick + '건 (내려받았던 건, 대기로)\n' : '') +
+      (r.ship ? '  [' + SHEET_SHIP + '] ' + r.ship + '건 (내려받았던 건, 대기로)\n' : '')
+    : '[' + SHEET_DONE + '] 시트에서 해당 주문번호를 찾지 못했습니다.');
 }
 
 // ── 도움말 ──────────────────────────────────────────────────────────────
@@ -307,6 +312,10 @@ function 도움말() {
     '행을 그대로 복사·이동하면 되고, 양식 변환은 내려받을 때만 합니다. ' +
     'Shipnergy 는 주문번호(order-id)가 같은 줄만 한 건으로 합치므로, 주문번호가 다른 ' +
     '합배송 박스는 따로 올라갑니다 (다이얼로그가 몇 건인지 알려줍니다).</p>' +
+    '<p style="color:#666"><b>내려받으면 [완료] 로.</b> 근석이 시트 다운·shipnergy 다운에서 ' +
+    '<b>내려받기</b>를 누르면 그 행들은 [완료] 시트로 옮겨지고 비고에 어디로 나갔는지 남습니다. ' +
+    '그래서 [완료] 에는 KSE·근석이·shipnergy 로 나간 것이 모두 모입니다. 파일만 만들고 닫으면 ' +
+    '움직이지 않습니다. 되돌리려면 <b>점검 > 완료 → 되돌리기</b> — 원래 시트로 돌아갑니다.</p>' +
     '<p style="color:#666"><b>[지정상품명]</b> 시트 상품명 칸에 적어 넣으면, ' +
     '그 물건<b>만</b> 담긴 박스가 [근석이] 시트로 갑니다. 목록에 있는 물건과 없는 물건이 ' +
     '한 박스에 섞이면 박스를 쪼갤 수 없으므로 [주문] 에 그대로 남깁니다. ' +
