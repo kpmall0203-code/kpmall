@@ -20,16 +20,24 @@
  * 수량이 아니라 설명인 자리가 있다. 뒤에 오는 글자로 가려낸다 (아래 descOnly_).
  */
 
-// 일본어 수량 단위 → 한국어 · 영문.
+// 일본어 수량 단위 → 한국어 · 영문 · (뒤에 이 글자가 오면 수량이 아니다).
 // 긴 것을 앞에 둔다 ('10個入り' 를 '10個' 로 끊지 않으려고).
+// 넷째 칸: '15 本体' 의 本, '2 入浴剤' 의 入 처럼 낱말의 첫 글자일 뿐인 경우를 걸러낸다.
 var QTY_UNITS = [
   ['個入り', '개입', 'ea'], ['袋入り', '봉지', 'bags'], ['本入り', '개입', 'ea'],
   ['枚入り', '매', 'sheets'], ['錠入り', '정', 'tablets'], ['粒入り', '정', 'tablets'],
-  ['カプセル', '캡슐', 'capsules'], ['パック', '팩', 'packs'], ['セット', '세트', 'set'],
+  ['カプセル', '캡슐', 'capsules'], ['パック', '팩', 'packs'], ['セット', '세트', 'set', 'アップ'],
   ['入り', '개입', 'ea'],
-  ['個', '개', 'ea'], ['袋', '봉지', 'bags'], ['本', '개', 'ea'], ['箱', '박스', 'boxes'],
-  ['包', '포', 'packs'], ['枚', '매', 'sheets'], ['錠', '정', 'tablets'],
-  ['粒', '정', 'tablets'], ['缶', '캔', 'cans'], ['入', '개입', 'ea']
+  ['個', '개', 'ea', '人|性|別|室|所|体|数|々|包'],
+  ['袋', '봉지', 'bags', '小|入'],
+  ['本', '개', 'ea', '体|格|物|当|来|社|店|日|人|質|部|舗|場|名|文|数|籍|棚|命|能|音|州|音|気|島'],
+  ['箱', '박스', 'boxes', '入'],
+  ['包', '포', 'packs', '装|丁|囲|括|含|茎'],
+  ['枚', '매', 'sheets', '数|目'],
+  ['錠', '정', 'tablets', '剤|前'],
+  ['粒', '정', 'tablets', '子|度|状'],
+  ['缶', '캔', 'cans', '詰'],
+  ['入', '개입', 'ea', '浴|力|門|口|場|学|手|荷|金|札|居|会|院|国|港|室|試|団|社|園|念|部|籍|選|賞|信|所|札|力|館']
 ];
 
 /**
@@ -63,7 +71,7 @@ function qtyTokens_(src) {
   // '[並行輸入品]' 같은 유통 표시 안의 숫자는 상품 수량이 아니다 — 괄호째 뺀다
   s = s.replace(/[\[【(（][^\[\]【】()（）]*?(並行輸入品?|輸入)[^\[\]【】()（）]*?[\]】)）]/g, ' ');
 
-  var units = QTY_UNITS.map(function (u) { return u[0]; }).join('|');
+  var units = QTY_UNITS.map(function (u) { return u[0] + (u[3] ? '(?!' + u[3] + ')' : ''); }).join('|');
   // 앞의 (約|約) 까지 같이 잡는다 — '約35個' 을 '35개' 로 단정하지 않으려고
   var re = new RegExp('(約|およそ)?[ 　]*(\\d+)\\s*(' + units + ')([ 　]*セット)?', 'g');
   var out = [];
@@ -89,7 +97,8 @@ function qtyTokens_(src) {
 }
 
 // 용량·부피 단위 — 한국어 표기는 원문 그대로 쓴다 (g, ml 은 번역할 것이 없다)
-var SIZE_RE = /(\d+(?:[.,]\d+)?)[ 　]*(kg|mg|g|ml|mL|L|ℓ|cc|oz)(?![A-Za-z])/g;
+// 'ℓ' 는 NFKC 정규화를 거치면 소문자 l 이 되므로 l 도 받는다 (적을 때는 L 로)
+var SIZE_RE = /(\d+(?:[.,]\d+)?)[ 　]*(kg|mg|g|ml|mL|L|l|ℓ|cc|oz)(?![A-Za-z])/g;
 
 /**
  * 용량이 통째로 빠진 번역을 메운다.
@@ -99,7 +108,7 @@ var SIZE_RE = /(\d+(?:[.,]\d+)?)[ 　]*(kg|mg|g|ml|mL|L|ℓ|cc|oz)(?![A-Za-z])/g
  * 번역에 용량이 이미 있으면 (0.5oz/15ml 처럼 같은 값을 두 단위로 적은 것 등)
  * 건드리지 않는다. 덜 붙이는 쪽이 안전하다.
  */
-function keepSize_(src, text) {
+function keepSize_(src, text, lang) {
   var t = String(text == null ? '' : text).trim();
   if (!t) return t;
   SIZE_RE.lastIndex = 0;
@@ -114,7 +123,8 @@ function keepSize_(src, text) {
   while ((m = SIZE_RE.exec(s)) !== null) {
     // '2L分'(2리터 분량) 처럼 쓰는 법을 말하는 자리는 뺀다
     if (/^[ 　]*(分|相当|につき|あたり|当たり)/.test(s.slice(SIZE_RE.lastIndex))) continue;
-    return t + ' ' + m[1] + m[2];
+    // 'ℓ'·'l' 은 L 로 (통관 영문명은 영문·숫자만, 한국어 표기도 L 이 보통)
+    return t + ' ' + m[1] + m[2].replace(/[ℓl]/, 'L');
   }
   return t;
 }
@@ -130,7 +140,7 @@ function keepSize_(src, text) {
 function keepQty_(src, text, lang) {
   var t = String(text == null ? '' : text).trim();
   if (!t) return t;
-  t = keepSize_(src, t);                    // 용량이 통째로 빠졌으면 먼저 메운다
+  t = keepSize_(src, t, lang);              // 용량이 통째로 빠졌으면 먼저 메운다
   var toks = qtyTokens_(src);
   if (!toks.length) return t;
 

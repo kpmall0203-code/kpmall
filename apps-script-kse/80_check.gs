@@ -139,11 +139,13 @@ function priceDefect_(v, cfg) {
 
   var qs = String(v[COL.QTY - 1] == null ? '' : v[COL.QTY - 1]).split('\n');
   var us = String(v[COL.UNIT_PRICE - 1] == null ? '' : v[COL.UNIT_PRICE - 1]).split('\n');
+  // [설정] 단가기준이 '그대로' 면 단가 칸에 줄 합계(item-price)가 그대로 들어 있다 — 수량을 곱하지 않는다
+  var lineAsIs = String((cfg || getConfig()).단가기준 || '').trim() === '그대로';
   if (us.length === qs.length) {
     var sum = 0, ok = true;
     for (var i = 0; i < us.length; i++) {
       if (String(us[i]).trim() === '') { ok = false; break; }
-      sum += num_(us[i], 0) * (parseInt(num_(qs[i], 1), 10) || 1);
+      sum += num_(us[i], 0) * (lineAsIs ? 1 : (parseInt(num_(qs[i], 1), 10) || 1));
     }
     if (ok && Math.abs(sum - total) >= 1) {
       return { level: LV_NO, reason: '금액 안 맞음 — 단가×수량 ' + round_(sum, 0) +

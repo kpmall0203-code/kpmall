@@ -125,6 +125,8 @@ function KSE_배송등록() {
 function kseSendRound_(cfg, t0) {
   var deadline = t0 + KSE_RUN_BUDGET_MS;
   var targets = 전송대상_(cfg);
+  // 시트에 쓸 때는 행 번호가 아니라 주문번호로 찾는다 (applyUpdatesById_) — 그 사이 행이 밀려도 안전
+  var tid = function (t) { return String(t.v[COL.ORDER_ID - 1] == null ? '' : t.v[COL.ORDER_ID - 1]).trim(); };
   var res = { targets: targets.length, ok: 0, ng: 0, blocked: 0, deferred: 0,
               got: 0, done: 0, followupSkipped: false };
   if (!targets.length) return res;
@@ -145,12 +147,12 @@ function kseSendRound_(cfg, t0) {
 
     if (!missing.length) return true;
     res.blocked++;
-    blockedUpdates.push([t.row, COL.NOTE, 'KSE 필수값 없음: ' +
+    blockedUpdates.push([tid(t), COL.NOTE, 'KSE 필수값 없음: ' +
       missing.map(function (m) { return m[0]; }).join(', ') + ' — 채운 뒤 다시 실행']);
     return false;
   });
   applyWarnColors_(warnSet, touched);
-  applyUpdates_(blockedUpdates);           // 보류 사유는 바로 적는다
+  applyUpdatesById_(blockedUpdates);       // 보류 사유는 바로 적는다
   if (!targets.length) return res;
 
   var size = Math.max(1, Math.min(parseInt(cfg.KSE_배치크기, 10) || 20, KSE_QUERY_MAX));
@@ -175,8 +177,8 @@ function kseSendRound_(cfg, t0) {
         // 시트에서 손으로 고친 값(수취인·단가·상품명·수량 …)을 반영해서 보낸다
         var pr = rowToGroup_(t.v);
         if (pr.warn.length) {
-          updates.push([t.row, COL.STATUS, ST.ERROR]);
-          updates.push([t.row, COL.NOTE,
+          updates.push([tid(t), COL.STATUS, ST.ERROR]);
+          updates.push([tid(t), COL.NOTE,
             '시트 수정을 반영할 수 없습니다 — ' + pr.warn.join(' / ') +
             '. 상품이 여러 개인 박스는 줄 수를 상품 수와 맞춰주세요']);
           res.ng++;
@@ -184,16 +186,16 @@ function kseSendRound_(cfg, t0) {
         }
         var pkg = kseBuildPackage_(pr.g, cfg);
         packages.push(pkg);
-        batchRows.push(t.row);
+        batchRows.push(tid(t));
         // 고친 값을 _원본JSON 에도 반영해 두면 이후 단계(발송확인 파일 등)가 같은 값을 쓴다
-        updates.push([t.row, COL.RAW, JSON.stringify(pr.g)]);
+        updates.push([tid(t), COL.RAW, JSON.stringify(pr.g)]);
         // 실제로 보내는 무게를 시트에도 반영해 표시와 전송값이 어긋나지 않게 한다
         if (num_(t.v[COL.WEIGHT - 1], 0) !== pkg.RealWeight) {
-          updates.push([t.row, COL.WEIGHT, pkg.RealWeight]);
+          updates.push([tid(t), COL.WEIGHT, pkg.RealWeight]);
         }
       } catch (e) {
-        updates.push([t.row, COL.STATUS, ST.ERROR]);
-        updates.push([t.row, COL.NOTE, '요청 생성 실패: ' + e]);
+        updates.push([tid(t), COL.STATUS, ST.ERROR]);
+        updates.push([tid(t), COL.NOTE, '요청 생성 실패: ' + e]);
         res.ng++;
       }
     });
@@ -243,7 +245,7 @@ function kseSendRound_(cfg, t0) {
     }
 
     // 배치마다 바로 적는다 — 여기서 끊겨도 잃는 것은 이 한 배치뿐이다
-    applyUpdates_(updates);
+    applyUpdatesById_(updates);
     lastBatchMs = Date.now() - bt;
   }
 
@@ -315,6 +317,11 @@ function KSE_배송등록_이어서() {
   var r;
   try {
     r = kseSendRound_(getConfig(), Date.now());
+  } catch (e) {
+    // 예외로 죽으면 아무 기록 없이 멈춘다 — 로그를 남기고 2분 뒤 한 번 더 (상한은 rounds 가 막는다)
+    log_('KSE등록', '자동 이어보내기 ' + rounds + '회 실패 — ' + String(e).slice(0, 300) + ' / 2분 뒤 다시');
+    kseScheduleContinue_(2);
+    return;
   } finally {
     lock.releaseLock();
   }
@@ -343,6 +350,8 @@ function 조회대상_() {
 
 function 배송상태_갱신_(targets) {
   var updates = [], states = [], got = 0, updated = 0;
+  // 시트에 쓸 때는 주문번호로 찾는다 — 조회하는 사이 행이 밀려도 엉뚱한 행에 안 적히게
+  var tid = function (t) { return String(t.v[COL.ORDER_ID - 1] == null ? '' : t.v[COL.ORDER_ID - 1]).trim(); };
 
   chunk_(targets, KSE_TRACKING_MAX).forEach(function (batch) {   // 1회 최대 20건
     var nos = batch.map(function (t) { return String(t.v[COL.KSE_NO - 1]).trim(); });
@@ -386,7 +395,7 @@ function 배송상태_갱신_(targets) {
     });
   });
 
-  applyUpdates_(updates);
+  applyUpdatesById_(updates);
   return { got: got, updated: updated, states: states };
 }
 
@@ -396,8 +405,18 @@ function KSE_배송상태_조회() {
     SpreadsheetApp.getUi().alert('조회할 KSE 접수건이 없습니다.\n(② 배송등록을 마친 건이 대상입니다)');
     return 0;
   }
-  var r = 배송상태_갱신_(targets);
-  var done = 완료_처리_();
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    SpreadsheetApp.getUi().alert('배송등록(자동 이어보내기)이 진행 중입니다. 끝난 뒤 다시 누르세요.');
+    return 0;
+  }
+  var r, done;
+  try {
+    r = 배송상태_갱신_(targets);
+    done = 완료_처리_();
+  } finally {
+    lock.releaseLock();
+  }
   var summary = '대상 ' + targets.length + '건 — 배송상태 갱신 ' + r.updated +
     '건 / 송장번호 신규 ' + r.got + '건 / [' + SHEET_DONE + '] 이관 ' + done + '건';
   log_('송장조회', summary);

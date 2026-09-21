@@ -717,6 +717,39 @@ function applyTextFormat_(sh) {
 }
 
 /**
+ * updates: [[대표주문번호, col, value], ...] — 행 번호 대신 주문번호로 찾아 [주문] 에 쓴다.
+ *
+ * 배송등록·송장조회는 몇 분 걸린다. 그 사이 30분 자동조회가 완료 행을 지우거나 사람이
+ * 정렬·이동하면 처음에 찍어 둔 행 번호가 어긋나, 접수번호가 엉뚱한 행에 적히고 진짜 행은
+ * 대기로 남아 다음 실행이 또 보낸다. 그래서 쓰기 직전에 주문번호로 다시 찾는다.
+ * 못 찾은 것(행이 지워진 경우)은 값까지 로그에 남겨 접수번호를 잃지 않게 한다.
+ */
+function applyUpdatesById_(updates) {
+  if (!updates || !updates.length) return;
+  var sh = ordersSheet_();
+  var rowOf = {};
+  if (sh.getLastRow() >= 2) {
+    sh.getRange(2, COL.ORDER_ID, sh.getLastRow() - 1, 1).getValues().forEach(function (r, i) {
+      var id = String(r[0] == null ? '' : r[0]).trim();
+      if (id && rowOf[id] === undefined) rowOf[id] = i + 2;
+    });
+  }
+  var byRow = [], lost = [];
+  updates.forEach(function (u) {
+    var row = rowOf[String(u[0] == null ? '' : u[0]).trim()];
+    if (row === undefined) { lost.push(u); return; }
+    byRow.push([row, u[1], u[2]]);
+  });
+  applyUpdates_(byRow);
+  if (lost.length) {
+    log_('시트쓰기', '[' + SHEET_ORDERS + '] 에서 행을 못 찾아 적지 못함 ' + lost.length + '칸 — ' +
+      lost.map(function (u) {
+        return u[0] + ' (' + (HEADERS_ORDERS[u[1] - 1] || u[1]) + ') = ' + String(u[2]).slice(0, 40);
+      }).join(' / ').slice(0, 3500));
+  }
+}
+
+/**
  * 주문 양식 행을 시트에 쓴다 — 쓰기 직전에 그 범위의 번호 칸을 텍스트 서식으로 박는다.
  *
  * applyTextFormat_ 는 시트를 만들 때 한 번 걸리는데, 그 전에 만들어진 탭이나
@@ -874,7 +907,7 @@ function logIds_(step, label, ids) {
   var cur = '';
   list.forEach(function (id) {
     var next = cur ? cur + ', ' + id : id;
-    if (next.length > 3800) { chunks.push(cur); cur = id; }
+    if (next.length > 3800) { if (cur) chunks.push(cur); cur = id; }
     else cur = next;
   });
   if (cur) chunks.push(cur);
