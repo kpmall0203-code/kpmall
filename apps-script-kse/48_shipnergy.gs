@@ -233,13 +233,15 @@ function prepareShipnergy() {
   var boxes = 0;
   var partial = 0;
   var splitBoxes = 0;
-  var ids = [];          // 내려받기를 누르면 이 박스들을 [완료] 로 옮긴다
+  // 내려받기를 누르면 이 박스들을 [완료] 로 옮긴다.
+  // (아래 forEach 안의 지역변수 ids 와 이름이 겹치면 var 끌어올림으로 undefined 가 된다 — 다른 이름을 쓴다)
+  var orderIds = [];
 
   vals.forEach(function (v) {
     if (!String(v[COL.ORDER_ID - 1] || '').trim() && !String(v[COL.RECEIVER - 1] || '').trim()) return;
     var r = pickRowToBox_(v);
     boxes++;
-    if (String(v[COL.ORDER_ID - 1] || '').trim()) ids.push(String(v[COL.ORDER_ID - 1]).trim());
+    if (String(v[COL.ORDER_ID - 1] || '').trim()) orderIds.push(String(v[COL.ORDER_ID - 1]).trim());
     if (!r.full) partial++;
 
     // 같은 박스인데 주문번호가 서로 다르면 Shipnergy 는 따로 올린다 (안내용으로만 센다)
@@ -274,7 +276,7 @@ function prepareShipnergy() {
     splitBoxes: splitBoxes,
     columns: SHIP_COLUMNS.length,
     name: name,
-    ids: ids,
+    ids: orderIds,
     base64: Utilities.base64Encode(blob.getBytes())
   };
 }

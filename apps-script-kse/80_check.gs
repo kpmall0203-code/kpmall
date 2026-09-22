@@ -514,6 +514,9 @@ function 검사결과_이관_(rows, findings) {
   deleteRowsAt_(orders, flagged.map(function (r) { return r.row; }));
 
   SpreadsheetApp.flush();
+  // 어느 주문을 옮겼는지 남긴다 — 병합·비우기 로그와 합쳐 '이 주문 어디 갔지' 를 로그만으로 찾게
+  logIds_('검사', '[' + SHEET_ERROR + '] 으로 옮긴 주문',
+    flagged.map(function (r) { return String(r.v[COL.ORDER_ID - 1]); }));
   return flagged.length;
 }
 
