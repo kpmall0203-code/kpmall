@@ -431,7 +431,15 @@ var SALES_AUTO_MAX_DAYS = 3;      // 한 번에 몇 날까지 (리포트는 5분
  */
 function salesDailyAuto_() {
   var props = PropertiesService.getScriptProperties();
-  if (salesQueue_().length || props.getProperty(PROP_SALES_RANGE)) return '판매 수집이 도는 중이라 건너뜀';
+  if (salesQueue_().length || props.getProperty(PROP_SALES_RANGE)) {
+    // 큐는 있는데 이어받을 트리거가 없으면 죽은 것이다 (트리거 한도에 막혀 못 걸었던 날 — 실측 2026-09-19).
+    // 그대로 두면 "도는 중" 이라며 영영 건너뛴다. 이어받기를 다시 건다
+    var ts = ScriptApp.getProjectTriggers(), alive = false;
+    for (var t = 0; t < ts.length; t++) if (ts[t].getHandlerFunction() === SALES_CONTINUE_HANDLER) alive = true;
+    if (alive) return '판매 수집이 도는 중이라 건너뜀';
+    salesScheduleContinue_(true, 60);
+    return '멈춰 있던 판매 수집(남은 ' + salesQueue_().length + '구간)을 다시 걸었습니다';
+  }
   var full = adStatSalesDaily_().full;
   var to = addDays_(ymd_(new Date()), -SALES_AUTO_LAG_DAYS);
   var todo = [];

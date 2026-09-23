@@ -91,6 +91,18 @@ function adSchedDrop_(handler) {
  * 몇 번까지만 — 안 되는 것을 하루 종일 두드리지 않는다.
  * @return {boolean} 다시 걸었나
  */
+var ADSCHED_RETRY_HANDLER = 'adSchedRetryRun';   // 몇 분 뒤 다시 오는 걸음은 전부 이 손잡이 하나로
+var ADSCHED_RETRY_QUEUE = 'ADSCHED_RETRY_QUEUE';  // 다시 부를 핸들러 이름들 (JSON 배열)
+
+/**
+ * 몇 분 뒤 같은 걸음을 다시 건다 (아마존 리포트가 아직일 때). 몇 번까지만.
+ *
+ * 예전에는 핸들러 이름 그대로 .after() 트리거를 만들었다. 한 번 뜬 뒤에도 트리거 목록에
+ * 남는데 아무도 지우지 않았고(매일 트리거와 이름이 같아 가려 지울 수도 없다), 그렇게 쌓여
+ * 한도 20개에 닿자 나흘 동안 판매 수집·광고비 수집·검색어·신규 시작이 "트리거가 너무
+ * 많습니다" 로 조용히 죽었다 (실측 2026-09-19~22). 이제 다시 부를 이름을 큐에 적고
+ * 손잡이 하나(adSchedRetryRun)만 건다 — 그 손잡이는 제 트리거를 스스로 지운다.
+ */
 function adSchedRetry_(handler) {
   var props = PropertiesService.getScriptProperties();
   var key = ADSCHED_RETRY_PROP + handler;
@@ -102,10 +114,61 @@ function adSchedRetry_(handler) {
     return false;
   }
   props.setProperty(key, String(n));
-  ScriptApp.newTrigger(handler).timeBased().after(ADSCHED_RETRY_MIN * 60 * 1000).create();
+  var q = adQueueJson_(ADSCHED_RETRY_QUEUE);
+  if (q.indexOf(handler) < 0) q.push(handler);
+  props.setProperty(ADSCHED_RETRY_QUEUE, JSON.stringify(q));
+  adSchedDrop_(ADSCHED_RETRY_HANDLER);
+  ScriptApp.newTrigger(ADSCHED_RETRY_HANDLER).timeBased().after(ADSCHED_RETRY_MIN * 60 * 1000).create();
   log_('ads', 'INFO', handler + ' — 리포트가 아직이라 ' + ADSCHED_RETRY_MIN + '분 뒤 다시 (' +
        n + '/' + ADSCHED_RETRY_MAX + ')');
   return true;
+}
+
+function adQueueJson_(key) {
+  try { return JSON.parse(PropertiesService.getScriptProperties().getProperty(key) || '[]') || []; }
+  catch (e) { return []; }
+}
+
+/** 트리거: 큐에 적힌 걸음들을 다시 부른다. 제 트리거는 먼저 지운다 */
+function adSchedRetryRun() {
+  adSchedDrop_(ADSCHED_RETRY_HANDLER);
+  var props = PropertiesService.getScriptProperties();
+  var q = adQueueJson_(ADSCHED_RETRY_QUEUE);
+  props.deleteProperty(ADSCHED_RETRY_QUEUE);
+  for (var i = 0; i < q.length; i++) {
+    var fn = globalThis[q[i]];
+    if (typeof fn !== 'function') { log_('ads', 'WARN', '다시 부를 걸음이 없습니다: ' + q[i]); continue; }
+    try { fn(); } catch (e) { log_('ads', 'ERROR', '다시 부른 걸음 실패 ' + q[i] + ': ' + String(e).substring(0, 200)); }
+  }
+}
+
+/**
+ * 트리거 청소 — 걸음마다 트리거가 하나씩만 있게. 옛 재시도 트리거(핸들러 이름 그대로 뜬 것)가
+ * 남아 있으면 그 걸음의 트리거를 전부 지우고 제 시각 트리거를 다시 건다. 한도(20)에 닿아
+ * 조용히 죽는 것을 막는다. 매일 걸음이 시작할 때 한 번 본다 — 트리거 목록 읽기는 싸다.
+ */
+function adSchedSweep_() {
+  var ts, byH = {};
+  try { ts = ScriptApp.getProjectTriggers(); } catch (e) { return 0; }
+  for (var i = 0; i < ts.length; i++) {
+    var h = ts[i].getHandlerFunction();
+    (byH[h] || (byH[h] = [])).push(ts[i]);
+  }
+  var fixed = 0;
+  for (var a = 0; a < AD_AUTOMATIONS.length; a++) {
+    var au = AD_AUTOMATIONS[a], list = byH[au.handler] || [];
+    if (list.length <= 1) continue;
+    for (var d = 0; d < list.length; d++) ScriptApp.deleteTrigger(list[d]);
+    if (au.weekly) ScriptApp.newTrigger(au.handler).timeBased().onWeekDay(ScriptApp.WeekDay.MONDAY).atHour(au.hour).create();
+    else ScriptApp.newTrigger(au.handler).timeBased().atHour(au.hour).everyDays(1).create();
+    fixed++;
+  }
+  // 다시 부를 것이 없는데 재시도 손잡이만 남아 있으면 지운다
+  if ((byH[ADSCHED_RETRY_HANDLER] || []).length && !adQueueJson_(ADSCHED_RETRY_QUEUE).length) {
+    adSchedDrop_(ADSCHED_RETRY_HANDLER); fixed++;
+  }
+  if (fixed) log_('ads', 'INFO', '트리거 청소 — 겹친 걸음 ' + fixed + '개를 하나로 (전체 ' + ts.length + '개)');
+  return fixed;
 }
 
 /** 이 걸음이 오늘 아직 더 기다려 볼 수 있나 (adSchedRetry_ 가 한도를 넘기 전) */
@@ -127,6 +190,7 @@ function adSchedClear_(handler) {
  */
 function adSchedRun_(handler, label, fn) {
   uiSilent_(true);
+  try { adSchedSweep_(); } catch (eSw) { log_('ads', 'WARN', '트리거 청소 실패: ' + String(eSw).substring(0, 120)); }
   try {
     var r = fn();
     if (r === ADSPEND_PENDING) { adSchedRetry_(handler); return r; }

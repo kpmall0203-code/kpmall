@@ -194,11 +194,20 @@ function adWatchVerdict_(c, live, p, margin, since, repFrom, repTo, ownWeekly) {
   }
   // 트랙 B 는 육성 표에 적힌 제 주간 광고비가 한도다. 트랙 A 는 일예산 × 7
   var mine = (ownWeekly > 0) ? ownWeekly : c.daily * ADWATCH_DAYS;
-  if (on && mine > 0 && p.cost > mine * 1.1) {
+  // 아마존은 하루 예산을 날마다 25% 까지 넘길 수 있다(달 합계로 맞춘다) — 10% 로 재면 정상이 초과로 보인다.
+  // 그리고 벌고 있는 캠페인은 예산을 넘겼다고 끄지 않는다 — "수익을 내는 광고는 끄지 않는다".
+  // 실측 2026-09-23: KP EXPAND B7T 가 7일 ¥6,740 / 한도 ¥6,055 (11%) 로 멈췄는데 ACOS 3.4% · 주문 60 이었다.
+  if (on && mine > 0 && p.cost > mine * 1.25) {
+    var earning = p.sales * margin > p.cost;
+    if (earning) {
+      return { v: '⚠ 예산 초과 (벌고 있어 둠)',
+               why: '7일 광고비 ¥' + Math.round(p.cost) + ' > 한도 ¥' + Math.round(mine) +
+                    ' 이지만 광고매출 ¥' + Math.round(p.sales) + ' × 마진이 광고비를 넘는다 — 끄지 않는다. 일예산을 올려 두는 게 맞다', fix: '' };
+    }
     return { v: '⛔ 예산 초과',
              why: '7일 광고비 ¥' + Math.round(p.cost) + ' > 이 캠페인 한도 ¥' + Math.round(mine) +
                   (ownWeekly > 0 ? ' (육성 표의 주간광고비)' : ' (일예산×7)') +
-                  ' — 예산이 안 먹히고 있다', fix: 'PAUSE' };
+                  ' — 예산이 안 먹히고 있고 벌지도 못한다', fix: 'PAUSE' };
   }
   if (!on) return { v: '멈춤', why: c.approved ? '승인 ✓ 인데 멈춰 있음 — 켜려면 [캠페인 켜기]' : '', fix: '' };
 
@@ -366,7 +375,7 @@ function adWatchRun_(interactive) {
   var capInfo = adWatchCap_(basis, ours, grow);
 
   var since = adWatchOnSince_();
-  var now = new Date(), rows = [], stat = {}, total = 0, onN = 0, toPause = [], fresh = 0;
+  var now = new Date(), rows = [], stat = {}, total = 0, onN = 0, toPause = [], toResume = [], fresh = 0;
   var spend = { A: 0, B: 0 };
   for (var i = 0; i < ours.length; i++) {
     var c = ours[i], L = live[c.cid], p = rep.perf[c.cid] || { im: 0, ck: 0, cost: 0, sales: 0, ord: 0 };
@@ -393,6 +402,20 @@ function adWatchRun_(interactive) {
     if (gStop && on(L)) {
       d = { v: '⛔ 육성 멈춤필요', why: '상태 점검이 한도·기간 초과로 멈추라고 했는데 아직 켜져 있습니다',
             fix: 'PAUSE' };
+    }
+    /**
+     * 프로그램(관제·켜기)이 멈춘 캠페인인데 지난 7일 광고매출 × 마진이 광고비를 넘으면 다시 켠다.
+     * 관제가 예산 초과로 멈춘 것이 하루 ¥3만 넘게 팔던 캠페인이었다 (실측 2026-09-23 KP EXPAND B7T).
+     * 사람이 멈춘 것(결과 칸에 우리 표시가 없는 것)·키우기·갈아탄 옛 캠페인은 건드리지 않는다.
+     */
+    var stoppedByUs = !!(L && L.state === 'PAUSED' && c.approved && c.track !== ADPLAN_TRACK_B &&
+                         String(c.result).indexOf(ADENABLE_MARK.PAUSED) >= 0 &&
+                         String(c.result).indexOf(ADGROW_SWITCHED_MARK) < 0);
+    if (stoppedByUs && p.ord >= 1 && p.sales * margin > p.cost && autoStop) {
+      toResume.push(c);
+      d = { v: '· 다시 켬', fix: '',
+            why: '프로그램이 멈췄지만 7일 광고매출 ¥' + Math.round(p.sales) + ' × 마진 ' + pct1_(margin) +
+                 ' > 광고비 ¥' + Math.round(p.cost) + ' — 벌고 있어 다시 켭니다' };
     }
     stat[d.v] = (stat[d.v] || 0) + 1;
     if (d.fix === 'PAUSE' && autoStop) toPause.push(c);
@@ -432,6 +455,14 @@ function adWatchRun_(interactive) {
       ? '주간 한도 초과 (' + overWhy.join(' · ') + ')' : '관제 자동 멈춤');
     for (var r2 = 0; r2 < rows.length; r2++) {
       if (paused.indexOf(rows[r2][0]) >= 0) { rows[r2][AW_STATE] = 'PAUSED'; rows[r2][AW_VERDICT] = rows[r2][AW_VERDICT] + ' → 멈춤'; }
+    }
+  }
+
+  // 다시 켠다 — 벌고 있는데 우리가 멈춘 것
+  if (toResume.length) {
+    var resumed = adWatchResume_(token, toResume);
+    for (var r3 = 0; r3 < rows.length; r3++) {
+      if (resumed.indexOf(rows[r3][0]) >= 0) rows[r3][AW_STATE] = 'ENABLED';
     }
   }
 
@@ -531,6 +562,44 @@ function adWatchPause_(token, list, why, by) {
       sum: who + ' 멈춤 · ' + c.name, why: why, by: who, cid: c.cid });
   }));
   } catch (e2) { log_('ads', 'ERROR', who + ' 멈춤 뒤 시트 기록 실패 (아마존은 멈춤): ' + String(e2).substring(0, 160)); }
+  return done.map(function (c) { return c.name; });
+}
+
+/** 관제가 멈췄던 캠페인을 다시 켠다 — 결과 칸의 '· 멈춤' 을 '· 켬' 으로, 대장에 남긴다 */
+function adWatchResume_(token, list) {
+  var done = [];
+  for (var i = 0; i < list.length; i += 100) {
+    var part = list.slice(i, i + 100), res;
+    try {
+      res = adsApiRetry_(token, 'put', '/sp/campaigns',
+        { campaigns: part.map(function (c) { return { campaignId: c.cid, state: 'ENABLED' }; }) },
+        ADSW_CT_CAMPAIGN, ADSW_CT_CAMPAIGN);
+    } catch (e) { log_('ads', 'ERROR', '관제 다시 켬 실패: ' + String(e).substring(0, 160)); continue; }
+    var box = (res && res.campaigns) || {}, succ = box.success || [], okIds = {};
+    for (var s = 0; s < succ.length; s++) okIds[String(succ[s].campaignId)] = true;
+    for (var p = 0; p < part.length; p++) if (okIds[part[p].cid]) done.push(part[p]);
+  }
+  if (!done.length) return [];
+  log_('ads', 'INFO', '관제(자동) 다시 켬 — ' + done.map(function (c) { return c.name; }).join(', ') + ' · 벌고 있어서');
+  try {
+    var byTab = {};
+    for (var d = 0; d < done.length; d++) (byTab[done[d].tab || SHEET_ADPLAN] || (byTab[done[d].tab || SHEET_ADPLAN] = {}))[done[d].row] = true;
+    for (var tn in byTab) {
+      var sh = ss_().getSheetByName(tn);
+      if (!sh || sh.getLastRow() < 2) continue;
+      var v = sh.getRange(2, AP_RESULT, sh.getLastRow() - 1, 1).getValues(), dirty = false;
+      for (var r = 0; r < v.length; r++) {
+        if (!byTab[tn][r + 2]) continue;
+        var base = String(v[r][0]).replace(' ' + ADENABLE_MARK.ENABLED, '').replace(' ' + ADENABLE_MARK.PAUSED, '');
+        v[r][0] = base + ' ' + ADENABLE_MARK.ENABLED; dirty = true;
+      }
+      if (dirty) sh.getRange(2, AP_RESULT, v.length, 1).setValues(v);
+    }
+    adLogWrite_(done.map(function (c) {
+      return adLogRow_({ kind: '캠페인', camp: c.name, group: c.name, item: '상태', from: 'PAUSED', to: 'ENABLED',
+        sum: '관제(자동) 다시 켬 · ' + c.name, why: '벌고 있는 캠페인을 프로그램이 멈춰 두면 안 된다', by: '관제(자동)', cid: c.cid });
+    }));
+  } catch (e2) { log_('ads', 'ERROR', '관제 다시 켬 뒤 시트 기록 실패 (아마존은 켜짐): ' + String(e2).substring(0, 160)); }
   return done.map(function (c) { return c.name; });
 }
 

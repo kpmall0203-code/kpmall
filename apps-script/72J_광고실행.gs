@@ -152,7 +152,7 @@ function adPlanExecStep_(interactive) {
     var r = adExecRow_(token, sh, rowNo, row, st0, logBuf);
     if (r.ok) { okN++; streak = 0; }
     else {
-      failN++; streak++;
+      failN++; if (!r.eligibility) streak++;
       if (r.gaveUp) gaveUp++;
       // 하나가 틀린 것과 무언가 통째로 잘못된 것은 다르다.
       // 잇달아 실패하면 뒤엣것이므로 더 밀어붙이지 않는다.
@@ -225,7 +225,9 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
     var gaveUp = adMarkFail_(sh, rowNo, AP_RESULT, prev, adErrorText_(why) + shell);
     log_('ads', gaveUp ? 'ERROR' : 'WARN',
          '캠페인 생성 ' + (gaveUp ? '중단' : '실패') + ' ' + name + ' — ' + adErrorText_(why));
-    return { ok: false, gaveUp: gaveUp };
+    // 아마존이 그 상품의 광고 자격을 안 준 것은 그 상품 사정이지 '무언가 통째로 잘못된 것' 이 아니다 —
+    // 신규는 하루에 자격 없는 새 상품이 다섯 줄 잇달아 올 수 있다 (실측 2026-09-22 KP NEW B4-7)
+    return { ok: false, gaveUp: gaveUp, eligibility: /adEligibilityError|허용하지 않/i.test(String(why)) };
   };
 
   try {
