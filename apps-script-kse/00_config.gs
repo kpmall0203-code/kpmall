@@ -493,8 +493,52 @@ function doneSheet_() {
     sh.setFrozenRows(1);
     if (sh.getMaxColumns() >= COL.RAW) sh.hideColumns(COL.RAW);
     applyTextFormat_(sh);
+    doneLegend_(sh);
   }
   return sh;
+}
+
+/** [완료] 1행에 색 범례 메모를 단다 */
+function doneLegend_(sh) {
+  sh.getRange(1, COL.STATUS).setNote(
+    '행 색 = 어디로 나가서 끝났는지\n' +
+    '· 연한 파랑 — [' + SHEET_ORDERS + '] 에서 KSE 로 접수\n' +
+    '· 연한 주황 — [' + SHEET_PICK + '] 내려받음 (야마토)\n' +
+    '· 연한 보라 — [' + SHEET_SHIP + '] 내려받음\n' +
+    '굵은 글씨 = 법인주문\n\n' +
+    '완료일시(' + HEADERS_ORDERS[COL.DONE_AT - 1] + ') 칸에 [완료] 로 넘어간 시각이 남습니다.\n' +
+    '손으로 붙여넣은 행도 붙여넣는 순간 시각과 색이 들어갑니다.');
+}
+
+/** 이 [완료] 행이 어디로 나갔는가 — 'pick' / 'ship' / 'kse' */
+function doneOrigin_(v) {
+  var note = String(v[COL.NOTE - 1] || '');
+  if (note.indexOf(DONE_VIA_PICK) >= 0) return 'pick';
+  if (note.indexOf(DONE_VIA_SHIP) >= 0) return 'ship';
+  return 'kse';
+}
+
+/**
+ * [완료] 행을 경로별 색으로 칠한다 (행 전체). 법인주문은 굵은 글씨만 얹는다 —
+ * [완료] 에서는 경로 색이 우선이다 (법인 초록을 쓰면 경로가 안 보인다).
+ * 이어진 행을 한 번에 칠한다 (행마다 부르면 느리다).
+ */
+function paintDoneRows_(sh, startRow, rows) {
+  if (!sh || !rows || !rows.length) return;
+  var color = { kse: BG_DONE_KSE, pick: BG_DONE_PICK, ship: BG_DONE_SHIP };
+  var width = Math.max(COL_COUNT, 1);
+  sh.getRange(startRow, 1, rows.length, width).setBackgrounds(rows.map(function (v) {
+    var c = color[doneOrigin_(v)];
+    var line = [];
+    for (var i = 0; i < width; i++) line.push(c);
+    return line;
+  }));
+  sh.getRange(startRow, 1, rows.length, width).setFontWeights(rows.map(function (v) {
+    var w = isBizRow_(v) ? 'bold' : 'normal';
+    var line = [];
+    for (var i = 0; i < width; i++) line.push(w);
+    return line;
+  }));
 }
 
 /** [주문] → [완료] 이관 */
@@ -502,8 +546,15 @@ function moveToDone_(rows) {
   if (!rows.length) return 0;
   var done = doneSheet_();
   var dStart = done.getLastRow() + 1;
-  writeRows_(done, dStart, rows.map(function (r) { return r.v; }));
-  markBizRows_(done, dStart, rows.map(function (r) { return r.v; }));
+  // 넘어간 시각은 늘 남긴다 — 부르는 쪽이 안 채웠어도 여기서 채운다
+  var stamp = nowStr_();
+  var vals = rows.map(function (r) {
+    if (!String(r.v[COL.DONE_AT - 1] || '').trim()) r.v[COL.DONE_AT - 1] = stamp;
+    r.v[COL.STATUS - 1] = ST.DONE;
+    return r.v;
+  });
+  writeRows_(done, dStart, vals);
+  paintDoneRows_(done, dStart, vals);
 
   // 행 번호가 밀리지 않도록 아래에서 위로 지운다
   var orders = ordersSheet_();
@@ -547,7 +598,7 @@ function moveToDoneFrom_(sheetName, ids, via) {
   var dStart = done.getLastRow() + 1;
   var rows = picked.map(function (p) { return p.v; });
   writeRows_(done, dStart, rows);
-  markBizRows_(done, dStart, rows);
+  paintDoneRows_(done, dStart, rows);
   deleteRowsAt_(sh, picked.map(function (p) { return p.row; }));
   SpreadsheetApp.flush();
   logIds_('완료처리', '[' + sheetName + '] 내려받음 → [' + SHEET_DONE + ']',
@@ -694,6 +745,11 @@ var BG_NO = '#f4c7c3';     // 아님 — 확정된 결함 (진한 빨강)
 var BG_MAYBE = '#fff2cc';  // 애매 — 사람이 판단 (노랑)
 var BG_NONE = '#ffffff';
 var BG_BIZ = '#e3f0d8';    // 법인(비즈니스) 주문 — 행 전체를 연한 초록으로
+
+// [완료] 시트 — 어디로 나가서 끝났는지 행 색으로 구분한다
+var BG_DONE_KSE = '#e8f0fe';   // [주문] → KSE 접수 (연한 파랑)
+var BG_DONE_PICK = '#fce8d4';  // [근석이] 내려받음 — 야마토 (연한 주황)
+var BG_DONE_SHIP = '#efe3fb';  // [shipnergy] 내려받음 (연한 보라)
 
 // 법인주문 행은 흰색이 아니라 이 색이 바탕이다.
 // 경고색을 지울 때 흰색으로 되돌리면 행 색이 지워지므로 비고로 알아본다.
