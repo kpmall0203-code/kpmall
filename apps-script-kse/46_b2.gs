@@ -240,15 +240,19 @@ function b2Qty_(goods) {
 }
 
 /**
- * 品名 한 칸 — [SET][2個] 상품명
+ * 品名 한 칸 — SET 2個 상품명
  *
- * [N個] 는 항상 붙인다. 담을 개수가 배송장에 바로 보여야 한다.
- * [SET] 은 그 송장에 담을 물건이 1개를 넘을 때만 붙인다. 상품이 여러 줄이어도,
- * 한 상품이라도 수량이 2개 이상이면 세트다. 단품 1개면 [1個] 상품명 만 나간다.
+ * N個 는 2개부터 붙인다 (1개는 표시하지 않는다 — 단품이 대부분이라 괄호·숫자가 자리만 차지했다).
+ * SET 은 그 송장에 담을 물건이 1개를 넘을 때만 붙인다. 상품이 여러 줄이어도,
+ * 한 상품이라도 수량이 2개 이상이면 세트다. 대괄호는 쓰지 않는다.
  */
 function b2Goods_(x, maxHalf, showQty, isSet, full) {
   if (!x) return '';
-  var pre = showQty ? (isSet ? '[SET]' : '') + '[' + x.qty + '個] ' : '';
+  var pre = '';
+  if (showQty) {
+    if (isSet) pre += 'SET ';
+    if (x.qty >= 2) pre += x.qty + '個 ';
+  }
   // 원본 그대로 (기본) — 아마존 상품명을 자르지도 다듬지도 않는다
   if (full) return pre + x.title;
   return pre + b2Title_(x.title, maxHalf - textWidth_(pre));
