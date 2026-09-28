@@ -350,7 +350,10 @@ function mergeReports_(ord, prc, names) {
     if (pickNoteText) note.push(pickNoteText);
     if (pv.mixed) pickMixed++;
     if (g.country && g.country.toUpperCase() !== 'JP') note.push('배송국가 ' + g.country + ' 확인 필요');
-    if (!g.receiver) note.push('수취인 없음 — KSE 필수값');
+    if (!g.receiver) {
+      var buyer = buyerNameOf_(g.items, '');
+      note.push('수취인 없음 — KSE 필수값' + (buyer ? ' / 구매자: ' + buyer : ''));
+    }
     if (!g.tel) note.push('전화번호 없음');
     if (zipJP_(g.zip).length !== 7) note.push('우편번호 확인 필요');
     var brokenSku = g.items.filter(function (it) { return it.skuBroken; }).length;

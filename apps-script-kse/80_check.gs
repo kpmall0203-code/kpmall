@@ -357,13 +357,18 @@ function 검사_수집_(rows, opts, cfg, nameRows) {
       var res = 이름_판별_수집_(target, cfg);
       aiUsed = res.aiCount;
       error = res.error || '';
+      // 이름이 걸리면 구매자 이름을 같이 적는다 — 사람이 보고 수취인을 고칠 수 있게
+      var valsByRow = {};
+      target.forEach(function (r) { valsByRow[r.row] = r.v; });
       for (var row in res.verdicts) {
         var v = res.verdicts[row];
         if (v.verdict === '정상') continue;
+        var buyer = valsByRow[row] ? buyerNameOfRow_(valsByRow[row]) : '';
         add(Number(row), COL.RECEIVER, v.verdict === LV_NO ? LV_NO : LV_MAYBE,
           '이름 ' + v.verdict + (v.by === 'AI'
             ? '(AI' + (v.conf !== undefined ? ' ' + Math.round(v.conf * 100) + '%' : '') + ')'
-            : '(규칙)') + (v.reason ? ' — ' + v.reason : ''));
+            : '(규칙)') + (v.reason ? ' — ' + v.reason : '') +
+          (buyer ? ' / 구매자: ' + buyer : ''));
         counts.name++;
       }
     }

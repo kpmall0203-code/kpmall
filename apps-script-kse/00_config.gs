@@ -835,6 +835,31 @@ function keepZeros_(sheetVal, rawVal) {
   return r.replace(/^0+/, '') === s.replace(/^0+/, '') ? r : s;
 }
 
+/**
+ * 구매자 이름 (아마존 buyer-name) — 수취인 이름이 이상할 때 사람이 참고해 고치라고 비고에 적는다.
+ * 박스 안 첫 번째로 값이 있는 것을 쓴다. 수취인과 같으면(공백 무시) 적을 필요가 없어 '' 를 준다.
+ * 수취인 칸은 건드리지 않는다 — 선물·가족 명의 주문이 많아 구매자가 곧 수취인은 아니다.
+ *
+ * @param items _원본JSON 의 items (없으면 v 에서 읽는다)
+ */
+function buyerNameOf_(items, receiver) {
+  var name = '';
+  (items || []).some(function (it) {
+    var a = (it && it.amz) || {};
+    name = String(a['buyer-name'] || '').trim();
+    return !!name;
+  });
+  var same = function (s) { return String(s || '').replace(/[\s　]/g, ''); };
+  return name && same(name) !== same(receiver) ? name : '';
+}
+
+/** 시트 행 v 에서 구매자 이름 — 수취인과 같거나 없으면 '' */
+function buyerNameOfRow_(v) {
+  var g = null;
+  try { g = JSON.parse(String(v[COL.RAW - 1] || 'null')); } catch (e) { g = null; }
+  return buyerNameOf_(g && g.items, v[COL.RECEIVER - 1]);
+}
+
 function isBizRow_(v) {
   return String(v[COL.NOTE - 1] || '').indexOf(NOTE_BIZ) >= 0;
 }
