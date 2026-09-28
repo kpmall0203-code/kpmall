@@ -402,8 +402,19 @@ function naDecide_(r, fam, o, L, ctx, pol, today, fx) {
     }
   }
 
-  // 자료가 아직 하나도 없으면 아무것도 하지 않는다 (방금 시작한 것)
+  // 나이는 [시작일] 로 센다 — 실적 첫날로 세면 일별 수집(10일 창)을 시작한 날이 첫날이 돼
+  // 탐색 14일이 영영 안 찬다 (실측 2026-09-28: 9/4 시작 광고 102개가 클릭 0 인 채 계속 돌았다)
+  var start = adYmd_(r[NA_I_START]) || (o ? o.first : '') || '';
+  var age = start ? daysBetween_(start, today) : 0;
+  var expired = age >= pol.probeDays;
+
+  // 자료가 아직 하나도 없으면 아무것도 하지 않는다 (방금 시작한 것) — 탐색 기간이 다 찼는데도
+  // 노출 한 번 없으면 아마존이 안 보여 주는 것이다. 돈은 안 나가지만 자리를 잡고 있으니 멈춘다
   if (!o) {
+    if (expired) {
+      return no(NAR_EXPIRED, '탐색 ' + pol.probeDays + '일 동안 노출이 한 번도 없었습니다 (시작 ' + start +
+                ') — 멈추고 ' + pol.cooldown + '일 뒤 다시 봅니다', pol.cooldown);
+    }
     return { why: '시작했습니다 — 실적 자료를 기다립니다 (허용 ¥' +
              (Math.round(cap * 100) / 100) + ')', tag: '' };
   }
@@ -429,9 +440,9 @@ function naDecide_(r, fam, o, L, ctx, pol, today, fx) {
   // ── ④ 판정 ──────────────────────────────────────────────
   var spent2 = fam ? Number(fam[NA_F_SPENT]) || 0 : o.cost;
   var potGone = fam && Number(fam[NA_F_POT]) > 0 && spent2 >= Number(fam[NA_F_POT]);
-  var age = o.first ? daysBetween_(o.first, today) : 0;
-  var expired = age >= pol.probeDays;
-  var matureDone = o.last ? adSpendMature_(o.last, today) : false;
+  // 탐색 기간 전체가 익었나 — 마지막 탐색일 + 귀속 14일 + 보고 2일. 예전에는 '마지막 실적일이
+  // 익었나' 를 봤는데, 도는 광고는 어제 실적이 늘 있어 영영 안 익었다 (14일 멈춤이 한 번도 안 걸렸다)
+  var matureDone = start ? adSpendMature_(naPlusDays_(start, pol.probeDays - 1), today) : false;
 
   if (o.mOd >= pol.keepOrders && mProfit > 0) {
     var realCpc = o.mCk > 0 ? o.mCost / o.mCk : 0;
@@ -442,18 +453,30 @@ function naDecide_(r, fam, o, L, ctx, pol, today, fx) {
                     (Math.round(cap * 100) / 100) + ' — 그대로 둡니다' };
     }
   }
-  if ((expired || potGone) && matureDone) {
-    if (o.mOd === 0) {
+  if (expired || potGone) {
+    // 기획서 §7: 만료·소진이면 정지하고 성숙을 기다린 뒤 판정한다.
+    //   주문이 하나도 없으면(잠정 포함) 기다릴 것이 없다 — 바로 멈춘다. 늦게 붙는 주문이 보이면
+    //   naResume_ 가 다시 켠다.
+    //   잠정 주문이 있으면 "수익을 내는 광고는 끄지 않는다" — 익을 때까지 두고(성숙대기) 익으면 판정
+    var odAll = Math.max(o.od, fx ? fx.od : 0);
+    if (odAll === 0) {
       return no(expired ? NAR_EXPIRED : NAR_POT_OUT,
                 (expired ? '탐색 ' + pol.probeDays + '일' : '판돈') +
-                ' 이 끝났고 성숙 자료에 주문이 0 입니다 (클릭 ' + o.mCk + ' · 광고비 ¥' +
-                Math.round(o.mCost) + ') — 멈추고 ' + pol.cooldown + '일 뒤 다시 봅니다',
+                ' 이 끝났는데 주문이 0 입니다 (클릭 ' + o.ck + ' · 광고비 ¥' + Math.round(o.cost) +
+                ') — 멈추고 ' + pol.cooldown + '일 뒤 다시 봅니다. 늦게 붙는 주문이 보이면 다시 켭니다',
                 pol.cooldown);
     }
-    if (mProfit < 0) {
+    if (matureDone && mProfit < 0) {
       return no(NAR_LOSS, '성숙 자료로 손해가 확인됐습니다 (광고비 ¥' + Math.round(o.mCost) +
                 ' · 공헌이익 ¥' + Math.round(mProfit + o.mCost) + ' → 순 ¥' + Math.round(mProfit) +
                 ') — 멈추고 ' + pol.cooldown + '일 뒤 다시 봅니다', pol.cooldown);
+    }
+    if (!matureDone && stNow !== NAS_MATURE) {
+      return { state: NAS_MATURE, tag: '',
+               why: (expired ? '탐색 ' + pol.probeDays + '일' : '판돈') + ' 이 끝났고 잠정 주문 ' + odAll +
+                    '건이 있습니다 — 익을 때까지 둡니다 (' +
+                    naPlusDays_(naPlusDays_(start, pol.probeDays - 1), SPEND_ATTRIB_DAYS + SPEND_REPORT_LAG_DAYS) +
+                    ' 판정)' };
     }
   }
   if (o.mOd >= 1) {
@@ -557,8 +580,9 @@ function naRetryIneligible_(today) {
     var age = daysBetween_(first, today);
     if (age >= NA_RETRY_UNTIL_D) {
       if (res.indexOf(NAR_INELIGIBLE + ' 그만둠') < 0) {
+        // '중단(' 으로 시작해야 72J 가 날마다 다시 보내지 않는다 (adIsGivenUp_)
         sh.getRange(i + 2, AP_RESULT).setValue(
-          NAR_INELIGIBLE + ' 그만둠 — ' + first + ' 부터 ' + age + '일째 아마존이 안 받아 줍니다. ' +
+          '중단(' + NAR_INELIGIBLE + ' 그만둠) — ' + first + ' 부터 ' + age + '일째 아마존이 안 받아 줍니다. ' +
           '리스팅·바이박스를 보고 [결과] 를 비우면 다시 시도합니다');
         out.gaveUp++;
       }
@@ -593,11 +617,13 @@ function naResume_(r, fam, L, ctx, pol, today, o, fx) {
   // 판돈으로 멈췄는데 실은 팔리고 있던 것 (안 익은 주문) — 잠정 손실이 판돈 안이면 냉각을 기다리지 않고 켠다.
   // 위 naDecide_ 의 잣대를 고치기 전에 멈춘 것을 살리는 길이기도 하다
   var od = fx ? fx.od : (o ? o.od : 0);
-  if (cool && od >= 1 && fam && Number(fam[NA_F_POT]) > 0 && /판돈/.test(String(fam[NA_F_WHY] || ''))) {
+  // 탐색 14일이 끝나 주문 0 으로 멈춘 것도 같다 — 늦게 귀속된 주문이 보이면 다시 켜서 익을 때까지 둔다
+  var whyF = String(fam ? fam[NA_F_WHY] || '' : '');
+  if (cool && od >= 1 && fam && Number(fam[NA_F_POT]) > 0 && /판돈|탐색 \d+일 이 끝났는데 주문이 0/.test(whyF)) {
     var pRisk0 = fx ? fx.pRisk : Math.max(0, o.cost - o.sales * ((Number(r[NA_I_MPCT]) || 0) / 100));
     if (Number(fam[NA_F_POT]) - pRisk0 > 0 && L && NA_LISTING_OK[String(L.state || '').trim().toLowerCase()] && L.stock > 0) {
       return { resume: true, mature: true,
-               why: '판돈으로 멈췄지만 잠정 주문 ' + od + '건이 있고 잠정 손실 ¥' + Math.round(pRisk0) +
+               why: (/판돈/.test(whyF) ? '판돈으로' : '탐색 만료로') + ' 멈췄지만 잠정 주문 ' + od + '건이 있고 잠정 손실 ¥' + Math.round(pRisk0) +
                     ' 이 판돈 ¥' + Math.round(Number(fam[NA_F_POT])) + ' 안입니다 — 다시 켜고 익을 때까지 둡니다' };
     }
   }

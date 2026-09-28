@@ -222,12 +222,19 @@ function adExecRow_(token, sh, rowNo, row, state, bucket) {
       ? ' [빈 캠페인이 남았습니다 — 상품 없이 캠페인·광고그룹만 만들어졌습니다. ' +
         '고친 뒤 다시 실행하면 그 캠페인에 상품만 넣습니다]'
       : '';
-    var gaveUp = adMarkFail_(sh, rowNo, AP_RESULT, prev, adErrorText_(why) + shell);
-    log_('ads', gaveUp ? 'ERROR' : 'WARN',
-         '캠페인 생성 ' + (gaveUp ? '중단' : '실패') + ' ' + name + ' — ' + adErrorText_(why));
     // 아마존이 그 상품의 광고 자격을 안 준 것은 그 상품 사정이지 '무언가 통째로 잘못된 것' 이 아니다 —
-    // 신규는 하루에 자격 없는 새 상품이 다섯 줄 잇달아 올 수 있다 (실측 2026-09-22 KP NEW B4-7)
-    return { ok: false, gaveUp: gaveUp, eligibility: /adEligibilityError|허용하지 않/i.test(String(why)) };
+    // 신규는 하루에 자격 없는 새 상품이 다섯 줄 잇달아 올 수 있다 (실측 2026-09-22 KP NEW B4-7).
+    // 내일 다시 보내도 같은 답이므로 바로 그만둔다 — 다시 시도하는 때는 78E naRetryIneligible_ 가
+    // 정한다 (사흘마다, 3주까지). 그 전에는 세 번 채우느라 날마다 같은 20줄을 보내고 있었다 (2026-09-28)
+    var elig = /adEligibilityError|허용하지 않/i.test(String(why));
+    var gaveUp;
+    if (elig) {
+      sh.getRange(rowNo, AP_RESULT).setValue('중단(자격 없음): ' + (adErrorText_(why) + shell).substring(0, 180));
+      gaveUp = true;
+    } else gaveUp = adMarkFail_(sh, rowNo, AP_RESULT, prev, adErrorText_(why) + shell);
+    log_('ads', gaveUp && !elig ? 'ERROR' : 'WARN',
+         '캠페인 생성 ' + (gaveUp ? '중단' : '실패') + ' ' + name + ' — ' + adErrorText_(why));
+    return { ok: false, gaveUp: gaveUp, eligibility: elig };
   };
 
   try {
