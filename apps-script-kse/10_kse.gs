@@ -89,6 +89,11 @@ function rowToGroup_(v) {
   var w = num_(v[COL.WEIGHT - 1], 0);
   if (w > 0) g.weight = w;
 
+  // 상자 나누기 — 같은 주문 행을 복사해 대표주문번호 뒤에 -1, -2 를 붙이면 상자마다
+  // 따로 등록해야 한다. _원본JSON 의 주문번호는 두 행이 같으므로 시트의 대표주문번호에서
+  // 덧붙인 꼬리(-1, -2)를 읽어 장바구니번호에 붙인다 (같으면 KSE 9903014 중복 오류).
+  g.boxNo = boxSuffix_(txt(COL.ORDER_ID), g.orderId);
+
   // 줄 단위
   var n = g.items.length;
   var apply = function (col, label, fn) {
@@ -113,6 +118,20 @@ function rowToGroup_(v) {
   apply(COL.SKU, 'SKU', function (it, s) { if (s) it.sku = s; });
 
   return { g: g, warn: warn };
+}
+
+/**
+ * 시트 대표주문번호가 원본 주문번호와 다르면 그 차이(-1, -2 …)를 돌려준다.
+ * 같거나 비어 있으면 '' — 상자를 나누지 않은 보통 행.
+ */
+function boxSuffix_(sheetId, orderId) {
+  var sid = String(sheetId == null ? '' : sheetId).trim();
+  var oid = String(orderId == null ? '' : orderId).trim();
+  if (!sid || !oid || sid === oid) return '';
+  var tail = sid.indexOf(oid) === 0 ? sid.slice(oid.length) : sid;
+  tail = tail.replace(/[^0-9A-Za-z_-]/g, '');
+  if (!tail) return '';
+  return (tail.charAt(0) === '-' || tail.charAt(0) === '_') ? tail : '-' + tail;
 }
 
 function kseBuildPackage_(g, cfg) {
@@ -154,9 +173,10 @@ function kseBuildPackage_(g, cfg) {
 
   return {
     // 장바구니번호는 패키지마다 달라야 한다 (중복이면 KSE 9903014)
-    PackageNo: sanitize_(cartIsItemId
+    // 상자를 나눈 행(-1, -2)은 꼬리를 붙여 상자마다 다른 번호가 된다
+    PackageNo: sanitize_((cartIsItemId
       ? ((g.items[0] && g.items[0].orderItemId) || g.orderId)
-      : g.orderId),
+      : g.orderId) + (g.boxNo || '')),
     DeliveryServiceCode: cfg.KSE_배송서비스코드 || 'KSE',
     TrackingNo: '',                    // 비우면 KSE가 K로 시작하는 14자리를 발번
     ToCountry: 'JP',                   // 가이드상 JP 고정
